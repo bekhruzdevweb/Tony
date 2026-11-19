@@ -11,6 +11,9 @@ export type Settings = {
   app_url: string | null;
   tick_secret: string;
   last_tick_at: string | null;
+  session_secret: string;
+  login_token_hash: string | null;
+  login_token_expires_at: string | null;
 };
 
 export async function getSettings(): Promise<Settings> {

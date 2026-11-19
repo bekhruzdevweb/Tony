@@ -16,11 +16,18 @@ export type Reminder = {
   state: "scheduled" | "sent" | "acknowledged" | "cancelled";
   telegram_message_id: number | null;
   sent_at: string | null;
+  claimed_at: string | null;
 };
 
 /** Spec: at most 6 unprompted messages per hour in total. */
 export const HOURLY_MESSAGE_CAP = 6;
 const BATCH = 20;
+/** How long a tick may hold a reminder while sending it. */
+const LEASE_MINUTES = 2;
+/** Telegram normally answers in well under a second. */
+const SEND_TIMEOUT_MS = 8_000;
+/** Stop starting new sends after this long, so the tick ends well inside its time limit. */
+const TICK_BUDGET_MS = 18_000;
 
 function fail(where: string, error: { message: string } | null) {
   if (error) throw new Error(`${where}: ${error.message}`);
@@ -98,18 +105,28 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
   const db = requireDb();
   const result: TickResult = { sent: 0, deferred: 0, cancelled: 0, failed: 0 };
   const settings = await getSettings();
-  await updateSettings({ last_tick_at: now.toISOString() });
+  const started = Date.now();
+  // Recorded only when a tick ends cleanly: the database's retry job calls
+  // again at :20 and :40 for any minute that has no clean tick.
+  const finish = async () => {
+    if (result.failed === 0) await updateSettings({ last_tick_at: now.toISOString() });
+    return result;
+  };
+
+  // Free to send: no lease, or a lease so old that the tick holding it must have died.
+  const free = `claimed_at.is.null,claimed_at.lt.${addMinutes(now, -LEASE_MINUTES).toISOString()}`;
 
   const due = await db
     .from("reminders")
     .select("*, task:tasks(*)")
     .eq("state", "scheduled")
     .lte("fire_at", now.toISOString())
+    .or(free)
     .order("fire_at", { ascending: true })
     .limit(BATCH);
   fail("runTick: due", due.error);
   const reminders = (due.data ?? []) as (Reminder & { task: Task | null })[];
-  if (reminders.length === 0) return result;
+  if (reminders.length === 0) return finish();
 
   const recent = await db
     .from("reminders")
@@ -127,6 +144,11 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
   };
 
   for (const reminder of reminders) {
+    if (Date.now() - started > TICK_BUDGET_MS) {
+      // Out of time: whatever is left stays scheduled for the next call.
+      result.failed++;
+      break;
+    }
     const task = reminder.task;
     if (!task || !OPEN_STATUSES.includes(task.status)) {
       await cancel(reminder.id);
@@ -186,34 +208,56 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
       continue;
     }
 
-    // Claim it first, so two overlapping ticks cannot both send it.
-    const claim = await db
+    // Take a lease, so two overlapping ticks cannot both send it. The
+    // reminder stays 'scheduled' until Telegram confirms delivery.
+    const claimed = await db
       .from("reminders")
-      .update({ state: "sent", sent_at: now.toISOString() })
+      .update({ claimed_at: now.toISOString() })
       .eq("id", reminder.id)
       .eq("state", "scheduled")
+      .or(free)
       .select("id");
-    fail("runTick: claim", claim.error);
-    if ((claim.data ?? []).length === 0) continue;
+    fail("runTick: claim", claimed.error);
+    if ((claimed.data ?? []).length === 0) continue;
 
     const message = chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
-    try {
-      const sent = await bot.api.sendMessage(chatId, message.text, { reply_markup: message.keyboard });
-      const saved = await db.from("reminders").update({ telegram_message_id: sent.message_id }).eq("id", reminder.id);
-      fail("runTick: message id", saved.error);
-      await logMessage("tony", message.text);
-    } catch (error) {
-      console.error(`Reminder ${reminder.id} could not be sent:`, error);
-      // Put it back; the next tick tries again.
-      await db.from("reminders").update({ state: "scheduled", sent_at: null }).eq("id", reminder.id);
+    let messageId: number | undefined;
+    // Two tries, each with a hard timeout: a stalled connection must never
+    // hold the tick until the platform kills it.
+    for (let tryNumber = 1; tryNumber <= 2 && messageId === undefined; tryNumber++) {
+      try {
+        const sent = await bot.api.sendMessage(
+          chatId,
+          message.text,
+          { reply_markup: message.keyboard },
+          // grammY types its own AbortSignal; the platform's one is what it runs on.
+          AbortSignal.timeout(SEND_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.sendMessage>[3],
+        );
+        messageId = sent.message_id;
+      } catch (error) {
+        console.error(`Reminder ${reminder.id}: send attempt ${tryNumber} failed:`, error);
+      }
+    }
+
+    if (messageId === undefined) {
+      // Give the lease back; the next call (20 seconds away at most) tries again.
+      await db.from("reminders").update({ claimed_at: null }).eq("id", reminder.id).eq("state", "scheduled");
       result.failed++;
       continue;
     }
+
+    // Telegram has confirmed delivery: only now is it 'sent'.
+    const saved = await db
+      .from("reminders")
+      .update({ state: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, claimed_at: null })
+      .eq("id", reminder.id);
+    fail("runTick: mark sent", saved.error);
+    await logMessage("tony", message.text);
 
     sentThisHour++;
     result.sent++;
     await queueNext();
   }
 
-  return result;
+  return finish();
 }

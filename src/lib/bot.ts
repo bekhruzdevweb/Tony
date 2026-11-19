@@ -20,7 +20,9 @@ export function getBot(): Bot | undefined {
   if (cached?.token === token) return cached.bot;
 
   const apiRoot = env.telegramApiRoot;
-  const bot = new Bot(token, apiRoot ? { client: { apiRoot } } : undefined);
+  // grammY waits up to 500 seconds for Telegram by default, far longer than a
+  // serverless function lives. Fail fast instead, so callers can retry.
+  const bot = new Bot(token, { client: { timeoutSeconds: 15, ...(apiRoot ? { apiRoot } : {}) } });
 
   // /start is answered for anyone, so the owner can learn their chat ID
   // before TELEGRAM_OWNER_ID is set. It reveals nothing but the sender's own ID.

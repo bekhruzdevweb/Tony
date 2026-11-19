@@ -3,7 +3,8 @@ import { requireDb } from "../db";
 import { logMessage, recentMessages, type Channel } from "../messages";
 import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
-import { buildSystemPrompt, type MemoryFact, type ProjectRef } from "./prompt";
+import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
+import { tidyReply } from "./tidy";
 import { runTool, TOOLS } from "./tools";
 
 const HISTORY = 12;
@@ -19,25 +20,25 @@ async function loadContext() {
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
   }
+  const openTasks = tasks.data as Task[];
+  // What actually happened with each task's reminders, so Tony can answer
+  // "you didn't remind me" from the record instead of guessing.
+  const reminders = openTasks.length
+    ? await db
+        .from("reminders")
+        .select("task_id, state, fire_at, sent_at")
+        .in("task_id", openTasks.map((t) => t.id))
+        .in("state", ["scheduled", "sent", "acknowledged"])
+        .order("id", { ascending: false })
+        .limit(200)
+    : { data: [], error: null };
+  if (reminders.error) throw new Error(`loadContext: ${reminders.error.message}`);
   return {
     memory: memory.data as MemoryFact[],
-    tasks: tasks.data as Task[],
+    tasks: openTasks,
     projects: projects.data as ProjectRef[],
+    reminders: (reminders.data ?? []) as ReminderFact[],
   };
-}
-
-/** Small repairs to the model's wording before it reaches the lock screen. */
-export function tidyReply(text: string): string {
-  return (
-    text
-      .trim()
-      // A missing space after a sentence end: "sir.Your" becomes "sir. Your".
-      .replace(/([.!?])(?=[A-Z])/g, "$1 ")
-      // Telegram shows this as plain text, so markdown emphasis is only noise.
-      .replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/[ \t]{2,}/g, " ")
-  );
 }
 
 /**

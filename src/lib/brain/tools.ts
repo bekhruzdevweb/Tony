@@ -99,6 +99,8 @@ export const TOOLS: ToolDefinition[] = [
   },
 ];
 
+const normaliseTitle = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
 type Args = Record<string, unknown>;
 type Result = { ok: true; [key: string]: unknown } | { ok: false; error: string };
 
@@ -165,6 +167,17 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       const fields = await readFields(args, now);
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
+      // The same task twice is almost always a mistake (and once was: a
+      // complaint about a late reminder became a second copy of the task).
+      const open = await db.from("tasks").select().in("status", OPEN_STATUSES);
+      check("add_task", open.error);
+      const wanted = normaliseTitle(fields.patch.title);
+      const twin = (open.data as Task[]).find((t) => normaliseTitle(t.title) === wanted);
+      if (twin) {
+        return fail(
+          `task ${taskLine(twin, await loadProjects(), now)} already exists. Do not add it again: use update_task on #${twin.id} if he asked to change it, otherwise just tell him it is already on the list.`,
+        );
+      }
       const { data, error } = await db
         .from("tasks")
         .insert({ ...fields.patch, status: fields.dueAt ? "todo" : "inbox" })
