@@ -4,7 +4,7 @@ import { requireDb } from "./db";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, inWindow } from "./time";
+import { addMinutes, dayBounds, inWindow, toWholeMinute } from "./time";
 
 export type Reminder = {
   id: number;
@@ -39,7 +39,7 @@ export async function scheduleReminder(taskId: number, at: Date): Promise<void> 
   await settleReminders(taskId);
   const { error } = await requireDb()
     .from("reminders")
-    .insert({ task_id: taskId, fire_at: at.toISOString(), kind: "due", attempt: 0 });
+    .insert({ task_id: taskId, fire_at: toWholeMinute(at).toISOString(), kind: "due", attempt: 0 });
   fail("scheduleReminder", error);
 }
 
@@ -50,12 +50,13 @@ export async function addScheduledTask(input: {
   persistent?: boolean;
   schedule?: number[];
 }): Promise<Task> {
+  const dueAt = toWholeMinute(input.dueAt);
   const { data, error } = await requireDb()
     .from("tasks")
     .insert({
       title: input.title,
       status: "todo",
-      due_at: input.dueAt.toISOString(),
+      due_at: dueAt.toISOString(),
       persistent: input.persistent ?? false,
       persistent_schedule: input.schedule ?? null,
     })
@@ -63,7 +64,7 @@ export async function addScheduledTask(input: {
     .single();
   fail("addScheduledTask", error);
   const task = data as Task;
-  await scheduleReminder(task.id, input.dueAt);
+  await scheduleReminder(task.id, dueAt);
   return task;
 }
 

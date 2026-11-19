@@ -6,7 +6,7 @@ import { runAction } from "./actions";
 import { parseAction } from "./reminder-messages";
 import { addScheduledTask } from "./reminders";
 import { addInboxTask, listInbox, listToday } from "./tasks";
-import { addMinutes, formatTime } from "./time";
+import { addMinutes, formatTime, toWholeMinute } from "./time";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -69,7 +69,7 @@ export function getBot(): Bot | undefined {
   //   /test once  an ordinary one-time reminder in 2 minutes
   tasks.command("test", async (ctx) => {
     const mode = ctx.match.trim().toLowerCase();
-    const dueAt = addMinutes(new Date(), 2);
+    const dueAt = toWholeMinute(addMinutes(new Date(), 2));
     const persistent = mode !== "once";
     const task = await addScheduledTask({
       title: persistent ? "Test workout" : "Test reminder",

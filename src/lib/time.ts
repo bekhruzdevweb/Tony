@@ -65,3 +65,8 @@ export function laterThisEvening(now: Date): Date {
   const hour = 60 * MINUTE;
   return new Date(Math.ceil((now.getTime() + hour) / hour) * hour);
 }
+
+/** The nearest whole minute, so reminders are due at :00 and fire on the tick. */
+export function toWholeMinute(at: Date): Date {
+  return new Date(Math.round(at.getTime() / MINUTE) * MINUTE);
+}

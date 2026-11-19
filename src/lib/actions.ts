@@ -4,7 +4,7 @@ import { requireDb } from "./db";
 import { doneKeyboard, rescheduleKeyboard, type Action } from "./reminder-messages";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, formatTime } from "./time";
+import { addMinutes, formatTime, toWholeMinute } from "./time";
 
 export type ActionOutcome = {
   /** What Tony says back; nothing when the tap only changes the buttons. */
@@ -45,13 +45,13 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       return { text: `Skipped for today, sir.`, keyboard: null };
 
     case "snooze": {
-      const at = addMinutes(now, arg ?? 15);
+      const at = toWholeMinute(addMinutes(now, arg ?? 15));
       await scheduleReminder(task.id, at);
       return { text: `Very good, sir. I'll ask again at ${formatTime(at)}.`, keyboard: null };
     }
 
     case "move": {
-      const at = arg === undefined ? addMinutes(now, 60) : new Date(arg * 60_000);
+      const at = arg === undefined ? toWholeMinute(addMinutes(now, 60)) : new Date(arg * 60_000);
       if (at.getTime() <= now.getTime()) {
         return { text: "That time has already passed, sir.", keyboard: null };
       }
@@ -61,7 +61,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
     }
 
     case "tomorrow": {
-      let at = addMinutes(task.due_at ? new Date(task.due_at) : now, 24 * 60);
+      let at = toWholeMinute(addMinutes(task.due_at ? new Date(task.due_at) : now, 24 * 60));
       while (at.getTime() <= now.getTime()) at = addMinutes(at, 24 * 60);
       await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
       await scheduleReminder(task.id, at);
