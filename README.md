@@ -204,6 +204,38 @@ If Telegram refuses the rich message, the board is sent as before: the
 day as text (`☐ 18:00 English Speaking Club`, done items `☑` struck
 through at the bottom) with short buttons, two to a row.
 
+**The coach.** Repeating tasks (daily, weekdays, weekly: "work out every
+day at 18:00") are habits. Each time one is done or skipped, the day that
+occurrence was due goes into `habit_log`. From that log alone Tony works
+out, per habit: the last day it was done, the current streak, the best
+streak, and the due days missed this week. Nothing before tracking began
+(`settings.habits_since`) or before the habit was set up counts as a miss,
+and a skipped day neither breaks a streak nor adds to it.
+
+- **Morning brief (08:00).** The spoken part is today's key tasks and one
+  personal line from the log ("It's been 4 days since your last workout,
+  sir; your best streak was 9. One today puts you back on track."), kept to
+  about 300 characters. The text has the full day plus a 🔥 Habits section
+  with each habit's facts.
+- **Voice nudges**, at most two a day and never in quiet hours: a habit due
+  today and not started, 30 minutes before its time; and a habit missed
+  three due days or more in a row, once a day from 10:00 (unless it is due
+  later that day, when the 30-minute nudge speaks to it instead). Each is a
+  short voice note with its words as a caption.
+- **Tone.** Warm on a streak, firmer when a habit slips, never shaming.
+  Every sentence is a fixed template filled with numbers from the log; no
+  model writes them, so no number is made up. The brain is given the same
+  facts and told to quote only those.
+- **Voice budget.** Every character sent to ElevenLabs is counted for the
+  month (`settings.tts_chars`). Tony also reads the plan's own usage and
+  limit when the key is allowed to (they include anything spoken outside
+  Tony); otherwise he uses his own count against `ELEVENLABS_MONTHLY_CHARS`
+  (default 10,000, the free plan). Past 80%, only the morning brief is
+  spoken: replies and nudges go as text. Tony's own count resets on the 1st;
+  ElevenLabs resets on your billing date.
+
+Needs migration `0011_coach.sql` (applied).
+
 **Rich messages elsewhere.** The morning brief and plans (`/plan`, "plan
 my day") are rich messages too: a heading, sections as lists, the plan's
 reasoning in a folding quotation, and the plan's buttons under it.

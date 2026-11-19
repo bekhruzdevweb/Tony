@@ -91,6 +91,14 @@ export const env = {
   get elevenLabsModel() {
     return read("ELEVENLABS_MODEL") ?? "eleven_flash_v2_5";
   },
+  /**
+   * Characters a month on the ElevenLabs plan, used when the plan itself
+   * cannot be read (the key may not be allowed to). Free plan: 10,000.
+   */
+  get elevenLabsMonthlyChars() {
+    const value = Number(read("ELEVENLABS_MONTHLY_CHARS"));
+    return Number.isFinite(value) && value > 0 ? value : 10_000;
+  },
   get elevenLabsBaseUrl() {
     return (read("ELEVENLABS_BASE_URL") ?? "https://api.elevenlabs.io").replace(/\/+$/, "");
   },

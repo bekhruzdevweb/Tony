@@ -51,7 +51,7 @@ Tone examples:
 const LIVE = `Now: {today}, {now} (Asia/Tashkent). Days: {calendar}.
 Projects: {projects}.
 
-{shared}{waiting}Memory:
+{shared}{waiting}{habits}Memory:
 {memory}
 
 Open tasks{task_note}:
@@ -146,6 +146,8 @@ export function buildSystemPrompt(input: {
   shared?: { text: string; at: Date };
   /** What Tony last asked and is waiting to hear. */
   waiting?: string;
+  /** Each habit's facts from the log, one line each. */
+  habits?: string;
 }): SystemPrompt {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
@@ -167,6 +169,7 @@ export function buildSystemPrompt(input: {
       ? `Last thing he shared (${formatDue(input.shared.at, now)}):\n${input.shared.text}\n\n`
       : "",
     waiting: input.waiting ? `Open question: ${input.waiting}\n\n` : "",
+    habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
     task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders)).join("\n") : "(none)",

@@ -1,5 +1,6 @@
 import "server-only";
 import { requireDb } from "./db";
+import { logHabit } from "./habits";
 import { scheduleReminder, settleReminders } from "./reminders";
 import type { Task } from "./tasks";
 import { addMinutes, formatDue, TIMEZONE } from "./time";
@@ -43,6 +44,8 @@ export async function finishTask(
   const db = requireDb();
   const next = nextOccurrence(task, now);
   await settleReminders(task.id);
+  // A repeating task's occurrence goes into its habit log, for streaks.
+  await logHabit(task, how, now);
 
   if (!next) {
     const patch = how === "done" ? { status: "done", completed_at: now.toISOString() } : { status: "skipped" };

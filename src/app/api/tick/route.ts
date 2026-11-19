@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { after } from "next/server";
 import { getBot } from "@/lib/bot";
 import { runBriefs } from "@/lib/briefs";
+import { runCoach } from "@/lib/coach";
 import { runSuggestions } from "@/lib/suggest";
 import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
@@ -42,6 +43,8 @@ export async function POST(request: Request) {
       briefs: async (settings, now) => {
         const briefs = await runBriefs(bot, chatId, settings, now);
         if (briefs === 0) await runSuggestions(bot, chatId, settings, now);
+        // The coach's voice nudges for habits (at most two a day).
+        await runCoach(bot, chatId, settings, now).catch((error) => console.error("Coach failed:", error));
       },
     });
     // A reminder, a brief or a rolled-over task may have changed today's list.

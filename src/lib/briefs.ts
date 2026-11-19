@@ -9,7 +9,8 @@ import { logMessage } from "./messages";
 import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
 import { data } from "./reminder-messages";
 import type { Settings } from "./settings";
-import { postBoard } from "./today-board";
+import { postBoard, shortLabel } from "./today-board";
+import { coachForBrief } from "./coach";
 import { sayAloud } from "./speech";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
@@ -84,6 +85,31 @@ function isTime(clock: string, now: Date, timeZone: string): boolean {
   return late >= 0 && late < LATE_WINDOW_MINUTES;
 }
 
+const SPOKEN_LIMIT = 300;
+
+/**
+ * The spoken brief: a greeting, the day's key tasks (up to two by name),
+ * and the coach's line. Parts are shortened, never the coach's line, until
+ * it fits in about 300 characters.
+ */
+export function spokenBrief(open: Task[], carriedOver: number, coachLine: string | undefined, timeZone: string): string {
+  const named = (task: Task) => `${shortLabel(task.title, 28)} at ${formatTime(new Date(task.due_at!), timeZone)}`;
+  const count = open.length === 1 ? "One task" : `${open.length} tasks`;
+  const taskSentences = [
+    open.length === 0 ? "Nothing is scheduled for today." : open.length === 1 ? `One task today: ${named(open[0])}.` : `${count} today, starting with ${named(open[0])}, then ${named(open[1])}.`,
+    open.length === 0 ? "Nothing is scheduled for today." : `${count} today, starting with ${named(open[0])}.`,
+    open.length === 0 ? "Nothing is scheduled for today." : `${count} today.`,
+  ];
+  const carried = carriedOver ? `${carriedOver === 1 ? "One item is" : `${carriedOver} items are`} carried over.` : "";
+  for (const tasks of taskSentences) {
+    for (const extra of [carried, ""]) {
+      const spoken = ["Good morning, sir.", tasks, extra, coachLine ?? ""].filter(Boolean).join(" ");
+      if (spoken.length <= SPOKEN_LIMIT) return spoken;
+    }
+  }
+  return ["Good morning, sir.", coachLine ?? taskSentences[2]].join(" ");
+}
+
 /**
  * Morning brief: the day as a checklist, then a poll for each task left open
  * from an earlier day, then a quiet nudge for the stalest inbox item.
@@ -95,7 +121,11 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const inboxCount = tasks.filter((task) => task.status === "inbox").length;
 
   const view = await dayView(now, now, { lead: "Good morning, sir." });
-  const html = inboxCount > 0 ? `${view.html}\n\n📥 ${i(`${inboxCount} in the inbox`)}` : view.html;
+  // The coach: one personal line from the habit log, and each habit's facts.
+  const coach = await coachForBrief(now);
+  const html = [view.html, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+    .filter(Boolean)
+    .join("\n\n");
 
   // Yesterday's brief and plan make way for today's.
   await retire({ kinds: ["brief:morning", "plan"] }, now);
@@ -108,13 +138,8 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   if (boardReady) await postBoard(bot, chatId, now).catch((error) => console.error("Could not post the Today message:", error));
   let sent = 1;
   {
-    // The brief in a sentence or two, said aloud.
-    const first = view.open[0];
-    const spoken = [
-      "Good morning, sir.",
-      view.open.length ? `${view.open.length === 1 ? "One task" : `${view.open.length} tasks`} today${first ? `, starting with ${first.title} at ${formatTime(new Date(first.due_at!), settings.timezone)}` : ""}.` : "Nothing is scheduled for today.",
-      view.overdue.length ? `${view.overdue.length === 1 ? "One item is" : `${view.overdue.length} items are`} carried over.` : "",
-    ].join(" ");
+    // Said aloud: today's key tasks and the coach's one line, about 300 characters at most.
+    const spoken = spokenBrief(view.open, view.overdue.length, coach.line, settings.timezone);
     const voiceId = await sayAloud(bot, chatId, spoken, "brief", { now, silent: true });
     if (voiceId !== undefined) await track(voiceId, "brief:morning");
   }

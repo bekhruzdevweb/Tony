@@ -1,4 +1,5 @@
 import "server-only";
+import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
 import { logMessage, recentMessages, type Channel } from "../messages";
 import { OPEN_STATUSES, type Task } from "../tasks";
@@ -36,11 +37,12 @@ function recentNote(row: { pending_note: string | null; pending_note_at: string 
 
 async function loadContext() {
   const db = requireDb();
-  const [memory, tasks, projects, settings] = await Promise.all([
+  const [memory, tasks, projects, settings, habits] = await Promise.all([
     db.from("memory").select("id, fact").order("id"),
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(60),
     db.from("projects").select("id, name").order("sort_order"),
     db.from("settings").select("last_shared_text, last_shared_at, pending_note, pending_note_at").limit(1).maybeSingle(),
+    habitsForPrompt(),
   ]);
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
@@ -65,6 +67,7 @@ async function loadContext() {
     reminders: (reminders.data ?? []) as ReminderFact[],
     shared: recentShare(settings.data as { last_shared_text: string | null; last_shared_at: string | null } | null),
     waiting: recentNote(settings.data as { pending_note: string | null; pending_note_at: string | null } | null),
+    habits,
   };
 }
 

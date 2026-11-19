@@ -1,5 +1,6 @@
 import "server-only";
 import { InputFile, type Bot } from "grammy";
+import { requireDb } from "./db";
 import { env } from "./env";
 import { joinPcm, pcmToOggOpus, readWav } from "./ogg-opus";
 import { minuteOfDay, TIMEZONE } from "./time";
@@ -16,7 +17,7 @@ import { minuteOfDay, TIMEZONE } from "./time";
  * Orpheus, and nowhere else: the text message never contains one, and
  * ElevenLabs, which would read a bracketed word aloud, is never sent one.
  */
-export type SpeechOccasion = "reply" | "completed" | "brief";
+export type SpeechOccasion = "reply" | "completed" | "brief" | "coach" | "coach:firm";
 
 /** What he says aloud is short; the detail is in the text message. */
 const MAX_SPOKEN = 300;
@@ -36,7 +37,8 @@ const NIGHT_UNTIL = 7 * 60;
 export function vocalDirection(occasion: SpeechOccasion, now = new Date()): string | undefined {
   const minute = minuteOfDay(now, TIMEZONE);
   if (minute >= NIGHT_FROM || minute < NIGHT_UNTIL) return "calm";
-  if (occasion === "brief" || occasion === "completed") return "cheerful";
+  if (occasion === "coach:firm") return "firmly";
+  if (occasion === "brief" || occasion === "completed" || occasion === "coach") return "cheerful";
   return undefined;
 }
 
@@ -126,7 +128,72 @@ async function elevenLabsRequest(text: string, format: string): Promise<Uint8Arr
   if (!response.ok) {
     throw new Error(`ElevenLabs answered ${response.status}: ${(await response.text().catch(() => "")).slice(0, 300)}`);
   }
-  return new Uint8Array(await response.arrayBuffer());
+  const audio = new Uint8Array(await response.arrayBuffer());
+  // Every character ElevenLabs speaks counts against the month's quota.
+  await recordUsage(text.length);
+  return audio;
+}
+
+/** The month the usage count belongs to (YYYY-MM, Tashkent time). */
+const monthOf = (at: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE, year: "numeric", month: "2-digit" }).format(at);
+
+/** Adds characters to this month's ElevenLabs count. Never throws. */
+async function recordUsage(chars: number, now = new Date()): Promise<void> {
+  try {
+    const db = requireDb();
+    const { data, error } = await db.from("settings").select("tts_month, tts_chars").limit(1).maybeSingle();
+    if (error) return console.error(`recordUsage: ${error.message}`);
+    const row = data as { tts_month: string | null; tts_chars: number | null } | null;
+    const month = monthOf(now);
+    const used = row?.tts_month === month ? Number(row.tts_chars ?? 0) : 0;
+    const update = await db.from("settings").update({ tts_month: month, tts_chars: used + chars }).eq("id", true);
+    if (update.error) console.error(`recordUsage: ${update.error.message}`);
+  } catch (error) {
+    console.error("recordUsage:", error);
+  }
+}
+
+export type VoiceBudget = { used: number; limit: number; share: number; source: "elevenlabs" | "counted" };
+let planCache: { at: number; used: number; limit: number } | undefined;
+const PLAN_CACHE_MS = 10 * 60_000;
+/** Above this share of the month's characters, only the morning brief is spoken. */
+export const VOICE_BUDGET_SHARE = 0.8;
+
+/**
+ * How much of the month's ElevenLabs characters are used. The plan's own
+ * figures when the key may read them (they include anything spoken outside
+ * Tony); otherwise Tony's own count against ELEVENLABS_MONTHLY_CHARS.
+ */
+export async function voiceBudget(now = new Date()): Promise<VoiceBudget> {
+  let counted = 0;
+  try {
+    const { data } = await requireDb().from("settings").select("tts_month, tts_chars").limit(1).maybeSingle();
+    const row = data as { tts_month: string | null; tts_chars: number | null } | null;
+    counted = row?.tts_month === monthOf(now) ? Number(row.tts_chars ?? 0) : 0;
+  } catch {
+    counted = 0;
+  }
+  if (env.elevenLabsApiKey) {
+    if (!planCache || Date.now() - planCache.at > PLAN_CACHE_MS) {
+      try {
+        const response = await fetch(`${env.elevenLabsBaseUrl}/v1/user/subscription`, { headers: { "xi-api-key": env.elevenLabsApiKey }, signal: AbortSignal.timeout(4_000) });
+        if (response.ok) {
+          const plan = (await response.json()) as { character_count?: number; character_limit?: number };
+          if (typeof plan.character_count === "number" && typeof plan.character_limit === "number" && plan.character_limit > 0) {
+            planCache = { at: Date.now(), used: plan.character_count, limit: plan.character_limit };
+          }
+        }
+      } catch {
+        // Not readable: Tony's own count is used.
+      }
+    }
+    if (planCache) {
+      const used = Math.max(planCache.used, counted);
+      return { used, limit: planCache.limit, share: used / planCache.limit, source: "elevenlabs" };
+    }
+  }
+  const limit = env.elevenLabsMonthlyChars;
+  return { used: counted, limit, share: counted / limit, source: "counted" };
 }
 
 const PCM_RATE = 24_000;
@@ -161,12 +228,20 @@ export async function sayAloud(
   chatId: number,
   text: string,
   occasion: SpeechOccasion,
-  options: { now?: Date; silent?: boolean } = {},
+  options: { now?: Date; silent?: boolean; caption?: string } = {},
 ): Promise<number | undefined> {
   if (!canSpeak()) return undefined;
   try {
     const words = spokenPart(text);
     if (!words) return undefined;
+    // Past 80% of the month's characters, only the morning brief is spoken.
+    if (occasion !== "brief" && env.elevenLabsApiKey && env.elevenLabsVoiceId) {
+      const budget = await voiceBudget(options.now);
+      if (budget.share >= VOICE_BUDGET_SHARE) {
+        console.warn(`Voice kept for the morning brief: ${budget.used} of ${budget.limit} ElevenLabs characters used this month (${budget.source}).`);
+        return undefined;
+      }
+    }
     let voice: Uint8Array | undefined;
     if (env.elevenLabsApiKey && env.elevenLabsVoiceId) {
       try {
@@ -179,7 +254,10 @@ export async function sayAloud(
       if (!env.ttsModel || !env.sttApiKey) return undefined;
       voice = await orpheus(words, vocalDirection(occasion, options.now));
     }
-    const sent = await bot.api.sendVoice(chatId, new InputFile(voice, "tony.ogg"), { disable_notification: options.silent });
+    const sent = await bot.api.sendVoice(chatId, new InputFile(voice, "tony.ogg"), {
+      disable_notification: options.silent,
+      ...(options.caption ? { caption: options.caption.slice(0, 1024), parse_mode: "HTML" as const } : {}),
+    });
     return sent.message_id;
   } catch (error) {
     console.error("Spoken message failed:", error);
