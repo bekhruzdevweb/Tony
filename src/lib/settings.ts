@@ -16,7 +16,6 @@ export type Settings = {
   login_token_expires_at: string | null;
   last_shared_text: string | null;
   last_shared_at: string | null;
-  business_connection_id: string | null;
   pending_choices: { question: string; options: string[] } | null;
   pending_note: string | null;
   pending_note_at: string | null;

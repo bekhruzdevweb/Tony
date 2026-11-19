@@ -4,6 +4,7 @@ import { runBriefs } from "@/lib/briefs";
 import { runSuggestions } from "@/lib/suggest";
 import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
+import { pruneUpdates } from "@/lib/dedupe";
 import { env } from "@/lib/env";
 import { runTick } from "@/lib/reminders";
 import { getSettings } from "@/lib/settings";
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
         if (briefs === 0) await runSuggestions(bot, chatId, settings, now);
       },
     });
+    // Once an hour, forget update ids too old for Telegram to resend.
+    if (new Date().getMinutes() === 7) await pruneUpdates().catch(() => undefined);
     // Last, tidy the chat: remove messages whose time has come.
     const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));
     return Response.json({ ok: true, ...result, cleaned: cleaned?.deleted ?? 0 });

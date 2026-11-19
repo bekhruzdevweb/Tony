@@ -178,14 +178,16 @@ line what it is, and offers to make it a task with its date. The item is
 remembered for 12 hours as "the last thing you shared", so "schedule this for
 tomorrow", typed or spoken, refers to it.
 
-**Native checklists (trial).** Telegram's own checklists can only be sent
-through a Telegram Business connection, on behalf of your account, and its
-documentation does not say whether a connected bot may post one into its own
-chat. `/checklist` tries it and reports Telegram's answer. To connect: in
-@BotFather turn on Business Mode for the bot; then Telegram → Settings →
-Telegram Business → Chatbots → add the bot, with access limited to selected
-chats and none selected for anyone else. Until this is proven, `/today`,
-`/tomorrow` and the brief use the button checklist.
+**No repeats.** Telegram can deliver one update several times; each update
+id is recorded and a second arrival is ignored. Separately, the same text
+with the same buttons is never sent twice within five minutes: the second
+send is skipped and the first message stands. A mistyped command gets the
+closest real one suggested ("/tody" → "Did you mean /today?").
+
+Native Telegram checklists are not used: a bot can only send them through a
+Business connection into the owner's chats with other people, not into its
+own chat (Telegram answers `BUSINESS_PEER_INVALID`). The ☐/☑ buttons are the
+checklist.
 
 **Tidying.** Messages Tony will remove later are recorded in
 `chat_messages`; the minute tick deletes what is due.

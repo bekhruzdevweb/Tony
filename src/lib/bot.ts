@@ -17,6 +17,7 @@ import {
   type MessageKind,
 } from "./chat-log";
 import { requireDb } from "./db";
+import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
 import { logMessage } from "./messages";
@@ -28,7 +29,7 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
-import { connectTelegram, HELP } from "./telegram-setup";
+import { closestCommand, connectTelegram, HELP } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
@@ -53,6 +54,9 @@ export function getBot(): Bot | undefined {
 
   // /start is answered for anyone, so the owner can learn their chat ID
   // before TELEGRAM_OWNER_ID is set. It reveals nothing but the sender's own ID.
+  // The same text is never sent twice running.
+  refuseRepeats(bot);
+
   bot.command("start", async (ctx) => {
     const ownerId = env.telegramOwnerId;
     if (ownerId === undefined) {
@@ -78,7 +82,7 @@ export function getBot(): Bot | undefined {
   bot.use((ctx, next) => {
     const ownerId = env.telegramOwnerId;
     // A poll vote names the voter but no chat; in a private chat the two ids are the same.
-    const who = ctx.chat?.id ?? ctx.from?.id ?? ctx.pollAnswer?.user?.id ?? ctx.businessConnection?.user.id;
+    const who = ctx.chat?.id ?? ctx.from?.id ?? ctx.pollAnswer?.user?.id;
     if (ownerId !== undefined && who !== ownerId) return;
     return next();
   });
@@ -184,47 +188,6 @@ export function getBot(): Bot | undefined {
       taskId: task.id,
       deleteAfter: hoursFromNow(CONFIRMATION_HOURS),
     });
-  });
-
-  // He connected (or disconnected) Tony under Telegram Business. Only needed for native checklists.
-  tasks.on("business_connection", async (ctx) => {
-    const ownerId = env.telegramOwnerId;
-    const connection = ctx.businessConnection;
-    if (ownerId === undefined || connection.user.id !== ownerId) return;
-    await updateSettings({ business_connection_id: connection.is_enabled ? connection.id : null });
-    await sendTracked(
-      bot,
-      ownerId,
-      connection.is_enabled
-        ? "Connected under Telegram Business, sir. Send /checklist and I shall try a native checklist here."
-        : "The Business connection is switched off, sir. The button checklists carry on as before.",
-    );
-  });
-
-  // A trial of Telegram's native checklist in this chat. Telegram's documentation does not say whether
-  // a connected bot may post one into its own chat, so this finds out and reports exactly what Telegram answers.
-  tasks.command("checklist", async (ctx) => {
-    const { business_connection_id } = await getSettings();
-    if (!business_connection_id) {
-      return ctx.reply(
-        "No Business connection yet, sir. In Telegram: Settings → Telegram Business → Chatbots, add me, and choose which chats I may access. Then send /checklist again.",
-      );
-    }
-    const view = await dayView(new Date());
-    const open = [...view.overdue, ...view.open].slice(0, 30);
-    if (open.length === 0) return ctx.reply("Nothing is open today, sir, so there is nothing to put in a checklist.");
-    try {
-      await bot.api.sendChecklist(business_connection_id, bot.botInfo.id, {
-        title: "Today",
-        tasks: open.map((task) => ({ id: task.id, text: `${formatTime(new Date(task.due_at!))} ${task.title}`.slice(0, 100) })),
-        others_can_mark_tasks_as_done: true,
-      });
-      return await ctx.reply("That worked, sir: Telegram accepted a native checklist in this chat. Tell Claude, and /today can be switched over.");
-    } catch (error) {
-      const reason = String((error as { description?: string })?.description ?? error).slice(0, 300);
-      console.error("Native checklist refused:", error);
-      return ctx.reply(`Telegram refused a native checklist in this chat, sir. Its answer: ${reason}`);
-    }
   });
 
   // A vote in one of Tony's polls. Plain code, like the buttons.
@@ -560,7 +523,8 @@ export function getBot(): Bot | undefined {
   tasks.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) {
-      return ctx.reply("I don't know that command, sir. Try /help.");
+      const guess = closestCommand(text);
+      return ctx.reply(guess ? `I don't know that command, sir. Did you mean /${guess}?` : "I don't know that command, sir. /help lists the ones I do.");
     }
     if (!text) return;
     // A forwarded post is material to read, not something he typed.

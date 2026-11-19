@@ -27,7 +27,7 @@ export const HELP = [
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */
-export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer", "business_connection"] as const;
+export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer"] as const;
 
 /**
  * The bot's command list, its Menu button and its webhook. With an https
@@ -44,4 +44,40 @@ export async function connectTelegram(bot: Bot, appUrl: string | null | undefine
   }
   await bot.api.setChatMenuButton({ menu_button: { type: "web_app", text: "Tony", web_app: { url: base } } });
   return { menuButton: true };
+}
+
+/** Every command Tony answers, including the ones kept out of the menu. */
+const KNOWN_COMMANDS = [...COMMANDS.map((entry) => entry.command), "start", "test"];
+
+/** Edit distance: how many single-letter changes turn one word into the other. */
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, n) => n);
+  for (let x = 1; x <= a.length; x++) {
+    let previous = row[0];
+    row[0] = x;
+    for (let y = 1; y <= b.length; y++) {
+      const kept = row[y];
+      row[y] = Math.min(row[y] + 1, row[y - 1] + 1, previous + (a[x - 1] === b[y - 1] ? 0 : 1));
+      previous = kept;
+    }
+  }
+  return row[b.length];
+}
+
+/**
+ * The command he most likely meant by a mistyped one ("/tody" gives
+ * "today"), or undefined when nothing is close enough to be worth guessing.
+ */
+export function closestCommand(typed: string): string | undefined {
+  const word = typed.trim().replace(/^\//, "").split(/[\s@]/)[0].toLowerCase();
+  if (!word) return undefined;
+  let best: { command: string; score: number } | undefined;
+  for (const command of KNOWN_COMMANDS) {
+    // A typed beginning ("/tom") counts as close; otherwise allow about one slip per three letters.
+    // Two neighbouring letters swapped ("/hlep") is one slip, not two.
+    const swapped = word.length === command.length && [...word].some((_, n) => n + 1 < word.length && word.slice(0, n) + word[n + 1] + word[n] + word.slice(n + 2) === command);
+    const score = command.startsWith(word) && word.length >= 2 ? 0.5 : swapped ? 1 : distance(word, command);
+    if (score <= Math.max(1, Math.floor(command.length / 3)) && (!best || score < best.score)) best = { command, score };
+  }
+  return best?.command;
 }

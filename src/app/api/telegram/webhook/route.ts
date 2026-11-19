@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Update } from "grammy/types";
 import { after } from "next/server";
 import { getBot } from "@/lib/bot";
+import { firstSight } from "@/lib/dedupe";
 import { env } from "@/lib/env";
 
 // Room for the AI model to think; Telegram itself is answered at once.
@@ -34,6 +35,9 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Bad request" }, { status: 400 });
   }
+
+  // Telegram sometimes delivers an update more than once; act on it only the first time.
+  if (!(await firstSight(update.update_id))) return Response.json({ ok: true, duplicate: true });
 
   await bot.init();
   after(async () => {
