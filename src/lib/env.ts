@@ -32,6 +32,16 @@ export const env = {
   get aiModel() {
     return read("AI_MODEL") ?? "openai/gpt-oss-120b";
   },
+  /** Speech-to-text. Defaults to the same provider and key as the brain. */
+  get sttApiKey() {
+    return read("STT_API_KEY") ?? read("AI_API_KEY");
+  },
+  get sttBaseUrl() {
+    return (read("STT_BASE_URL") ?? read("AI_BASE_URL") ?? "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+  },
+  get sttModel() {
+    return read("STT_MODEL") ?? "whisper-large-v3";
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

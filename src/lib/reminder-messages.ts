@@ -49,14 +49,17 @@ export function persistentReminder(
 ): { text: string; keyboard?: InlineKeyboard } {
   if (!nextAt) return { text: `I'll leave "${task.title}" here for today, sir.` };
 
-  const keyboard = new InlineKeyboard().text("Starting now", data("start", task.id));
+  // The three main buttons never change place from one nudge to the next, so
+  // a thumb aiming at "15 min" cannot land on something else. The offer to
+  // move the task gets a row of its own.
+  const keyboard = new InlineKeyboard()
+    .text("Starting now", data("start", task.id))
+    .text("15 min", data("snooze", task.id, 15))
+    .text("Skip today", data("skip", task.id));
   if (attempt === 2) {
     const later = laterThisEvening(now);
-    keyboard.text(`Move to ${formatTime(later)}`, data("move", task.id, Math.round(later.getTime() / 60_000)));
-  } else {
-    keyboard.text("15 min", data("snooze", task.id, 15));
+    keyboard.row().text(`Move to ${formatTime(later)}`, data("move", task.id, Math.round(later.getTime() / 60_000)));
   }
-  keyboard.text("Skip today", data("skip", task.id));
 
   const text =
     attempt === 0

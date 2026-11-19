@@ -52,7 +52,7 @@ export default async function Home() {
     },
     {
       label: "Brain",
-      hint: env.aiApiKey ? `Model: ${env.aiModel}` : "AI_API_KEY is not set",
+      hint: env.aiApiKey ? `Model: ${env.aiModel}; voice: ${env.sttModel}` : "AI_API_KEY is not set",
       ready: Boolean(env.aiApiKey),
     },
     {
@@ -90,7 +90,7 @@ export default async function Home() {
       </ul>
 
       <p className="mt-auto pt-10 text-center text-caption text-secondary">
-        Phase 4 of 8 · Brain
+        Phase 5 of 8 · Voice notes
       </p>
     </main>
   );

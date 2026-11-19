@@ -107,7 +107,9 @@ export function formatDue(at: Date, now = new Date(), timeZone = TIMEZONE): stri
   if (day === localDate(now, timeZone)) return `today ${time}`;
   if (day === localDate(addMinutes(now, 24 * 60), timeZone)) return `tomorrow ${time}`;
   if (day === localDate(addMinutes(now, -24 * 60), timeZone)) return `yesterday ${time}`;
-  const label = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short" }).format(at);
+  // Name the year only when it is not this one.
+  const year = day.slice(0, 4) === localDate(now, timeZone).slice(0, 4) ? undefined : "numeric";
+  const label = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short", year }).format(at);
   return `${label.replace(",", "")} ${time}`;
 }
 

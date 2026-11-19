@@ -11,10 +11,10 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 1 | Setup: site loads, bot answers `/ping` with `pong` | Passed |
 | 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Passed |
 | 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Passed |
-| 4 | Tony's brain: prompt, seven tools, natural dates | Built, awaiting your check |
-| 5 | Voice notes | Not started |
+| 4 | Tony's brain: prompt, seven tools, natural dates | Passed |
+| 5 | Voice notes: download, transcribe, hand to the brain | Built, awaiting your check |
 | 6 | The app (PWA) | Not started |
-| 7 | Briefs, missed tasks, memory | Not started |
+| 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Not started |
 | 8 | Live week | Not started |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
@@ -49,21 +49,26 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Phase 4 check
+## Phase 5 check
 
-Tony now reads every message with an AI model and acts through seven tools
+Send Tony a voice note. He downloads it from Telegram, has it transcribed,
+and handles the text exactly like a typed message. There is nothing to set up:
+transcription uses the same provider and key as the brain (`whisper-large-v3`
+on Groq). The language is detected, so Uzbek and Russian notes are understood;
+Tony still replies in English.
+
+**Done when:** "remind me to work out at 6 pm", spoken, creates the same
+persistent task as when typed.
+
+Optional settings: `STT_MODEL`, `STT_BASE_URL`, `STT_API_KEY` (each defaults
+to the brain's provider).
+
+## Tony's brain
+
+Tony reads every message with an AI model and acts through seven tools
 (`add_task`, `update_task`, `complete_task`, `list_tasks`, `set_reminder`,
-`remember`, `forget`). Button taps and `/today`, `/inbox`, `/ping` still run
-plain code.
-
-Setup, once:
-
-1. Create a free API key at console.groq.com (API Keys → Create).
-2. In Vercel add it as `AI_API_KEY` and redeploy. The site's **Brain** dot
-   turns green and shows the model in use.
-
-**Done when:** "remind me to work out at 6 pm" creates a persistent task at
-18:00 and Tony confirms in his voice.
+`remember`, `forget`). Button taps and `/today`, `/inbox`, `/ping` run plain
+code. `AI_API_KEY` is a Groq key from console.groq.com.
 
 The model is one swappable setting. Any OpenAI-compatible chat API with tool
 calling works:

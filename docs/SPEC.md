@@ -215,7 +215,7 @@ Stack: Next.js (App Router, TypeScript) on Vercel; Supabase (Postgres + auth); g
    Done when: the same workout request works as a voice note.
 6. **The app.** PWA install, Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings, light and dark themes, design tokens above.
    Done when: the app installs on the phone and a task created in Telegram appears there within seconds.
-7. **Briefs, missed tasks, memory.** Morning brief, evening review, overdue and 3-day stale checks, remember and forget, memory list in Settings.
+7. **Briefs, missed tasks, memory.** Repeating tasks roll forward to their next date after Done or Skip (added by the owner). Morning brief, evening review, overdue and 3-day stale checks, remember and forget, memory list in Settings.
    Done when: a task left undone yesterday appears in this morning's brief.
 8. **Live week.** Use Tony for 7 days, log every annoying or missed reminder, tune the schedule and prompt.
    Done when: a full week passes with no missed reminders and no message Behruzbek wanted to mute.
@@ -234,7 +234,7 @@ Muse-style powers arrive after v1 runs reliably for a month.
 
 Open questions:
 
-- [ ] Should Tony also understand Uzbek and Russian voice notes, while replying in English?
+- [ ] Should Tony also understand Uzbek and Russian voice notes, while replying in English? (As built: the language is auto-detected, so he does.)
 - [ ] Exact quiet hours: is 23:00 to 07:00 right?
-- [ ] Default projects: Teaching, Content, Health, Personal, or others?
+- [x] Default projects: Teaching, Content, Health, Personal, or others? **Answered: keep these four.**
 - [ ] App name on the home screen: "Tony"?

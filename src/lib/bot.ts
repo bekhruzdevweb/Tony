@@ -1,5 +1,5 @@
 import "server-only";
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { respond } from "./brain";
 import { env } from "./env";
 import { logMessage } from "./messages";
@@ -9,6 +9,7 @@ import { parseAction } from "./reminder-messages";
 import { addScheduledTask } from "./reminders";
 import { addInboxTask, listInbox, listToday } from "./tasks";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
+import { MAX_VOICE_SECONDS, transcribeVoice } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -104,14 +105,8 @@ export function getBot(): Bot | undefined {
     }
   });
 
-  // Everything else goes to Tony's brain.
-  tasks.on("message:text", async (ctx) => {
-    const text = ctx.message.text.trim();
-    if (text.startsWith("/")) {
-      return ctx.reply("I don't know that command, sir. Try /today or /inbox.");
-    }
-    if (!text) return;
-    await ctx.replyWithChatAction("typing").catch(() => undefined);
+  // One path for typed and spoken messages: the brain, with a safe fallback.
+  const think = async (ctx: Context, text: string) => {
     try {
       return await ctx.reply(await respond(text, "telegram"));
     } catch (error) {
@@ -122,9 +117,38 @@ export function getBot(): Bot | undefined {
       await logMessage("tony", reply);
       return ctx.reply(reply);
     }
+  };
+
+  tasks.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+    if (text.startsWith("/")) {
+      return ctx.reply("I don't know that command, sir. Try /today or /inbox.");
+    }
+    if (!text) return;
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    return think(ctx, text);
   });
 
-  tasks.on("message", (ctx) => ctx.reply("Text only for now, sir. Voice notes come a little later."));
+  // Voice notes (and audio files): transcribe, then treat like typed text.
+  tasks.on(["message:voice", "message:audio"], async (ctx) => {
+    const media = ctx.message.voice ?? ctx.message.audio;
+    if (!media) return;
+    if (media.duration > MAX_VOICE_SECONDS) {
+      return ctx.reply("That one is rather long, sir. Could you give me the short version?");
+    }
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    let text: string;
+    try {
+      text = await transcribeVoice(bot, media.file_id);
+    } catch (error) {
+      console.error("Voice note failed:", error);
+      return ctx.reply("My apologies, sir. I could not hear that one; would you send it again or type it?");
+    }
+    if (!text) return ctx.reply("I heard only silence, sir. Would you say that again?");
+    return think(ctx, text);
+  });
+
+  tasks.on("message", (ctx) => ctx.reply("Text or a voice note, sir; I cannot read that kind of message yet."));
 
   cached = { token, bot };
   return bot;

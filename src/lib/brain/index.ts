@@ -26,6 +26,20 @@ async function loadContext() {
   };
 }
 
+/** Small repairs to the model's wording before it reaches the lock screen. */
+export function tidyReply(text: string): string {
+  return (
+    text
+      .trim()
+      // A missing space after a sentence end: "sir.Your" becomes "sir. Your".
+      .replace(/([.!?])(?=[A-Z])/g, "$1 ")
+      // Telegram shows this as plain text, so markdown emphasis is only noise.
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/[ \t]{2,}/g, " ")
+  );
+}
+
 /**
  * Tony's brain: one user message in, one short reply out. The same function
  * serves Telegram and the app, so both share one conversation.
@@ -47,10 +61,13 @@ export async function respond(text: string, channel: Channel = "telegram", now =
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answer = await chat(messages, TOOLS);
     if (!answer.tool_calls) {
-      reply = answer.content?.trim();
+      reply = tidyReply(answer.content ?? "");
       break;
     }
-    messages.push({ role: "assistant", content: answer.content, tool_calls: answer.tool_calls });
+    // Anything the model says while calling a tool is dropped: it has not seen
+    // the result yet, and keeping it made the final reply repeat itself
+    // ("Remembered, sir.Your preference is noted, sir.").
+    messages.push({ role: "assistant", content: null, tool_calls: answer.tool_calls });
     for (const call of answer.tool_calls) {
       let result: unknown;
       try {
