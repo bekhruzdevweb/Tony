@@ -1,9 +1,11 @@
 import "server-only";
 import type { Bot } from "grammy";
 import { requireDb } from "./db";
+import { env } from "./env";
 import { retire, sendHtml, track } from "./chat-log";
 import { plain } from "./html";
 import { logMessage } from "./messages";
+import { sayAloud } from "./speech";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
@@ -271,6 +273,12 @@ export async function runTick(
     await logMessage("tony", plain(message.text));
     // Tracked, so it is removed once the task is done, skipped or moved.
     await track(messageId, "reminder", { taskId: task.id });
+    // With TTS_SPEAK=all, a persistent reminder also speaks from its third
+    // nudge on, more firmly. Only when there is time left in this tick.
+    if (env.ttsSpeakAll && chained && attempt >= 2 && nextAt && Date.now() - started < TICK_BUDGET_MS / 2) {
+      const voiceId = await sayAloud(bot, chatId, plain(message.text), "nudge", { now, nudgeNumber: attempt + 1 });
+      if (voiceId !== undefined) await track(voiceId, "reminder", { taskId: task.id });
+    }
 
     sentThisHour++;
     result.sent++;

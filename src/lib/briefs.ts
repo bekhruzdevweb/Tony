@@ -3,11 +3,13 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
 import { retire, sendHtml, track, type MessageKind } from "./chat-log";
 import { requireDb } from "./db";
+import { env } from "./env";
 import { b, code, esc, expandable, i, plain } from "./html";
 import { logMessage } from "./messages";
 import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
 import { data } from "./reminder-messages";
 import type { Settings } from "./settings";
+import { sayAloud } from "./speech";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
 import { dayView, loadProjects, taskLine } from "./views";
@@ -101,6 +103,17 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const briefId = await send(bot, chatId, html, { keyboard: view.keyboard, kind: "brief:morning" });
   await record(now, briefId, MORNING);
   let sent = 1;
+  if (env.ttsSpeakAll) {
+    // The brief in a sentence or two, said cheerfully.
+    const first = view.open[0];
+    const spoken = [
+      "Good morning, sir.",
+      view.open.length ? `${view.open.length === 1 ? "One task" : `${view.open.length} tasks`} today${first ? `, starting with ${first.title} at ${formatTime(new Date(first.due_at!), settings.timezone)}` : ""}.` : "Nothing is scheduled for today.",
+      view.overdue.length ? `${view.overdue.length === 1 ? "One item is" : `${view.overdue.length} items are`} carried over.` : "",
+    ].join(" ");
+    const voiceId = await sayAloud(bot, chatId, spoken, "brief", { now, silent: true });
+    if (voiceId !== undefined) await track(voiceId, "brief:morning");
+  }
 
   // Missed tasks come back, one question each, oldest first.
   for (const task of carried.slice(0, MAX_MISSED_POLLS)) {

@@ -68,6 +68,14 @@ export const env = {
   get ttsVoice() {
     return read("TTS_VOICE") ?? "daniel";
   },
+  /**
+   * What Tony says aloud: "replies" (the default) answers voice notes;
+   * "all" also speaks the morning brief and the later nudges of a
+   * persistent reminder.
+   */
+  get ttsSpeakAll() {
+    return read("TTS_SPEAK")?.toLowerCase() === "all";
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

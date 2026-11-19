@@ -173,10 +173,26 @@ After a deployment that adds a new kind of update (poll votes were one),
 send `/start` to Tony once: it refreshes the webhook, the command list and
 the Menu button.
 
-**Spoken replies** to voice notes: set `TTS_MODEL` (on Groq:
+**Spoken replies.** Set `TTS_MODEL` (on Groq:
 `canopylabs/orpheus-v1-english`, after accepting its terms in the Groq
-console) and optionally `TTS_VOICE`. The WAV is converted on the server to
-OGG/Opus, so Telegram shows a voice bubble.
+console) and optionally `TTS_VOICE`. Tony then answers voice notes aloud;
+the WAV is converted on the server to OGG/Opus, so Telegram shows a voice
+bubble. With `TTS_SPEAK=all` he also speaks the morning brief and, for a
+persistent reminder, the third nudge onwards.
+
+His delivery follows the occasion, using Orpheus's bracketed vocal
+directions (free-form, one or two words). The direction is added only to
+what is sent to the speech model; text messages never contain it.
+
+| When | Direction |
+|------|-----------|
+| 21:00 to 07:00, whatever the occasion | `[calm]` |
+| A persistent reminder's third nudge onwards | `[firmly]` |
+| The morning brief; a task just completed | `[cheerful]` |
+| Anything else | none (his ordinary voice) |
+
+Orpheus accepts 200 characters per request, so longer text is split at
+sentence ends into up to three requests and joined into one voice note.
 
 ## Tony's brain
 

@@ -13,7 +13,7 @@ const FRAME_MS = 20;
 const PRE_SKIP = 3840;
 const PACKETS_PER_PAGE = 50; // one second of audio per Ogg page
 
-type Pcm = { samples: Int16Array; sampleRate: number; channels: number };
+export type Pcm = { samples: Int16Array; sampleRate: number; channels: number };
 
 /** Reads 16-bit PCM out of a WAV file. Throws on anything else. */
 export function readWav(bytes: Uint8Array): Pcm {
@@ -129,7 +129,23 @@ const ascii = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(
 
 /** WAV bytes in, OGG/Opus bytes out (mono, voice-tuned). */
 export function wavToOggOpus(wav: Uint8Array): Uint8Array {
-  const pcm = readWav(wav);
+  return pcmToOggOpus(readWav(wav));
+}
+
+/** Several clips spoken one after another, as one. They must share a sample rate. */
+export function joinPcm(clips: Pcm[]): Pcm {
+  const mono = clips.map(toMono);
+  const samples = new Int16Array(mono.reduce((sum, clip) => sum + clip.length, 0));
+  let offset = 0;
+  for (const clip of mono) {
+    samples.set(clip, offset);
+    offset += clip.length;
+  }
+  return { samples, sampleRate: clips[0].sampleRate, channels: 1 };
+}
+
+/** Raw samples in, OGG/Opus bytes out (mono, voice-tuned). */
+export function pcmToOggOpus(pcm: Pcm): Uint8Array {
   let samples = toMono(pcm);
   let rate = pcm.sampleRate;
   if (!(OPUS_RATES as readonly number[]).includes(rate)) {
