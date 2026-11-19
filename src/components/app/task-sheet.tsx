@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AppProject } from "@/lib/app-types";
+import type { AppMedia, AppProject } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime, localDate } from "@/lib/time";
 import { Icon, isOpen } from "./ui";
@@ -15,11 +15,13 @@ const label = "mb-1.5 block px-1 text-caption font-medium text-secondary";
 export function TaskSheet(props: {
   target: SheetTarget;
   projects: AppProject[];
+  /** Photos and files attached to this task. */
+  media?: AppMedia[];
   onClose: () => void;
   onSave: (action: "add_task" | "update_task", payload: Record<string, unknown>) => Promise<boolean>;
   onDelete: (task: Task) => void;
 }) {
-  const { target, projects, onClose, onSave, onDelete } = props;
+  const { target, projects, media = [], onClose, onSave, onDelete } = props;
   const task = target.task;
   const due = task?.due_at ? new Date(task.due_at) : undefined;
 
@@ -84,6 +86,35 @@ export function TaskSheet(props: {
             />
             <textarea className={field} rows={2} placeholder="Notes" value={notes ?? ""} onChange={(event) => setNotes(event.target.value)} />
           </div>
+
+          {media.length > 0 && (
+            <div>
+              <span className={label}>Attached</span>
+              <ul className="space-y-2">
+                {media.map((item) => (
+                  <li key={item.id} className="overflow-hidden rounded-card bg-surface">
+                    {item.url && (item.kind === "photo" || item.kind === "animation") && (
+                      // A temporary signed link to a private file: not something the image optimiser can fetch.
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.url} alt={item.note ?? item.caption ?? "Attached photo"} className="max-h-72 w-full object-contain" loading="lazy" />
+                    )}
+                    {item.url && item.kind === "video" && <video src={item.url} controls preload="metadata" className="max-h-72 w-full" />}
+                    {item.url && (item.kind === "voice" || item.kind === "audio") && <audio src={item.url} controls className="w-full" />}
+                    <p className="px-3.5 py-2.5 text-sub">
+                      <span className="font-medium capitalize">{item.kind}</span>
+                      {(item.note || item.caption) && <span className="text-secondary"> · {item.note ?? item.caption}</span>}
+                      {!item.url && <span className="block text-caption text-secondary">Kept in Telegram; Tony sends it with the reminder.</span>}
+                      {item.url && item.kind === "document" && (
+                        <a href={item.url} target="_blank" rel="noreferrer" className="block text-primary">
+                          Open file
+                        </a>
+                      )}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div>
             <span className={label}>Date and time (Tashkent)</span>

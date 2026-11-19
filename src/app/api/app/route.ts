@@ -1,5 +1,8 @@
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
+import { getBot } from "@/lib/bot";
+import { env } from "@/lib/env";
+import { refreshBoard } from "@/lib/today-board";
 import { think } from "@/lib/brain";
 import { runTool } from "@/lib/brain/tools";
 import { requireDb } from "@/lib/db";
@@ -131,6 +134,10 @@ export async function POST(request: Request) {
       default:
         return json({ ok: false, error: "Unknown action" }, 400);
     }
+
+    // A change made in the app shows on the pinned Today message in Telegram as well.
+    const bot = getBot();
+    if (bot && env.telegramOwnerId !== undefined) await refreshBoard(bot, env.telegramOwnerId);
 
     const state = await loadAppState();
     return problem ? json({ ok: false, error: problem, state }) : json({ ok: true, state, reply });

@@ -85,7 +85,7 @@ export async function respond(text: string, channel: Channel = "telegram", now =
 export async function think(
   text: string,
   options: { channel?: Channel; now?: Date; context?: string } = {},
-): Promise<{ reply: string; tools: string[]; titles: string[]; planId?: number; choices?: { question: string; options: string[] } }> {
+): Promise<{ reply: string; tools: string[]; titles: string[]; planId?: number; choices?: { question: string; options: string[] }; mediaIds?: number[] }> {
   const { channel = "telegram", now = new Date(), context: note } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
@@ -93,6 +93,8 @@ export async function think(
   // A plan to show with Apply/Adjust, or a question to show with buttons.
   let planId: number | undefined;
   let choices: { question: string; options: string[] } | undefined;
+  // Saved photos or files he asked to see again.
+  let mediaIds: number[] | undefined;
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
@@ -129,6 +131,7 @@ export async function think(
         if (outcome.ok) {
           tools.push(call.function.name);
           if (call.function.name === "plan") planId = Number((outcome as { plan_id?: unknown }).plan_id);
+          if (call.function.name === "media" && Array.isArray((outcome as { media_ids?: unknown }).media_ids)) mediaIds = (outcome as unknown as { media_ids: number[] }).media_ids;
           if (call.function.name === "ask") choices = outcome as unknown as { question: string; options: string[] };
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
@@ -163,5 +166,5 @@ export async function think(
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices };
+  return { reply, tools, titles, planId, choices, mediaIds };
 }

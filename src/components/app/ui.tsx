@@ -94,11 +94,13 @@ export function TaskRow(props: {
   when?: "time" | "full" | "none";
   overdue?: boolean;
   badge?: string;
+  /** True when a photo or file is attached. */
+  attached?: boolean;
   onOpen: (task: Task) => void;
   onToggle: (task: Task) => void;
   handle?: ReactNode;
 }) {
-  const { task, projects, now, when = "time", overdue, badge, onOpen, onToggle, handle } = props;
+  const { task, projects, now, when = "time", overdue, badge, attached, onOpen, onToggle, handle } = props;
   const done = !isOpen(task);
   const project = projects.find((p) => p.id === task.project_id);
   const due = task.due_at ? new Date(task.due_at) : undefined;
@@ -141,6 +143,7 @@ export function TaskRow(props: {
               {project.name}
             </span>
           )}
+          {attached && <span aria-label="Has an attachment">📎</span>}
           {badge && <span className="rounded-full bg-overdue/12 px-2 py-px font-medium text-overdue">{badge}</span>}
         </span>
       </button>

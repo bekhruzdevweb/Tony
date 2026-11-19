@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { getBot } from "@/lib/bot";
 import { firstSight } from "@/lib/dedupe";
 import { env } from "@/lib/env";
+import { refreshBoard } from "@/lib/today-board";
 
 // Room for the AI model to think; Telegram itself is answered at once.
 export const maxDuration = 60;
@@ -46,6 +47,9 @@ export async function POST(request: Request) {
     } catch (error) {
       console.error("Update failed:", error);
     }
+    // Whatever just happened may have changed today's list.
+    const ownerId = env.telegramOwnerId;
+    if (ownerId !== undefined) await refreshBoard(bot, ownerId);
   });
   return Response.json({ ok: true });
 }

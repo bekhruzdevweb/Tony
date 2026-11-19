@@ -2,7 +2,7 @@ import "server-only";
 import type { Bot } from "grammy";
 
 export const COMMANDS = [
-  { command: "today", description: "What is due today" },
+  { command: "today", description: "Re-send and pin the Today checklist" },
   { command: "tomorrow", description: "Tomorrow's plan" },
   { command: "plan", description: "Let Tony plan the day (or: /plan week)" },
   { command: "inbox", description: "Tasks without a date" },

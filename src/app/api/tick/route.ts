@@ -8,6 +8,7 @@ import { pruneUpdates } from "@/lib/dedupe";
 import { env } from "@/lib/env";
 import { runTick } from "@/lib/reminders";
 import { getSettings } from "@/lib/settings";
+import { refreshBoard } from "@/lib/today-board";
 
 export const maxDuration = 30;
 
@@ -41,6 +42,8 @@ export async function POST(request: Request) {
         if (briefs === 0) await runSuggestions(bot, chatId, settings, now);
       },
     });
+    // A reminder, a brief or a rolled-over task may have changed today's list.
+    await refreshBoard(bot, chatId);
     // Once an hour, forget update ids too old for Telegram to resend.
     if (new Date().getMinutes() === 7) await pruneUpdates().catch(() => undefined);
     // Last, tidy the chat: remove messages whose time has come.

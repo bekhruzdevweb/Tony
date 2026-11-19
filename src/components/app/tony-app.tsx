@@ -162,6 +162,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
           key={sheet.task?.id ?? `new-${sheet.day ?? ""}`}
           target={sheet}
           projects={state.projects}
+          media={sheet.task ? state.media.filter((item) => item.task_id === sheet.task!.id) : []}
           onClose={() => setSheet(null)}
           onSave={async (action, payload) => {
             const ok = (await act(action, payload)).ok;

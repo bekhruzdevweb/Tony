@@ -37,6 +37,17 @@ export type AppPlan = {
   created_at: string;
 };
 
+/** A photo or file attached to a task. `url` is a temporary link to the stored copy, when there is one. */
+export type AppMedia = {
+  id: number;
+  task_id: number;
+  kind: "photo" | "video" | "document" | "voice" | "audio" | "animation";
+  url: string | null;
+  caption: string | null;
+  description: string | null;
+  note: string | null;
+};
+
 export type AppState = {
   now: string;
   tasks: Task[];
@@ -44,6 +55,7 @@ export type AppState = {
   memory: AppMemory[];
   messages: AppMessage[];
   plans: AppPlan[];
+  media: AppMedia[];
   settings: AppSettings;
   status: AppStatus;
 };

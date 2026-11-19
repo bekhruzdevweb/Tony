@@ -20,6 +20,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
+import { loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -31,10 +32,11 @@ import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
 import { closestCommand, connectTelegram, HELP } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
+import { BoardNotReady, postBoard, toggleFromBoard } from "./today-board";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
 import { sayAloud } from "./speech";
-import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeVoice } from "./voice";
+import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -145,11 +147,18 @@ export function getBot(): Bot | undefined {
     await say(ctx, view.html, { kind: "cmd:inbox" });
   });
 
-  // The day as a checklist: each task is a button that ticks it off in place.
+  // The pinned Today message. If it was lost, this sends a new one and pins it again.
   tasks.command("today", async (ctx) => {
-    await freshCommand(ctx, "cmd:today");
-    const view = await dayView(new Date());
-    await say(ctx, view.html, { keyboard: view.keyboard, kind: "cmd:today" });
+    // His "/today" has done its job once the board is there.
+    if (ctx.msg) await track(ctx.msg.message_id, "cmd:today", { incoming: true, deleteAfter: new Date() });
+    try {
+      await postBoard(bot, ctx.chat.id);
+    } catch (error) {
+      if (!(error instanceof BoardNotReady)) throw error;
+      // Until the database update is applied, /today answers as it did before: the day as a checklist.
+      const view = await dayView(new Date());
+      await say(ctx, view.html, { keyboard: view.keyboard, kind: "cmd:today" });
+    }
   });
 
   // "/plan" or "/plan week": Tony proposes times for what is overdue or in the inbox.
@@ -206,9 +215,29 @@ export function getBot(): Bot | undefined {
     const payload = ctx.callbackQuery.data;
     const tapped = ctx.callbackQuery.message;
     const chatId = ctx.chat?.id;
-    const tappedText = tapped && "text" in tapped && tapped.text ? tapped.text : undefined;
+    const isCaption = Boolean(tapped && !("text" in tapped && tapped.text) && "caption" in tapped && tapped.caption);
+    const tappedText = tapped && "text" in tapped && tapped.text ? tapped.text : tapped && "caption" in tapped && tapped.caption ? tapped.caption : undefined;
     // What the message said before any outcome was written into it, safe to send back as HTML.
     const base = tappedText === undefined ? undefined : emphasise(tappedText.split(OUTCOME_MARK)[0]);
+
+    // The pinned Today message ("td:<task>" or "td:add"). The message itself
+    // is redrawn after every update, so the handler only has to make the change.
+    if (payload.startsWith("td:")) {
+      const what = payload.slice(3);
+      if (what === "add") {
+        await ctx.answerCallbackQuery().catch(() => undefined);
+        await updateSettings({ pending_note: "He tapped Add on the Today list. His next message is a task to add; if he gives no day, it is for today.", pending_note_at: new Date().toISOString() });
+        await say(ctx, "What shall I add, sir?", { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        return;
+      }
+      let toast = "My apologies, sir. That did not go through.";
+      try {
+        toast = await toggleFromBoard(Number(what));
+      } finally {
+        await ctx.answerCallbackQuery({ text: toast }).catch(() => undefined);
+      }
+      return;
+    }
 
     // A checklist box ("ck:<day>:<task>"): tick the task off, or untick it, and redraw the list.
     if (payload.startsWith("ck:")) {
@@ -367,7 +396,7 @@ export function getBot(): Bot | undefined {
       return;
     }
 
-    const edited = base !== undefined && chatId !== undefined && tapped ? await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${outcome.text}`, keyboard) : false;
+    const edited = base !== undefined && chatId !== undefined && tapped ? await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${outcome.text}`, keyboard, isCaption) : false;
     // A message too old to edit still gets its answer, as a new message.
     if (!edited) await say(ctx, outcome.text, { kind: "confirmation", taskId: parsed.taskId, deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
     await logMessage("tony", plain(outcome.text));
@@ -421,9 +450,16 @@ export function getBot(): Bot | undefined {
     // as Tony is thinking, which includes waiting out a rate limit.
     const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
     try {
-      const { reply, tools, titles, planId, choices } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      const { reply, tools, titles, planId, choices, mediaIds } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
       // Whatever he was asked before has now been answered or overtaken.
       await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
+      if (mediaIds?.length && ctx.chat) {
+        // "Show my video ideas": the originals come back, each with its label.
+        for (const id of mediaIds) {
+          const item = await loadMedia(id);
+          if (item) await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).catch((error) => console.error("Could not resend media:", error));
+        }
+      }
       if (planId !== undefined && ctx.chat) {
         await showPlan(ctx.chat.id, planId);
         return { reply, confirmed: false, completed: false };
@@ -485,35 +521,68 @@ export function getBot(): Bot | undefined {
     if (message.media_group_id && !words) return;
     await ctx.replyWithChatAction("typing").catch(() => undefined);
 
+    // What kind of thing it is, and Telegram's handle on the original.
+    const photo = message.photo?.length ? ([...message.photo].reverse().find((size) => (size.file_size ?? 0) <= 3_500_000) ?? message.photo[0]) : undefined;
+    const file = photo
+      ? { kind: "photo" as const, id: photo.file_id, unique: photo.file_unique_id, mime: "image/jpeg", size: photo.file_size }
+      : message.video
+        ? { kind: "video" as const, id: message.video.file_id, unique: message.video.file_unique_id, mime: message.video.mime_type ?? "video/mp4", size: message.video.file_size }
+        : message.animation
+          ? { kind: "animation" as const, id: message.animation.file_id, unique: message.animation.file_unique_id, mime: message.animation.mime_type ?? "video/mp4", size: message.animation.file_size }
+          : message.document
+            ? { kind: "document" as const, id: message.document.file_id, unique: message.document.file_unique_id, mime: message.document.mime_type ?? "application/octet-stream", size: message.document.file_size }
+            : undefined;
+
     let imageText: string | undefined;
     let imageFailed = false;
-    if (message.photo?.length) {
-      // The largest size that is still small enough to send to the model.
-      const size = [...message.photo].reverse().find((photo) => (photo.file_size ?? 0) <= 3_500_000) ?? message.photo[0];
-      try {
-        const file = await downloadTelegramFile(bot, size.file_id);
-        imageText = await readImage(file.bytes);
-      } catch (error) {
-        console.error("Could not read the photo:", error);
-        imageFailed = true;
+    let saved: Media | undefined;
+    if (file) {
+      // A copy goes to private storage when Telegram lets a bot download it (up to 20 MB).
+      let bytes: ArrayBuffer | undefined;
+      if ((file.size ?? 0) <= 20 * 1024 * 1024) {
+        bytes = await downloadTelegramFile(bot, file.id).then(
+          (downloaded) => downloaded.bytes,
+          (error) => (console.error("Could not download the file:", error), undefined),
+        );
       }
+      // Images are read: the text in them and what they show.
+      if (bytes && file.mime.startsWith("image/")) {
+        try {
+          imageText = await readImage(bytes, file.mime);
+        } catch (error) {
+          console.error("Could not read the image:", error);
+          imageFailed = true;
+        }
+      }
+      saved = await saveMedia({ kind: file.kind, fileId: file.id, uniqueId: file.unique, mime: file.mime, caption: words, description: imageText, bytes }).catch(
+        (error) => (console.error("Could not save the media:", error), undefined),
+      );
     }
-    if (!words && !imageText) {
-      return ctx.reply(imageFailed ? "My apologies, sir. I could not read that image just now." : "Text, a voice note, a photo or a forwarded post, sir; I cannot read that kind of message yet.");
+    if (!words && !imageText && !file) {
+      return ctx.reply("Text, a voice note, a photo, a file or a forwarded post, sir; I cannot read that kind of message yet.");
     }
 
     const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
-    const image = imageText ? `Text in the image: ${imageText}` : imageFailed ? "(Its image could not be read.)" : undefined;
+    const thing = file ? (file.kind === "photo" ? "photo" : file.kind === "animation" ? "GIF" : file.kind) : "post";
+    const image = imageText ? `Text in the image: ${imageText}` : imageFailed ? "(Its image could not be read.)" : file && file.kind !== "photo" ? `(A ${thing}; you cannot see inside it.)` : undefined;
     // What Tony keeps as "the last thing he shared".
-    const shared = [forwarded ? `Post forwarded from ${forwarded}` : "A photo he sent", forwarded ? words : words ? `He wrote with it: ${words}` : undefined, image]
+    const shared = [
+      forwarded ? `${file ? `A ${thing}` : "Post"} forwarded from ${forwarded}` : `A ${thing} he sent`,
+      forwarded ? words : words ? `He wrote with it: ${words}` : undefined,
+      image,
+      saved ? "(Saved. It can be attached to a task or filed under a label.)" : undefined,
+    ]
       .filter(Boolean)
       .join("\n");
     // What the brain is asked: his own caption is his words; a forwarded post is all material.
-    const asked = forwarded ? `[He forwarded this to you]\n${shared}` : words ? `${words}\n\n[He attached a photo. ${image ?? ""}]` : `[He sent you a photo]\n${image}`;
+    const asked = forwarded ? `[He forwarded this to you]\n${shared}` : words ? `${words}\n\n[He attached a ${thing}. ${image ?? ""}]` : `[He sent you a ${thing}]\n${image ?? ""}`;
 
+    // Known before Tony thinks, so "remind me about this tomorrow" in the caption can attach it at once.
+    if (saved) await updateSettings({ last_shared_media_id: saved.id }).catch(() => undefined);
     try {
       await answer(ctx, asked);
     } finally {
+      if (!saved) await updateSettings({ last_shared_media_id: null }).catch(() => undefined);
       await updateSettings({ last_shared_text: shared.slice(0, 2000), last_shared_at: new Date().toISOString() }).catch((error) =>
         console.error("Could not remember the shared item:", error),
       );
@@ -543,7 +612,13 @@ export function getBot(): Bot | undefined {
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     let text: string;
     try {
-      text = await transcribeVoice(bot, media.file_id);
+      const file = await downloadTelegramFile(bot, media.file_id);
+      // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
+      text = await transcribeAudio(file.bytes, file.name.replace(/\.oga$/i, ".ogg"), "audio/ogg");
+      // Kept like any other media: the original, a private copy, and what was said.
+      await saveMedia({ kind: ctx.message.voice ? "voice" : "audio", fileId: media.file_id, uniqueId: media.file_unique_id, mime: media.mime_type ?? "audio/ogg", description: text, bytes: file.bytes }).catch((error) =>
+        console.error("Could not save the voice note:", error),
+      );
     } catch (error) {
       console.error("Voice note failed:", error);
       return ctx.reply("My apologies, sir. I could not hear that one; would you send it again or type it?");
@@ -562,7 +637,7 @@ export function getBot(): Bot | undefined {
   });
 
   // Photos, and any other media that carries a caption or was forwarded.
-  tasks.on(["message:photo", "message:caption"], (ctx) => shareItem(ctx));
+  tasks.on(["message:photo", "message:video", "message:document", "message:animation", "message:caption"], (ctx) => shareItem(ctx));
 
   tasks.on("message", (ctx) => ctx.reply("Text, a voice note, a photo or a forwarded post, sir; I cannot read that kind of message yet."));
 

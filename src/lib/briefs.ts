@@ -9,6 +9,7 @@ import { logMessage } from "./messages";
 import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
 import { data } from "./reminder-messages";
 import type { Settings } from "./settings";
+import { postBoard } from "./today-board";
 import { sayAloud } from "./speech";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
@@ -95,13 +96,16 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
 
   const view = await dayView(now, now, { lead: "Good morning, sir." });
   const html = inboxCount > 0 ? `${view.html}\n\n📥 ${i(`${inboxCount} in the inbox`)}` : view.html;
-  const appUrl = settings.app_url?.startsWith("https://") ? settings.app_url : undefined;
-  if (appUrl) view.keyboard.webApp("Open app", appUrl);
 
   // Yesterday's brief and plan make way for today's.
   await retire({ kinds: ["brief:morning", "plan"] }, now);
-  const briefId = await send(bot, chatId, html, { keyboard: view.keyboard, kind: "brief:morning" });
+  // The brief is the summary; the ticking is done on the pinned Today message that follows it.
+  // (Until the board's database update is applied, the brief keeps its own tick boxes.)
+  const boardReady = "today_message_id" in settings;
+  const briefId = await send(bot, chatId, html, { keyboard: boardReady ? undefined : view.keyboard, kind: "brief:morning" });
   await record(now, briefId, MORNING);
+  // A fresh Today message for the new day, pinned; yesterday's is unpinned and removed.
+  if (boardReady) await postBoard(bot, chatId, now).catch((error) => console.error("Could not post the Today message:", error));
   let sent = 1;
   if (env.ttsSpeakAll) {
     // The brief in a sentence or two, said cheerfully.

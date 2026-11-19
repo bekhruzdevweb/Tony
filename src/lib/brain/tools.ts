@@ -1,7 +1,9 @@
 import "server-only";
 import { requireDb } from "../db";
+import { findMedia, updateMedia } from "../media";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
+import { getSettings } from "../settings";
 import { scheduleReminder, settleReminders } from "../reminders";
 import { MAX_TITLE_LENGTH, OPEN_STATUSES, type Task } from "../tasks";
 import { addMinutes, dayBounds, formatDue, parseLocalDateTime, toWholeMinute } from "../time";
@@ -12,6 +14,8 @@ const TIME = "YYYY-MM-DDTHH:MM";
 /** Lets the model confirm in the same call, so most messages need one model call, not two. */
 const reply = { type: "string", description: "What to tell him on success." };
 const id = { type: "integer" };
+/** Ties the last photo or file he shared to the task, so its reminder sends the original back. */
+const attach = { type: "boolean", description: "Attach the last photo/file he shared." };
 
 const taskFields = {
   title: { type: "string", description: "Short, without the time." },
@@ -30,7 +34,7 @@ const tool = (name: string, description: string, properties: Record<string, unkn
 
 /** The seven tools from the spec: everything Tony can do. */
 export const TOOLS: ToolDefinition[] = [
-  tool("add_task", "Create a task.", { ...taskFields, reply }, ["title"]),
+  tool("add_task", "Create a task.", { ...taskFields, attach_shared: attach, reply }, ["title"]),
   tool(
     "update_task",
     "Change or drop a task.",
@@ -39,6 +43,7 @@ export const TOOLS: ToolDefinition[] = [
       ...taskFields,
       clear_due: { type: "boolean", description: "Back to inbox." },
       status: { type: "string", enum: ["todo", "dropped", "skipped"] },
+      attach_shared: attach,
       reply,
     },
     ["id"],
@@ -67,6 +72,12 @@ export const TOOLS: ToolDefinition[] = [
       instructions: { type: "string", description: "His wishes for this plan, if any." },
     },
     ["scope"],
+  ),
+  tool(
+    "media",
+    "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' sends back the ones matching the text.",
+    { action: { type: "string", enum: ["note", "find"] }, text: { type: "string" }, reply },
+    ["action", "text"],
   ),
   tool(
     "ask",
@@ -138,6 +149,15 @@ async function readFields(args: Args, now: Date): Promise<{ patch: Partial<Task>
   return { patch, dueAt };
 }
 
+/** Links the last thing he shared to a task, if asked to and there is one. Returns a note for the model. */
+async function attachShared(args: Args, taskId: number): Promise<string | undefined> {
+  if (args.attach_shared !== true) return undefined;
+  const { last_shared_media_id } = await getSettings();
+  if (!last_shared_media_id) return "nothing was attached: he has not shared a photo or file recently";
+  await updateMedia(Number(last_shared_media_id), { task_id: taskId });
+  return "his photo/file is attached; the reminder will send the original back to him";
+}
+
 /** Runs one tool call. Problems come back as { ok: false }, so the model can tell the user. */
 export async function runTool(name: string, args: Args, now = new Date()): Promise<Result> {
   const db = requireDb();
@@ -165,7 +185,8 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       check("add_task", error);
       const task = data as Task;
       if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
-      return { ok: true, task: taskLine(task, await loadProjects(), now) };
+      const attached = await attachShared(args, task.id);
+      return { ok: true, task: taskLine(task, await loadProjects(), now), ...(attached ? { attached } : {}) };
     }
 
     case "update_task": {
@@ -192,6 +213,9 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       } else if (status === "todo") {
         patch.status = task.due_at ? "todo" : "inbox";
       }
+      if (Object.keys(patch).length === 0 && args.attach_shared === true) {
+        return { ok: true, task: taskLine(task, await loadProjects(), now), attached: await attachShared(args, task.id) };
+      }
       if (Object.keys(patch).length === 0) return fail("nothing to change");
 
       const { data, error } = await db.from("tasks").update(patch).eq("id", task.id).select().single();
@@ -200,7 +224,8 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
 
       if (!OPEN_STATUSES.includes(updated.status) || args.clear_due === true) await settleReminders(task.id);
       else if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
-      return { ok: true, task: taskLine(updated, await loadProjects(), now), status: updated.status };
+      const attached = await attachShared(args, task.id);
+      return { ok: true, task: taskLine(updated, await loadProjects(), now), status: updated.status, ...(attached ? { attached } : {}) };
     }
 
     case "complete_task": {
@@ -283,6 +308,20 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       const result = await buildPlan({ scope, day, now, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
       if ("nothing" in result) return fail(result.nothing);
       return { ok: true, plan_id: result.plan.id, placed: result.plan.items.length, left_out: result.plan.left_out.length };
+    }
+
+    case "media": {
+      const text = typeof args.text === "string" ? args.text.trim().slice(0, 200) : "";
+      if (!text) return fail("text is required");
+      if (args.action === "note") {
+        const { last_shared_media_id } = await getSettings();
+        if (!last_shared_media_id) return fail("he has not shared a photo or file recently");
+        await updateMedia(Number(last_shared_media_id), { note: text });
+        return { ok: true, saved_as: text };
+      }
+      const found = await findMedia(text);
+      if (found.length === 0) return fail(`nothing saved matches "${text}"`);
+      return { ok: true, media_ids: found.map((item) => item.id), count: found.length };
     }
 
     case "ask": {

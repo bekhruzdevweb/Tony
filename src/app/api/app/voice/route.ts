@@ -1,5 +1,8 @@
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
+import { getBot } from "@/lib/bot";
+import { env } from "@/lib/env";
+import { refreshBoard } from "@/lib/today-board";
 import { think } from "@/lib/brain";
 import { hasSession } from "@/lib/session";
 import { transcribeAudio } from "@/lib/voice";
@@ -30,6 +33,8 @@ export async function POST(request: Request) {
 
   try {
     const { reply } = await think(text, { channel: "app", context: "He said this in a voice note; this is its transcript, so you did hear him." });
+    const bot = getBot();
+    if (bot && env.telegramOwnerId !== undefined) await refreshBoard(bot, env.telegramOwnerId);
     return json({ ok: true, state: await loadAppState(), reply });
   } catch (error) {
     console.error("Brain failed after voice:", error);

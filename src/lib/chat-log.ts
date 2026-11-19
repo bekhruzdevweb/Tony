@@ -58,13 +58,18 @@ export async function sendHtml(
 }
 
 /** Rewrites a message in place, with the same plain-text fallback. Returns false if it could not be edited. */
-export async function editHtml(bot: Bot, chatId: number, messageId: number, html: string, keyboard?: InlineKeyboard): Promise<boolean> {
+export async function editHtml(bot: Bot, chatId: number, messageId: number, html: string, keyboard?: InlineKeyboard, isCaption = false): Promise<boolean> {
   try {
-    await bot.api.editMessageText(chatId, messageId, html, { parse_mode: "HTML", reply_markup: keyboard, link_preview_options: { is_disabled: true } });
+    // A photo or file carries its words as a caption, which is edited differently.
+    if (isCaption) await bot.api.editMessageCaption(chatId, messageId, { caption: html.slice(0, 1024), parse_mode: "HTML", reply_markup: keyboard });
+    else await bot.api.editMessageText(chatId, messageId, html, { parse_mode: "HTML", reply_markup: keyboard, link_preview_options: { is_disabled: true } });
     return true;
   } catch (error) {
     if (isParseError(error)) {
-      return bot.api.editMessageText(chatId, messageId, plain(html), { reply_markup: keyboard }).then(
+      const retry = isCaption
+        ? bot.api.editMessageCaption(chatId, messageId, { caption: plain(html).slice(0, 1024), reply_markup: keyboard })
+        : bot.api.editMessageText(chatId, messageId, plain(html), { reply_markup: keyboard });
+      return retry.then(
         () => true,
         () => false,
       );

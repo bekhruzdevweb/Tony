@@ -46,6 +46,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
   const open = today.filter(isOpen);
   const finished = today.filter((t) => !isOpen(t));
   const row = { projects: state.projects, now, onOpen, onToggle };
+  const attached = (task: Task) => state.media.some((item) => item.task_id === task.id);
 
   const submit = async () => {
     const text = draft.trim();
@@ -63,21 +64,21 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
         {overdue.length > 0 && (
           <Section title={`Overdue · ${overdue.length}`} tone="overdue">
             {overdue.map((task) => (
-              <TaskRow key={task.id} task={task} overdue when="full" {...row} />
+              <TaskRow key={task.id} task={task} overdue when="full" attached={attached(task)} {...row} />
             ))}
           </Section>
         )}
         {open.length > 0 && (
           <Section title={`Today · ${open.length}`}>
             {open.map((task) => (
-              <TaskRow key={task.id} task={task} {...row} />
+              <TaskRow key={task.id} task={task} attached={attached(task)} {...row} />
             ))}
           </Section>
         )}
         {finished.length > 0 && (
           <Section title="Done today">
             {finished.map((task) => (
-              <TaskRow key={task.id} task={task} {...row} />
+              <TaskRow key={task.id} task={task} attached={attached(task)} {...row} />
             ))}
           </Section>
         )}

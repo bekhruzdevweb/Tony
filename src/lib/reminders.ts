@@ -3,7 +3,8 @@ import type { Bot } from "grammy";
 import { requireDb } from "./db";
 import { env } from "./env";
 import { retire, sendHtml, track } from "./chat-log";
-import { plain } from "./html";
+import { i, plain } from "./html";
+import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { dueReminder, persistentReminder } from "./reminder-messages";
@@ -242,16 +243,22 @@ export async function runTick(
     if ((claimed.data ?? []).length === 0) continue;
 
     const message = chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
+    // Only the first reminder carries the attachment; later nudges are plain text.
+    const attached = attempt === 0 ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;
     // Two tries, each with a hard timeout: a stalled connection must never
     // hold the tick until the platform kills it.
     for (let tryNumber = 1; tryNumber <= 2 && messageId === undefined; tryNumber++) {
       try {
-        messageId = await sendHtml(bot, chatId, message.text, {
+        const options = {
           keyboard: message.keyboard,
           // A follow-up on an ordinary, low-priority task arrives without sound.
           silent: isFollowUp && !task.persistent && task.priority === 4,
-        });
+        };
+        // If he attached a photo or file to this task, the reminder is the original itself, with his note.
+        messageId = attached
+          ? await sendMedia(bot, chatId, attached, attached.note || attached.caption ? `${message.text}\n${i(attached.note ?? attached.caption ?? "")}` : message.text, options)
+          : await sendHtml(bot, chatId, message.text, options);
       } catch (error) {
         console.error(`Reminder ${reminder.id}: send attempt ${tryNumber} failed:`, error);
       }

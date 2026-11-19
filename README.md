@@ -171,6 +171,29 @@ rejects the markup the same words go out as plain text.
 - Sunday evening: the week in four numbers and "How did the week go?". The
   answer is kept as a memory note.
 
+**The pinned Today message.** One message, pinned silently: a header with
+the date, "X/Y done" and a progress bar, then a button per task. Tasks with
+a time today come first in order, then anything carried over (⚠️), then the
+done ones (☑) at the bottom, and a last row with ➕ Add and 📱 Open app. A tap
+ticks a task off or unticks it in plain code, and the same message is edited
+in place. It also redraws itself after every message, tap, reminder tick and
+change made in the app, but only talks to Telegram when something changed.
+A fresh one arrives with the morning brief (yesterday's is unpinned and
+deleted); `/today` re-sends and re-pins it. Its message id lives in settings.
+
+**Media memory.** Every photo, video, document, GIF and voice note you send
+is saved: Telegram's file id (so the original can be sent back untouched),
+your caption, a copy in the private storage bucket `tony-media`, and what
+Tony made of it (the text in an image and what it shows; a voice note's
+transcript). Say "remind me about this tomorrow" and the task is linked to
+it: the reminder is the original photo with your note and the usual buttons.
+"Save this as a video idea" files it under a label; "show my video ideas"
+sends the matching originals back. In the app a task with an attachment has
+a 📎 and shows the picture in its sheet, through a link that lasts a day.
+
+Both need migration `0010_board_and_media.sql`. Until it is applied the code
+falls back: `/today` sends the old checklist and media is read but not saved.
+
 **Forwarded posts and photos.** Forward Tony a post, or send a photo, with
 or without a caption. He reads the words and the text in the image (a
 vision model, `VISION_MODEL`, default `qwen/qwen3.8-27b` on Groq), says in a
