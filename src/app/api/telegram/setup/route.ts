@@ -34,7 +34,11 @@ export async function GET(request: Request) {
       secret_token: secretToken,
       allowed_updates: ["message", "callback_query"],
     });
-    await bot.api.setMyCommands([{ command: "ping", description: "Check that Tony is awake" }]);
+    await bot.api.setMyCommands([
+      { command: "today", description: "What is due today" },
+      { command: "inbox", description: "Tasks without a date" },
+      { command: "ping", description: "Check that Tony is awake" },
+    ]);
     const me = await bot.api.getMe();
     return Response.json({ ok: true, bot: `@${me.username}`, webhook: webhookUrl });
   } catch (error) {

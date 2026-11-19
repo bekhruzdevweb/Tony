@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { connection } from "next/server";
+import { getDb, isDatabaseReady } from "@/lib/db";
 import { env } from "@/lib/env";
 
 function Row({ label, hint, ready }: { label: string; hint: string; ready: boolean }) {
@@ -24,6 +25,8 @@ export default async function Home() {
   // Read the environment on each request, so a redeploy is not needed to see changes.
   await connection();
 
+  const databaseReady = await isDatabaseReady();
+
   const rows = [
     {
       label: "Telegram bot",
@@ -37,8 +40,11 @@ export default async function Home() {
     },
     {
       label: "Database",
-      hint: "SUPABASE_URL and SUPABASE_SECRET_KEY",
-      ready: Boolean(env.supabaseUrl && env.supabaseSecretKey),
+      hint:
+        getDb() && !databaseReady
+          ? "Connected, but the tables are missing: run the migration"
+          : "SUPABASE_URL and SUPABASE_SECRET_KEY, tables in place",
+      ready: databaseReady,
     },
   ];
   const allReady = rows.every((row) => row.ready);
@@ -56,7 +62,7 @@ export default async function Home() {
       <h1 className="mt-6 text-title leading-tight font-bold tracking-tight">Tony</h1>
       <p className="mt-2 text-body text-secondary">
         {allReady
-          ? "Everything is connected, sir. Send /ping in Telegram."
+          ? "Everything is connected, sir. Send me anything in Telegram and it becomes a task."
           : "The site is up, sir. A few connections are still to be made."}
       </p>
 
@@ -70,7 +76,7 @@ export default async function Home() {
       </ul>
 
       <p className="mt-auto pt-10 text-center text-caption text-secondary">
-        Phase 1 of 8 · Setup
+        Phase 2 of 8 · Tasks core
       </p>
     </main>
   );

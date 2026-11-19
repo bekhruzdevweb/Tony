@@ -1,6 +1,8 @@
 import "server-only";
 import { Bot } from "grammy";
 import { env } from "./env";
+import { inboxMessage, todayMessage } from "./replies";
+import { addInboxTask, listInbox, listToday } from "./tasks";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -36,9 +38,39 @@ export function getBot(): Bot | undefined {
 
   bot.command("ping", (ctx) => ctx.reply("pong"));
 
-  bot.on("message", (ctx) =>
-    ctx.reply("I am online, sir, though I cannot take tasks just yet. Try /ping."),
-  );
+  // Past this point Tony reads and writes tasks, which only the owner may do.
+  bot.use((ctx, next) => {
+    if (env.telegramOwnerId !== undefined) return next();
+    return ctx.reply("One moment, sir: send /start and set TELEGRAM_OWNER_ID first, so I know whom I serve.");
+  });
+
+  // Answer the user and let Telegram have its 200; otherwise Telegram keeps
+  // redelivering the same message for as long as the fault lasts.
+  const tasks = bot.errorBoundary(async ({ ctx, error }) => {
+    console.error("Bot handler failed:", error);
+    try {
+      await ctx.reply("My apologies, sir. I could not reach the task list just now.");
+    } catch (replyError) {
+      console.error("Could not send the apology:", replyError);
+    }
+  });
+
+  tasks.command("inbox", async (ctx) => ctx.reply(inboxMessage(await listInbox())));
+
+  tasks.command("today", async (ctx) => ctx.reply(todayMessage(await listToday())));
+
+  // Any other plain text is a task for the Inbox.
+  tasks.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+    if (text.startsWith("/")) {
+      return ctx.reply("I don't know that command, sir. Try /today or /inbox.");
+    }
+    if (!text) return;
+    const task = await addInboxTask(text);
+    return ctx.reply(`Noted, sir. "${task.title}" is in the inbox.`);
+  });
+
+  tasks.on("message", (ctx) => ctx.reply("Text only for now, sir. Voice notes come a little later."));
 
   cached = { token, bot };
   return bot;

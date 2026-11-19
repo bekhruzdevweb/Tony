@@ -8,8 +8,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 
 | # | Phase | Status |
 |---|-------|--------|
-| 1 | Setup: site loads, bot answers `/ping` with `pong` | Built, awaiting your check |
-| 2 | Tasks core, no AI | Not started |
+| 1 | Setup: site loads, bot answers `/ping` with `pong` | Passed |
+| 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Built, awaiting your check |
 | 3 | Reminder engine | Not started |
 | 4 | Tony's brain | Not started |
 | 5 | Voice notes | Not started |
@@ -49,11 +49,25 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Notes for Phase 2
+## Phase 2 check
+
+1. **Create the tables.** In Supabase open SQL Editor, paste the whole of
+   [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
+   and run it. It is safe to run twice.
+2. Reload the site: the Database dot should stay green. If it says the tables
+   are missing, the migration has not run.
+3. Open `https://<your-site>/api/telegram/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`
+   once more, so `/today` and `/inbox` appear in the bot's command menu.
+
+**Done when:** sending `buy notebook` to the bot shows it in `/inbox`.
+
+## Database rules
 
 The Supabase project has row level security on for new tables and automatic
 API grants off. Every migration must therefore add the grants (and any
 policies) the server's role needs; a table without them is unreachable.
+Migrations live in `supabase/migrations/` and are run by hand in the SQL
+Editor, in order.
 
 ## Development
 
