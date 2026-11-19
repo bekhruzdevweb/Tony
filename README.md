@@ -12,8 +12,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Passed |
 | 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Passed |
 | 4 | Tony's brain: prompt, seven tools, natural dates | Passed |
-| 5 | Voice notes: download, transcribe, hand to the brain | Built, awaiting your check |
-| 6 | The app (PWA) | Not started |
+| 5 | Voice notes: download, transcribe, hand to the brain | Passed |
+| 6 | The app (PWA): Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings | Built, awaiting your check |
 | 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Not started |
 | 8 | Live week | Not started |
 
@@ -49,19 +49,43 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Phase 5 check
+## Phase 6 check
 
-Send Tony a voice note. He downloads it from Telegram, has it transcribed,
-and handles the text exactly like a typed message. There is nothing to set up:
-transcription uses the same provider and key as the brain (`whisper-large-v3`
-on Groq). The language is detected, so Uzbek and Russian notes are understood;
-Tony still replies in English.
+The site is now the app. To get in:
 
-**Done when:** "remind me to work out at 6 pm", spoken, creates the same
-persistent task as when typed.
+1. Send `/app` to Tony in Telegram. He replies with a six-digit key (good
+   once, for ten minutes) and an **Open app** button.
+2. Either tap the button, or open the site and type the key.
+3. Install it: in Safari, Share → Add to Home Screen; in Chrome, menu →
+   Install app. The installed app has its own storage, so the first time you
+   open it from the home screen it asks for a key again: send `/app` and
+   type the new one. A sign-in lasts 90 days.
 
-Optional settings: `STT_MODEL`, `STT_BASE_URL`, `STT_API_KEY` (each defaults
-to the brain's provider).
+**Done when:** the app is on the home screen, and a task you send Tony in
+Telegram appears in it within a few seconds without refreshing.
+
+What is where:
+
+| Screen | Contents |
+|--------|----------|
+| Today | greeting and date, overdue, today by time, done today, and a quick-add bar that Tony reads ("workout at 6 pm") |
+| Inbox | undated tasks, oldest first, with an age badge after 3 days |
+| Upcoming | the next 7 days; drag a task by its grip to another day; + adds to that day |
+| Chat | the same conversation as Telegram, with a mic |
+| + button | a blank task sheet: title, notes, date and time, priority, project, repeat, persistent |
+| Avatar (top left) | Projects, and Settings: brief times, quiet hours, persistent schedule, theme, Tony's memory, Telegram link, connection status |
+
+The app re-reads its data every 4 seconds while it is on screen. All times
+are Tashkent time. Everything the app changes goes through the same code as
+Tony's tools, so the app and Telegram cannot disagree.
+
+## Voice notes
+
+Tony downloads a voice note from Telegram, has it transcribed
+(`whisper-large-v3` on Groq, same key as the brain) and handles the text like
+a typed message. The language is detected, so Uzbek and Russian notes are
+understood; Tony replies in English. Optional settings: `STT_MODEL`,
+`STT_BASE_URL`, `STT_API_KEY`.
 
 ## Tony's brain
 
@@ -85,7 +109,9 @@ inbox as written and says so, so nothing you send is lost.
 ## Reminder engine
 
 A database clock (pg_cron + pg_net) calls `/api/tick` once a minute, with a
-retry at :20 and :40 if the call did not land. Its password is generated
+retry at :20 and :40 if that minute has no clean tick. A reminder is marked
+sent only after Telegram confirms delivery; until then it stays scheduled, so
+a stalled or killed tick cannot lose it. Its password is generated
 inside the database and never leaves it. The site's **Reminder clock** dot is
 green while ticks arrive.
 

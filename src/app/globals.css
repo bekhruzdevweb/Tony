@@ -14,8 +14,9 @@
   --tony-gradient: linear-gradient(135deg, var(--primary), var(--accent));
 }
 
+/* Dark: follows the system unless Settings pins a theme (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --ink: #f1f5f9;
     --background: #0f172a;
     --surface: #1e2638;
@@ -24,6 +25,16 @@
     --done: #30d158;
     --hairline: rgb(241 245 249 / 0.1);
   }
+}
+
+:root[data-theme="dark"] {
+  --ink: #f1f5f9;
+  --background: #0f172a;
+  --surface: #1e2638;
+  --secondary: #94a3b8;
+  --overdue: #ff6b6f;
+  --done: #30d158;
+  --hairline: rgb(241 245 249 / 0.1);
 }
 
 @theme inline {
@@ -40,7 +51,7 @@
   --text-title: 34px;
   --text-section: 22px;
   --text-body: 17px;
-  --text-secondary: 15px;
+  --text-sub: 15px;
   --text-caption: 13px;
   --radius-card: 12px;
   --radius-sheet: 20px;
@@ -48,6 +59,15 @@
 
 html {
   color-scheme: light dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {
@@ -56,4 +76,101 @@ body {
   font-family: var(--font-sans);
   font-size: 17px;
   -webkit-font-smoothing: antialiased;
+}
+
+/* The app is a fixed shell: only the screens scroll, never the page. */
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS zooms into any field under 16px; keep them at body size. */
+input,
+select,
+textarea {
+  font-size: 17px;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Completing a task: the ring fills and the tick draws itself. */
+@keyframes tony-check-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes tony-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.check-pop {
+  animation: tony-check-pop 260ms ease-out;
+}
+
+.check-draw {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+  animation: tony-check-draw 220ms 60ms ease-out forwards;
+}
+
+@keyframes tony-sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.sheet-up {
+  animation: tony-sheet-up 200ms ease-out;
+}
+
+@keyframes tony-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: tony-fade 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .check-pop,
+  .check-draw,
+  .sheet-up,
+  .fade-in {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
 }

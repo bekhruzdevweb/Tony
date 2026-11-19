@@ -39,6 +39,7 @@ export async function GET(request: Request) {
     await bot.api.setMyCommands([
       { command: "today", description: "What is due today" },
       { command: "inbox", description: "Tasks without a date" },
+      { command: "app", description: "Get a key to open the app" },
       { command: "ping", description: "Check that Tony is awake" },
     ]);
     // Tell the reminder clock in the database where this deployment lives.

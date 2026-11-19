@@ -24,18 +24,17 @@ async function downloadTelegramFile(bot: Bot, fileId: string): Promise<{ bytes: 
 }
 
 /**
- * Voice note to text, through an OpenAI-compatible transcription API. The
+ * Audio to text, through an OpenAI-compatible transcription API. The
  * language is left for the model to detect, so Uzbek and Russian notes are
  * understood as well as English ones.
  */
-export async function transcribeVoice(bot: Bot, fileId: string): Promise<string> {
+export async function transcribeAudio(bytes: ArrayBuffer, name: string, type: string): Promise<string> {
   const apiKey = env.sttApiKey;
   if (!apiKey) throw new VoiceError("No speech-to-text key is set");
+  if (bytes.byteLength > MAX_BYTES) throw new VoiceError("File too large");
 
-  const { bytes, name } = await downloadTelegramFile(bot, fileId);
   const form = new FormData();
-  // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
-  form.append("file", new Blob([bytes], { type: "audio/ogg" }), name.replace(/\.oga$/i, ".ogg"));
+  form.append("file", new Blob([bytes], { type }), name);
   form.append("model", env.sttModel);
   form.append("response_format", "json");
   form.append("temperature", "0");
@@ -57,4 +56,11 @@ export async function transcribeVoice(bot: Bot, fileId: string): Promise<string>
   }
   const body = (await response.json()) as { text?: string };
   return (body.text ?? "").trim();
+}
+
+/** A Telegram voice note to text. */
+export async function transcribeVoice(bot: Bot, fileId: string): Promise<string> {
+  const { bytes, name } = await downloadTelegramFile(bot, fileId);
+  // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
+  return transcribeAudio(bytes, name.replace(/\.oga$/i, ".ogg"), "audio/ogg");
 }

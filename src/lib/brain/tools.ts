@@ -141,7 +141,9 @@ async function readFields(args: Args, now: Date): Promise<{ patch: Partial<Task>
     if (!["daily", "weekdays", "weekly", "none"].includes(args.repeat)) return { error: "repeat must be daily, weekdays, weekly or none" };
     patch.repeat_rule = args.repeat === "none" ? null : (args.repeat as Task["repeat_rule"]);
   }
-  if (typeof args.project === "string" && args.project.trim()) {
+  if (args.project === "none") {
+    patch.project_id = null;
+  } else if (typeof args.project === "string" && args.project.trim()) {
     const projects = await loadProjects();
     const match = projects.find((p) => p.name.toLowerCase() === (args.project as string).trim().toLowerCase());
     if (!match) return { error: `no project called "${args.project}". Projects: ${projects.map((p) => p.name).join(", ") || "none"}` };

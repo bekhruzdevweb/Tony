@@ -1,11 +1,12 @@
 import "server-only";
-import { Bot, type Context } from "grammy";
+import { Bot, InlineKeyboard, type Context } from "grammy";
 import { respond } from "./brain";
 import { env } from "./env";
 import { logMessage } from "./messages";
 import { inboxMessage, todayMessage } from "./replies";
 import { runAction } from "./actions";
 import { parseAction } from "./reminder-messages";
+import { createLoginCode } from "./session";
 import { addScheduledTask } from "./reminders";
 import { addInboxTask, listInbox, listToday } from "./tasks";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
@@ -46,6 +47,21 @@ export function getBot(): Bot | undefined {
   });
 
   bot.command("ping", (ctx) => ctx.reply("pong"));
+
+  // Sign-in for the app: a one-time code, handed only to the owner's chat.
+  bot.command("app", async (ctx) => {
+    if (env.telegramOwnerId === undefined) return ctx.reply("Set TELEGRAM_OWNER_ID first, sir.");
+    try {
+      const { code, link } = await createLoginCode();
+      const spaced = `${code.slice(0, 3)} ${code.slice(3)}`;
+      return await ctx.reply(`Your key to the app, sir: ${spaced}. It works once, for ten minutes.`, {
+        reply_markup: link && link.startsWith("https://") ? new InlineKeyboard().url("Open app", link) : undefined,
+      });
+    } catch (error) {
+      console.error("Login code failed:", error);
+      return ctx.reply("My apologies, sir. I could not prepare a key just now.");
+    }
+  });
 
   // Past this point Tony reads and writes tasks, which only the owner may do.
   bot.use((ctx, next) => {
