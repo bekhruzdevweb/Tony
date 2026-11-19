@@ -22,20 +22,36 @@ export const env = {
   get telegramApiRoot() {
     return read("TELEGRAM_API_ROOT");
   },
-  /** Any OpenAI-compatible chat API. The model is one swappable setting. */
+  /** Tony's main brain: Claude, through the Anthropic API. */
+  get anthropicApiKey() {
+    return read("ANTHROPIC_API_KEY");
+  },
+  get anthropicModel() {
+    return read("ANTHROPIC_MODEL") ?? "claude-haiku-5-5";
+  },
+  /** How hard Claude thinks before answering: low, medium, high, xhigh or max. */
+  get anthropicEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
+    const value = read("ANTHROPIC_EFFORT")?.toLowerCase();
+    return value === "medium" || value === "high" || value === "xhigh" || value === "max" ? value : "low";
+  },
+  /**
+   * Groq: the voice (Whisper and Orpheus) and the brain's fallback. The key
+   * was first called AI_API_KEY, and that name still works.
+   */
   get aiApiKey() {
-    return read("AI_API_KEY");
+    return read("GROQ_API_KEY") ?? read("AI_API_KEY");
   },
   get aiBaseUrl() {
     return (read("AI_BASE_URL") ?? "https://api.groq.com/openai/v1").replace(/\/+$/, "");
   },
+  /** The fallback brain, used when Claude cannot answer. */
   get aiModel() {
     return read("AI_MODEL") ?? "openai/gpt-oss-120b";
   },
   /**
-   * Used when the main model is out of its per-minute allowance. Limits are
-   * per model, so a second model is a second allowance. Set to "none" to
-   * switch the fallback off.
+   * Used when the Groq model itself is out of its per-minute allowance.
+   * Limits are per model, so a second model is a second allowance. Set to
+   * "none" to switch it off.
    */
   get aiFallbackModel() {
     const value = read("AI_FALLBACK_MODEL");
@@ -51,13 +67,13 @@ export const env = {
   get suggestEveryTick() {
     return read("TONY_SUGGEST_EVERY_TICK") === "1";
   },
-  /** A model that can read images, for forwarded posts and photos. */
+  /** The fallback for reading images, on Groq, when Claude cannot. */
   get visionModel() {
     return read("VISION_MODEL") ?? "qwen/qwen3.8-27b";
   },
   /** Speech-to-text. Defaults to the same provider and key as the brain. */
   get sttApiKey() {
-    return read("STT_API_KEY") ?? read("AI_API_KEY");
+    return read("STT_API_KEY") ?? read("GROQ_API_KEY") ?? read("AI_API_KEY");
   },
   get sttBaseUrl() {
     return (read("STT_BASE_URL") ?? read("AI_BASE_URL") ?? "https://api.groq.com/openai/v1").replace(/\/+$/, "");

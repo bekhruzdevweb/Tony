@@ -157,7 +157,7 @@ async function modelProposal(input: {
     .filter(Boolean)
     .join("\n\n");
 
-  const answer = await chat([{ role: "system", content: system }, { role: "user", content: user }], [PROPOSE], "propose");
+  const answer = await chat({ system, messages: [{ role: "user", content: user }], tools: [PROPOSE], force: "propose" });
   const call = answer.tool_calls?.find((entry) => entry.function.name === "propose");
   if (!call) throw new Error("the model did not return a schedule");
   const args = JSON.parse(call.function.arguments || "{}") as {

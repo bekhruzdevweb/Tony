@@ -110,7 +110,7 @@ Tony's tools, so the app and Telegram cannot disagree.
 ## Voice notes
 
 Tony downloads a voice note from Telegram, has it transcribed
-(`whisper-large-v3` on Groq, same key as the brain) and handles the text like
+(`whisper-large-v3` on Groq, `GROQ_API_KEY`) and handles the text like
 a typed message. The language is detected, so Uzbek and Russian notes are
 understood; Tony replies in English. Optional settings: `STT_MODEL`,
 `STT_BASE_URL`, `STT_API_KEY`.
@@ -195,8 +195,8 @@ Both need migration `0010_board_and_media.sql`. Until it is applied the code
 falls back: `/today` sends the old checklist and media is read but not saved.
 
 **Forwarded posts and photos.** Forward Tony a post, or send a photo, with
-or without a caption. He reads the words and the text in the image (a
-vision model, `VISION_MODEL`, default `qwen/qwen3.8-27b` on Groq), says in a
+or without a caption. He reads the words and the text in the image (Claude reads
+it; if Claude cannot, the Groq model in `VISION_MODEL` does), says in a
 line what it is, and offers to make it a task with its date. The item is
 remembered for 12 hours as "the last thing you shared", so "schedule this for
 tomorrow", typed or spoken, refers to it.
@@ -260,26 +260,39 @@ sentence ends into up to three requests and joined into one voice note.
 Tony reads every message with an AI model and acts through seven tools
 (`add_task`, `update_task`, `complete_task`, `list_tasks`, `set_reminder`,
 `remember`, `forget`). Button taps and `/today`, `/inbox`, `/ping` run plain
-code. `AI_API_KEY` is a Groq key from console.groq.com.
+code and never reach a model.
 
-The model is one swappable setting. Any OpenAI-compatible chat API with tool
-calling works:
+The brain is Claude (`claude-haiku-5-5`) through the Anthropic API, using
+the official SDK. Groq is kept for his voice (Whisper to hear, Orpheus to
+speak) and as the fallback: if a call to Claude fails for any reason (rate
+limit, outage, a rejected key, a declined request), the same request goes to
+`openai/gpt-oss-120b` on Groq, so the message is still handled. Photos are
+read by Claude too, with a Groq vision model behind it.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AI_API_KEY` | none | the provider's key |
-| `AI_BASE_URL` | `https://api.groq.com/openai/v1` | the provider |
-| `AI_MODEL` | `openai/gpt-oss-120b` | the model |
+| `ANTHROPIC_API_KEY` | none | Claude, the main brain |
+| `ANTHROPIC_MODEL` | `claude-haiku-5-5` | the Claude model |
+| `ANTHROPIC_EFFORT` | `low` | how hard he thinks before answering (`low`, `medium`, `high`) |
+| `GROQ_API_KEY` | none | voice and the fallback brain (the older name `AI_API_KEY` still works) |
+| `AI_MODEL` | `openai/gpt-oss-120b` | the fallback brain on Groq |
+| `AI_FALLBACK_MODEL` | `openai/gpt-oss-20b` | used when the fallback is itself rate limited; `none` switches it off |
+| `AI_REASONING_EFFORT` | unset | optional `low` / `medium` / `high` for the fallback |
 
-| `AI_FALLBACK_MODEL` | `openai/gpt-oss-20b` (on Groq) | used when the main model is rate limited; `none` switches it off |
-| `AI_REASONING_EFFORT` | unset | optional `low` / `medium` / `high` for reasoning models |
+**Prompt caching.** The system prompt is in two parts. The first (who Tony
+is, what he can do, his rules) and the tool definitions are the same for
+every message, so they are marked for Anthropic's cache; the second (the
+time, your tasks, memory) changes and comes after it. A message sent within
+five minutes of the last one reads the first part from the cache at a tenth
+of the normal input price. Each call logs how many tokens were read from and
+written to the cache.
 
-Free tiers limit tokens per minute (8,000 on Groq for this model), so each
-message is kept small: a short prompt, only the tasks and memory notes that
+Each message is kept small (Groq's free tier, the fallback, allows 8,000
+tokens a minute for its model): a short prompt, only the tasks and memory notes that
 bear on the message, six clipped turns of history, and a confirmation written
 in the same call as the action, so most messages cost one model call.
 
-When the provider answers 429, Tony keeps "typing…" showing, waits the time
+When Groq, as the fallback, answers 429, Tony keeps "typing…" showing, waits the time
 it names (up to 15 seconds) and tries once more; if that fails he uses the
 fallback model, which has its own allowance. Only if all of that fails does
 he save the message to the inbox as written and say so. Each call's real

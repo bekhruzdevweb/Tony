@@ -98,8 +98,8 @@ export async function think(
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
+  const system = buildSystemPrompt({ now, ...context, message: text });
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt({ now, ...context, message: text }) },
     ...history.map(
       (m): ChatMessage => (m.role === "user" ? { role: "user", content: clip(m.text) } : { role: "assistant", content: clip(m.text) }),
     ),
@@ -110,7 +110,7 @@ export async function think(
   const taskIds = new Set(context.tasks.map((task) => task.id));
   let reply: string | undefined;
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const answer = await chat(messages, TOOLS);
+    const answer = await chat({ system, messages, tools: TOOLS });
     if (!answer.tool_calls) {
       reply = tidyReply(answer.content ?? "", [...taskIds]);
       break;
@@ -118,7 +118,7 @@ export async function think(
     // Anything the model says while calling a tool is dropped: it has not seen
     // the result yet, and keeping it made the final reply repeat itself
     // ("Remembered, sir.Your preference is noted, sir.").
-    messages.push({ role: "assistant", content: null, tool_calls: answer.tool_calls });
+    messages.push({ role: "assistant", content: null, tool_calls: answer.tool_calls, raw: answer.raw });
     // The confirmation the model wrote alongside its tool call, usable only if every call succeeds.
     let prepared: string | undefined;
     let allSucceeded = true;

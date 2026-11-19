@@ -1,12 +1,21 @@
 import "server-only";
 import { env } from "../env";
+import { anthropicClient, chatWithClaude, describeClaudeError } from "./anthropic";
 
 export type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
+/**
+ * Tony's conversation, in a form no provider owns. `raw` on an assistant
+ * turn is that turn exactly as its provider returned it, kept so it can be
+ * sent back unaltered to the same provider.
+ */
 export type ChatMessage =
-  | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; raw?: unknown }
   | { role: "tool"; tool_call_id: string; content: string };
+
+/** The system prompt in two parts: what never changes (cacheable), and what does. */
+export type SystemPrompt = { stable: string; live: string };
 
 export type ToolDefinition = {
   type: "function";
@@ -27,7 +36,7 @@ export class ModelError extends Error {
 /** How long a rate-limited call may wait before trying again. */
 const MAX_WAIT_MS = 15_000;
 
-type Answer = { content: string | null; tool_calls?: ToolCall[] };
+export type Answer = { content: string | null; tool_calls?: ToolCall[]; raw?: unknown };
 
 /** "Please try again in 7.66s" / "in 1m2.5s", or the Retry-After header, in milliseconds. */
 export function retryDelay(status: number, headers: Headers, body: string): number | undefined {
@@ -40,9 +49,14 @@ export function retryDelay(status: number, headers: Headers, body: string): numb
   return Math.ceil((Number(match[1] ?? 0) * 60 + seconds) * 1000);
 }
 
-async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
+async function callOnce(model: string, system: SystemPrompt, conversation: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
   const apiKey = env.aiApiKey;
-  if (!apiKey) throw new ModelError("AI_API_KEY is not set");
+  if (!apiKey) throw new ModelError("No Groq key is set (GROQ_API_KEY)");
+  // This API takes the system prompt as the first message, and knows nothing of `raw`.
+  const messages = [
+    { role: "system", content: system.live.trim() ? `${system.stable}\n\n${system.live}` : system.stable },
+    ...conversation.map((message) => (message.role === "assistant" ? { role: message.role, content: message.content, tool_calls: message.tool_calls } : message)),
+  ];
 
   let response: Response;
   try {
@@ -83,16 +97,14 @@ async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefin
 }
 
 /**
- * One call to an OpenAI-compatible chat API. Provider and model are plain
- * settings (AI_BASE_URL, AI_MODEL), so swapping them needs no code change.
- *
- * When the provider says "too many tokens this minute" (429): wait the time
- * it names and try once more; if the wait is too long or the retry fails,
- * use the fallback model, which has its own allowance. Only then give up.
+ * The second model: an OpenAI-compatible chat API (Groq). When it says
+ * "too many tokens this minute" (429), wait the time it names and try once
+ * more; if that fails, use its own smaller stand-in, which has a separate
+ * allowance.
  */
-export async function chat(messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
+async function chatWithGroq(system: SystemPrompt, messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
   try {
-    return await callOnce(env.aiModel, messages, tools, force);
+    return await callOnce(env.aiModel, system, messages, tools, force);
   } catch (first) {
     if (!(first instanceof ModelError) || first.status !== 429) throw first;
     console.warn(`Rate limited: ${first.message}`);
@@ -101,7 +113,7 @@ export async function chat(messages: ChatMessage[], tools: ToolDefinition[], for
     if (wait <= MAX_WAIT_MS) {
       await new Promise((resolve) => setTimeout(resolve, wait + 250));
       try {
-        return await callOnce(env.aiModel, messages, tools, force);
+        return await callOnce(env.aiModel, system, messages, tools, force);
       } catch (second) {
         if (!(second instanceof ModelError) || second.status !== 429) throw second;
         console.warn(`Still rate limited after waiting ${wait} ms.`);
@@ -111,8 +123,28 @@ export async function chat(messages: ChatMessage[], tools: ToolDefinition[], for
     const fallback = env.aiFallbackModel;
     if (fallback && fallback !== env.aiModel) {
       console.warn(`Using the fallback model ${fallback}.`);
-      return await callOnce(fallback, messages, tools, force);
+      return await callOnce(fallback, system, messages, tools, force);
     }
     throw first;
   }
+}
+
+/**
+ * One turn of Tony's brain. Claude (Anthropic) answers; if that fails for
+ * any reason (rate limit, outage, a bad key, a refusal), the same request
+ * goes to the second model on Groq, so he is not left without an answer.
+ * With no Anthropic key at all, Groq is the brain, as it was before.
+ */
+export async function chat(input: { system: SystemPrompt | string; messages: ChatMessage[]; tools: ToolDefinition[]; force?: string }): Promise<Answer> {
+  const system = typeof input.system === "string" ? { stable: input.system, live: "" } : input.system;
+  const claude = anthropicClient();
+  if (claude) {
+    try {
+      return await chatWithClaude(claude, system, input.messages, input.tools, input.force);
+    } catch (error) {
+      console.error(`Claude failed, ${env.aiApiKey ? `falling back to ${env.aiModel}` : "and there is no fallback"}: ${describeClaudeError(error)}`);
+      if (!env.aiApiKey) throw new ModelError(`Claude failed: ${describeClaudeError(error)}`);
+    }
+  }
+  return chatWithGroq(system, input.messages, input.tools, input.force);
 }

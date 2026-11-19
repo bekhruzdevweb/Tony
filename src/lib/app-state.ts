@@ -61,10 +61,10 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
     status: {
       telegram: Boolean(env.telegramBotToken && env.telegramWebhookSecret && env.telegramOwnerId !== undefined),
       database: true,
-      brain: Boolean(env.aiApiKey),
+      brain: Boolean(env.anthropicApiKey || env.aiApiKey),
       clock: clockStatus.ready,
       lastTick: clockStatus.lastTick?.toISOString() ?? null,
-      model: env.aiModel,
+      model: env.anthropicApiKey ? env.anthropicModel : env.aiModel,
       voiceModel: env.sttModel,
       botUsername,
     },
