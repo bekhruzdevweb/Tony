@@ -22,6 +22,16 @@ export const env = {
   get telegramApiRoot() {
     return read("TELEGRAM_API_ROOT");
   },
+  /** Any OpenAI-compatible chat API. The model is one swappable setting. */
+  get aiApiKey() {
+    return read("AI_API_KEY");
+  },
+  get aiBaseUrl() {
+    return (read("AI_BASE_URL") ?? "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+  },
+  get aiModel() {
+    return read("AI_MODEL") ?? "openai/gpt-oss-120b";
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

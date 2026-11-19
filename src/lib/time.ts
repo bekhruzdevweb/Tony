@@ -2,7 +2,7 @@
 export const TIMEZONE = "Asia/Tashkent";
 
 /** Minutes the zone is ahead of UTC at the given instant. */
-function offsetMinutes(at: Date, timeZone: string): number {
+export function offsetMinutes(at: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
@@ -69,4 +69,51 @@ export function laterThisEvening(now: Date): Date {
 /** The nearest whole minute, so reminders are due at :00 and fire on the tick. */
 export function toWholeMinute(at: Date): Date {
   return new Date(Math.round(at.getTime() / MINUTE) * MINUTE);
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** "2026-11-19" for the local day that contains `at`. */
+export function localDate(at: Date, timeZone = TIMEZONE): string {
+  const local = new Date(at.getTime() + offsetMinutes(at, timeZone) * MINUTE);
+  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`;
+}
+
+/**
+ * Reads a time the model wrote. "2026-11-23T18:00" is taken as local time in
+ * the user's zone; a value with Z or an offset is taken as written.
+ * Returns undefined when it cannot be read.
+ */
+export function parseLocalDateTime(value: string, timeZone = TIMEZONE): Date | undefined {
+  const text = value.trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    const exact = new Date(text);
+    return Number.isNaN(exact.getTime()) ? undefined : exact;
+  }
+  const m = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2})?)?$/);
+  if (!m) return undefined;
+  const asUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0));
+  if (Number.isNaN(asUtc)) return undefined;
+  // Two passes settle the offset for zones that change it; one is enough for Tashkent.
+  let at = new Date(asUtc - offsetMinutes(new Date(asUtc), timeZone) * MINUTE);
+  at = new Date(asUtc - offsetMinutes(at, timeZone) * MINUTE);
+  return at;
+}
+
+/** "today 18:00", "tomorrow 09:00", "Mon 23 Nov 18:00". */
+export function formatDue(at: Date, now = new Date(), timeZone = TIMEZONE): string {
+  const day = localDate(at, timeZone);
+  const time = formatTime(at, timeZone);
+  if (day === localDate(now, timeZone)) return `today ${time}`;
+  if (day === localDate(addMinutes(now, 24 * 60), timeZone)) return `tomorrow ${time}`;
+  if (day === localDate(addMinutes(now, -24 * 60), timeZone)) return `yesterday ${time}`;
+  const label = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short" }).format(at);
+  return `${label.replace(",", "")} ${time}`;
+}
+
+/** "Thursday 19 November 2026". */
+export function formatLongDate(at: Date, timeZone = TIMEZONE): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    .format(at)
+    .replace(",", "");
 }

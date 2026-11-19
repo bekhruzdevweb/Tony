@@ -1,6 +1,7 @@
 import "server-only";
 import type { Bot } from "grammy";
 import { requireDb } from "./db";
+import { logMessage } from "./messages";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
@@ -10,7 +11,7 @@ export type Reminder = {
   id: number;
   task_id: number | null;
   fire_at: string;
-  kind: "due" | "nudge" | "stale" | "brief";
+  kind: "due" | "nudge" | "stale" | "brief" | "extra";
   attempt: number;
   state: "scheduled" | "sent" | "acknowledged" | "cancelled";
   telegram_message_id: number | null;
@@ -132,13 +133,15 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
       continue;
     }
 
-    const offsets = task.persistent ? chainOffsets(task, settings) : [0];
+    // An extra reminder (set_reminder) is a single message, never a chain.
+    const chained = task.persistent && reminder.kind !== "extra";
+    const offsets = chained ? chainOffsets(task, settings) : [0];
     const attempt = Math.min(reminder.attempt, offsets.length - 1);
-    const isFollowUp = reminder.attempt > 0 || reminder.kind !== "due";
+    const isFollowUp = reminder.attempt > 0 || (reminder.kind !== "due" && reminder.kind !== "extra");
     // The moment this persistent reminder began, so later steps keep their
     // planned times even when a message goes out a minute late.
     const base = addMinutes(new Date(reminder.fire_at), -offsets[attempt]);
-    const nextAt = task.persistent && attempt + 1 < offsets.length ? addMinutes(base, offsets[attempt + 1]) : undefined;
+    const nextAt = chained && attempt + 1 < offsets.length ? addMinutes(base, offsets[attempt + 1]) : undefined;
 
     const queueNext = async () => {
       if (!nextAt) return;
@@ -157,12 +160,12 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
     }
 
     // At most one non-persistent nudge per task per day.
-    if (!task.persistent && reminder.kind !== "due") {
+    if (!task.persistent && isFollowUp) {
       const today = await db
         .from("reminders")
         .select("id", { count: "exact", head: true })
         .eq("task_id", task.id)
-        .neq("kind", "due")
+        .in("kind", ["nudge", "stale"])
         .gte("sent_at", dayBounds(now, settings.timezone).start.toISOString());
       fail("runTick: daily cap", today.error);
       if ((today.count ?? 0) > 0) {
@@ -193,11 +196,12 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
     fail("runTick: claim", claim.error);
     if ((claim.data ?? []).length === 0) continue;
 
-    const message = task.persistent ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
+    const message = chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
     try {
       const sent = await bot.api.sendMessage(chatId, message.text, { reply_markup: message.keyboard });
       const saved = await db.from("reminders").update({ telegram_message_id: sent.message_id }).eq("id", reminder.id);
       fail("runTick: message id", saved.error);
+      await logMessage("tony", message.text);
     } catch (error) {
       console.error(`Reminder ${reminder.id} could not be sent:`, error);
       // Put it back; the next tick tries again.

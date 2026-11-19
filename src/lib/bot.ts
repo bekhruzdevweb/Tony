@@ -1,6 +1,8 @@
 import "server-only";
 import { Bot } from "grammy";
+import { respond } from "./brain";
 import { env } from "./env";
+import { logMessage } from "./messages";
 import { inboxMessage, todayMessage } from "./replies";
 import { runAction } from "./actions";
 import { parseAction } from "./reminder-messages";
@@ -63,7 +65,7 @@ export function getBot(): Bot | undefined {
 
   tasks.command("today", async (ctx) => ctx.reply(todayMessage(await listToday())));
 
-  // Phase 3 test aid, until Tony can understand "at 6 pm" (phase 4):
+  // Test aid for the reminder engine:
   //   /test       persistent task due in 2 minutes, nudging every minute
   //   /test full  the same with the real schedule (15, 30, 60, 90, 120 min)
   //   /test once  an ordinary one-time reminder in 2 minutes
@@ -96,18 +98,30 @@ export function getBot(): Bot | undefined {
     await ctx
       .editMessageReplyMarkup({ reply_markup: outcome.keyboard ?? undefined })
       .catch((error) => console.error("Could not update the buttons:", error));
-    if (outcome.text) await ctx.reply(outcome.text);
+    if (outcome.text) {
+      await ctx.reply(outcome.text);
+      await logMessage("tony", outcome.text);
+    }
   });
 
-  // Any other plain text is a task for the Inbox.
+  // Everything else goes to Tony's brain.
   tasks.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) {
       return ctx.reply("I don't know that command, sir. Try /today or /inbox.");
     }
     if (!text) return;
-    const task = await addInboxTask(text);
-    return ctx.reply(`Noted, sir. "${task.title}" is in the inbox.`);
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    try {
+      return await ctx.reply(await respond(text, "telegram"));
+    } catch (error) {
+      // Capture must never fail: if the model is down, keep his words safe.
+      console.error("Brain failed, saving to inbox instead:", error);
+      const task = await addInboxTask(text);
+      const reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
+      await logMessage("tony", reply);
+      return ctx.reply(reply);
+    }
   });
 
   tasks.on("message", (ctx) => ctx.reply("Text only for now, sir. Voice notes come a little later."));

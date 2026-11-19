@@ -51,6 +51,11 @@ export default async function Home() {
       ready: databaseReady,
     },
     {
+      label: "Brain",
+      hint: env.aiApiKey ? `Model: ${env.aiModel}` : "AI_API_KEY is not set",
+      ready: Boolean(env.aiApiKey),
+    },
+    {
       label: "Reminder clock",
       hint: clock?.lastTick ? `Last tick at ${formatTime(clock.lastTick)} Tashkent time` : "No tick received yet",
       ready: clock?.ready ?? false,
@@ -71,7 +76,7 @@ export default async function Home() {
       <h1 className="mt-6 text-title leading-tight font-bold tracking-tight">Tony</h1>
       <p className="mt-2 text-body text-secondary">
         {allReady
-          ? "Everything is connected, sir. Send me anything in Telegram and it becomes a task."
+          ? "Everything is connected, sir. Tell me what needs doing in Telegram."
           : "The site is up, sir. A few connections are still to be made."}
       </p>
 
@@ -85,7 +90,7 @@ export default async function Home() {
       </ul>
 
       <p className="mt-auto pt-10 text-center text-caption text-secondary">
-        Phase 3 of 8 · Reminder engine
+        Phase 4 of 8 · Brain
       </p>
     </main>
   );

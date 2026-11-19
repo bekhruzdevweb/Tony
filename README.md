@@ -10,8 +10,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 |---|-------|--------|
 | 1 | Setup: site loads, bot answers `/ping` with `pong` | Passed |
 | 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Passed |
-| 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Built, awaiting your check |
-| 4 | Tony's brain | Not started |
+| 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Passed |
+| 4 | Tony's brain: prompt, seven tools, natural dates | Built, awaiting your check |
 | 5 | Voice notes | Not started |
 | 6 | The app (PWA) | Not started |
 | 7 | Briefs, missed tasks, memory | Not started |
@@ -49,25 +49,48 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Phase 3 check
+## Phase 4 check
 
-The migration `supabase/migrations/0002_reminder_engine.sql` adds the engine's
-columns and starts a database clock (pg_cron + pg_net) that calls
-`/api/tick` once a minute. The clock's password is generated inside the
-database and never leaves it. The site's fourth dot, **Reminder clock**, is
+Tony now reads every message with an AI model and acts through seven tools
+(`add_task`, `update_task`, `complete_task`, `list_tasks`, `set_reminder`,
+`remember`, `forget`). Button taps and `/today`, `/inbox`, `/ping` still run
+plain code.
+
+Setup, once:
+
+1. Create a free API key at console.groq.com (API Keys → Create).
+2. In Vercel add it as `AI_API_KEY` and redeploy. The site's **Brain** dot
+   turns green and shows the model in use.
+
+**Done when:** "remind me to work out at 6 pm" creates a persistent task at
+18:00 and Tony confirms in his voice.
+
+The model is one swappable setting. Any OpenAI-compatible chat API with tool
+calling works:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AI_API_KEY` | none | the provider's key |
+| `AI_BASE_URL` | `https://api.groq.com/openai/v1` | the provider |
+| `AI_MODEL` | `openai/gpt-oss-120b` | the model |
+
+If the model is unreachable or out of quota, Tony saves the message to the
+inbox as written and says so, so nothing you send is lost.
+
+## Reminder engine
+
+A database clock (pg_cron + pg_net) calls `/api/tick` once a minute, with a
+retry at :20 and :40 if the call did not land. Its password is generated
+inside the database and never leaves it. The site's **Reminder clock** dot is
 green while ticks arrive.
 
-Until Tony understands "at 6 pm" (Phase 4), three test commands create dated
-tasks, each due 2 minutes after you send it:
+Test commands, each creating a task due 2 minutes after you send it:
 
 | Command | Creates |
 |---------|---------|
 | `/test` | a persistent task that nudges every minute: 4 nudges, then a closing message |
 | `/test full` | a persistent task on the real schedule (0, 15, 30, 60, 90, 120 minutes) |
 | `/test once` | an ordinary one-time reminder with Done / Snooze / Reschedule |
-
-**Done when:** `/test` nudges at +2, +3, +4 minutes and stops as soon as you
-tap **Starting now**.
 
 Rules the engine follows:
 
