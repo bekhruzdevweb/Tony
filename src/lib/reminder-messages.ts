@@ -6,14 +6,14 @@ import { formatTime, laterThisEvening } from "./time";
  * Button payloads are "action:taskId[:argument]". Taps are handled by code,
  * never by the AI model, so stopping a reminder is instant.
  */
-export type Action = "start" | "done" | "skip" | "snooze" | "move" | "tomorrow" | "resched";
+export type Action = "start" | "done" | "skip" | "snooze" | "move" | "tomorrow" | "resched" | "today" | "weekend" | "drop";
 
-const data = (action: Action, taskId: number, arg?: number) =>
+export const data = (action: Action, taskId: number, arg?: number) =>
   arg === undefined ? `${action}:${taskId}` : `${action}:${taskId}:${arg}`;
 
 export function parseAction(payload: string): { action: Action; taskId: number; arg?: number } | undefined {
   const [action, taskId, arg] = payload.split(":");
-  const known: Action[] = ["start", "done", "skip", "snooze", "move", "tomorrow", "resched"];
+  const known: Action[] = ["start", "done", "skip", "snooze", "move", "tomorrow", "resched", "today", "weekend", "drop"];
   const id = Number(taskId);
   if (!known.includes(action as Action) || !Number.isSafeInteger(id)) return undefined;
   const n = arg === undefined ? undefined : Number(arg);

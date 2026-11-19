@@ -1,6 +1,7 @@
 import "server-only";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import { think } from "./brain";
+import { runEvening } from "./briefs";
 import { env } from "./env";
 import { logMessage } from "./messages";
 import { inboxMessage, todayMessage } from "./replies";
@@ -127,6 +128,29 @@ export function getBot(): Bot | undefined {
   // Button taps: straight to code, no AI model. The answer is written into
   // the tapped message itself instead of adding another message to the chat.
   tasks.on("callback_query:data", async (ctx) => {
+    // The evening review has its own buttons ("ev:...").
+    if (ctx.callbackQuery.data.startsWith("ev:")) {
+      const [, action, id] = ctx.callbackQuery.data.split(":");
+      let evening: Awaited<ReturnType<typeof runEvening>> | undefined;
+      try {
+        evening = await runEvening(action, id === undefined ? undefined : Number(id));
+      } finally {
+        // Stops the button's spinner; a per-task choice is confirmed in the little pop-up.
+        await ctx.answerCallbackQuery(evening?.toast ? { text: evening.toast } : undefined).catch(() => undefined);
+      }
+      const message = ctx.callbackQuery.message;
+      const base = message && "text" in message && message.text ? message.text.split(OUTCOME_MARK)[0] : undefined;
+      if (evening.text && base) {
+        await ctx.editMessageText(`${base}${OUTCOME_MARK}${evening.text}`, { reply_markup: evening.keyboard ?? undefined }).catch(() => ctx.reply(evening.text!));
+        await logMessage("tony", evening.text);
+      } else if (evening.text) {
+        await ctx.reply(evening.text);
+      } else {
+        await ctx.editMessageReplyMarkup({ reply_markup: evening.keyboard ?? undefined }).catch(() => undefined);
+      }
+      return;
+    }
+
     const parsed = parseAction(ctx.callbackQuery.data);
     if (!parsed) return ctx.answerCallbackQuery({ text: "I no longer recognise that button, sir." });
     let outcome;

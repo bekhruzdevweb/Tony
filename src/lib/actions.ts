@@ -4,7 +4,10 @@ import { requireDb } from "./db";
 import { doneKeyboard, rescheduleKeyboard, type Action } from "./reminder-messages";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, formatTime, toWholeMinute } from "./time";
+import { finishTask } from "./recurrence";
+import { addMinutes, dayBounds, formatTime, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
+
+const weekdayOf = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short" }).format(at);
 
 export type ActionOutcome = {
   /** What Tony says back; nothing when the tap only changes the buttons. */
@@ -34,15 +37,49 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       await settleReminders(task.id);
       return { text: "Excellent. Enjoy it, sir.", keyboard: doneKeyboard(task.id) };
 
-    case "done":
-      await updateTask(task.id, { status: "done", completed_at: now.toISOString() });
-      await settleReminders(task.id);
-      return { text: `Done, sir. "${task.title}" is off the list.`, keyboard: null };
+    case "done": {
+      const { nextLabel } = await finishTask(task, "done", now);
+      return {
+        text: nextLabel ? `Done, sir. "${task.title}" comes round again ${nextLabel}.` : `Done, sir. "${task.title}" is off the list.`,
+        keyboard: null,
+      };
+    }
 
-    case "skip":
-      await updateTask(task.id, { status: "skipped" });
+    case "skip": {
+      const { nextLabel } = await finishTask(task, "skipped", now);
+      return { text: nextLabel ? `Skipped, sir. Next one ${nextLabel}.` : "Skipped for today, sir.", keyboard: null };
+    }
+
+    case "drop":
+      await updateTask(task.id, { status: "dropped" });
       await settleReminders(task.id);
-      return { text: `Skipped for today, sir.`, keyboard: null };
+      return { text: `Dropped, sir. "${task.title}" is off the list.`, keyboard: null };
+
+    // "Put it on today": at its usual time if that is still ahead today,
+    // otherwise the next full hour that is at least half an hour away.
+    case "today": {
+      const { start, end } = dayBounds(now);
+      const hour = 60 * 60_000;
+      let at = new Date(Math.ceil((now.getTime() + hour / 2) / hour) * hour);
+      // Late in the evening that hour is already tomorrow; then simply soon.
+      if (at.getTime() >= end.getTime()) at = toWholeMinute(addMinutes(now, 15));
+      if (task.due_at) {
+        const usual = new Date(start.getTime() + minuteOfDay(new Date(task.due_at)) * 60_000);
+        if (usual.getTime() > now.getTime()) at = usual;
+      }
+      await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
+      await scheduleReminder(task.id, at);
+      return { text: `On today's list at ${formatTime(at)}, sir.`, keyboard: null };
+    }
+
+    // Saturday at 10:00 (the coming one).
+    case "weekend": {
+      let at = parseLocalDateTime(`${localDate(now)}T10:00`)!;
+      for (let i = 0; i < 8 && (weekdayOf(at) !== "Sat" || at.getTime() <= now.getTime()); i++) at = addMinutes(at, 24 * 60);
+      await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
+      await scheduleReminder(task.id, at);
+      return { text: `Set for Saturday at ${formatTime(at)}, sir.`, keyboard: null };
+    }
 
     case "snooze": {
       const at = toWholeMinute(addMinutes(now, arg ?? 15));
@@ -61,8 +98,9 @@ export async function runAction(action: Action, taskId: number, arg: number | un
     }
 
     case "tomorrow": {
-      let at = toWholeMinute(addMinutes(task.due_at ? new Date(task.due_at) : now, 24 * 60));
-      while (at.getTime() <= now.getTime()) at = addMinutes(at, 24 * 60);
+      // Tomorrow's date, at the task's own time of day (09:00 for an undated task).
+      const time = task.due_at ? formatTime(new Date(task.due_at)) : "09:00";
+      const at = parseLocalDateTime(`${localDate(addMinutes(now, 24 * 60))}T${time}`)!;
       await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
       await scheduleReminder(task.id, at);
       return { text: `Moved to tomorrow at ${formatTime(at)}, sir.`, keyboard: null };

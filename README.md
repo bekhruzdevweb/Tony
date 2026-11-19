@@ -13,8 +13,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Passed |
 | 4 | Tony's brain: prompt, seven tools, natural dates | Passed |
 | 5 | Voice notes: download, transcribe, hand to the brain | Passed |
-| 6 | The app (PWA): Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings | Built, awaiting your check |
-| 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Not started |
+| 6 | The app (PWA): Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings | Passed |
+| 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Built, awaiting your check |
 | 8 | Live week | Not started |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
@@ -49,20 +49,48 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Phase 6 check
+## Phase 7 check
 
-The site is now the app. To get in:
+Every day Tony now sends, at the times set in Settings:
 
-1. Send `/app` to Tony in Telegram. He replies with a six-digit key (good
-   once, for ten minutes) and an **Open app** button.
-2. Either tap the button, or open the site and type the key.
+- **Morning brief (08:00):** today's tasks with their times and how many
+  were carried over, with an Open app button. Then, for up to two tasks left
+  open from an earlier day, one question each with **Today / Tomorrow /
+  Drop**. Then, quietly, one inbox item that has been untouched for 3 days,
+  with **Tomorrow / This weekend / Drop** (each item at most once in 3 days).
+- **Evening review (21:00):** what is still open, with **Move all / Choose /
+  Leave them**. Choose lists each task with its own Tomorrow and Drop. If
+  nothing is open he says so only when something was completed that day.
+
+A brief that cannot go out on time is still sent for up to 3 hours, then
+skipped for that day.
+
+**Repeating tasks** (daily, weekdays, weekly) are never closed: Done or Skip
+moves them to their next date with a fresh reminder.
+
+**Done when:** a task left undone yesterday appears in this morning's brief.
+To see a brief without waiting, set its time in Settings to a minute or two
+ahead, then set it back.
+
+## Opening the app
+
+**Inside Telegram (Mini App).** Tap the **Tony** Menu button beside the
+message field, or send `/app` and tap **Open Tony**. There is no key to type:
+Telegram signs who opened the app and the server checks that signature
+against the bot token on every request. Inside Telegram the app follows
+Telegram's colours and uses its Back button and haptics. To put the Menu
+button in place after a new deployment, send `/start` to Tony (or open
+`/api/telegram/setup?secret=...` once).
+
+**On the home screen (PWA).**
+
+1. Send `/app` to Tony. His reply includes a six-digit key (good once, for
+   ten minutes).
+2. Open the site in the browser and type the key.
 3. Install it: in Safari, Share → Add to Home Screen; in Chrome, menu →
    Install app. The installed app has its own storage, so the first time you
-   open it from the home screen it asks for a key again: send `/app` and
-   type the new one. A sign-in lasts 90 days.
-
-**Done when:** the app is on the home screen, and a task you send Tony in
-Telegram appears in it within a few seconds without refreshing.
+   open it from the home screen it asks for a key again. A sign-in lasts 90
+   days.
 
 What is where:
 
@@ -86,6 +114,20 @@ Tony downloads a voice note from Telegram, has it transcribed
 a typed message. The language is detected, so Uzbek and Russian notes are
 understood; Tony replies in English. Optional settings: `STT_MODEL`,
 `STT_BASE_URL`, `STT_API_KEY`.
+
+## In the Telegram chat
+
+- A button tap writes its outcome into the message you tapped, and clears
+  the buttons on that task's other reminders.
+- Reply to any reminder and Tony knows which task you mean.
+- A small reaction on your message when something was written down (✍) or
+  ticked off (👌).
+- Follow-ups on ordinary P4 tasks, such as the inbox nudge, arrive silently.
+- `/help` lists what Tony understands; the command list has `/today`,
+  `/inbox`, `/app`, `/help`, `/ping`.
+- Spoken replies to voice notes are off by default. To switch them on, set
+  `TTS_MODEL` (on Groq: `canopylabs/orpheus-v1-english`, after accepting its
+  terms in the Groq console) and optionally `TTS_VOICE`.
 
 ## Tony's brain
 

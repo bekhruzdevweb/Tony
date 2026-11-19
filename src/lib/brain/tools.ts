@@ -1,5 +1,6 @@
 import "server-only";
 import { requireDb } from "../db";
+import { finishTask } from "../recurrence";
 import { scheduleReminder, settleReminders } from "../reminders";
 import { MAX_TITLE_LENGTH, OPEN_STATUSES, type Task } from "../tasks";
 import { addMinutes, dayBounds, formatDue, parseLocalDateTime, toWholeMinute } from "../time";
@@ -200,6 +201,11 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
 
       const status = typeof args.status === "string" ? args.status : undefined;
       if (status && !["todo", "dropped", "skipped"].includes(status)) return fail("status must be todo, dropped or skipped");
+      if (status === "skipped" && Object.keys(patch).length === 0) {
+        // Skipping a repeating task moves it to its next date instead of closing it.
+        const { nextLabel } = await finishTask(task, "skipped", now);
+        return { ok: true, task: task.title, status: nextLabel ? `skipped; next one ${nextLabel}` : "skipped" };
+      }
       if (status === "dropped" || status === "skipped") {
         patch.status = status;
       } else if (args.clear_due === true) {
@@ -225,10 +231,8 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       const task = await loadTask(args.id);
       if (!task) return fail(`no task #${args.id}`);
       if (task.status === "done") return { ok: true, note: "it was already done", task: task.title };
-      const { error } = await db.from("tasks").update({ status: "done", completed_at: now.toISOString() }).eq("id", task.id);
-      check("complete_task", error);
-      await settleReminders(task.id);
-      return { ok: true, task: task.title };
+      const { nextLabel } = await finishTask(task, "done", now);
+      return nextLabel ? { ok: true, task: task.title, repeats: `it comes round again ${nextLabel}` } : { ok: true, task: task.title };
     }
 
     case "list_tasks": {

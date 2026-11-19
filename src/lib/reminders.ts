@@ -101,7 +101,13 @@ export type TickResult = {
  * quiet hours and the anti-spam caps, and queues the next step of each
  * persistent reminder.
  */
-export async function runTick(bot: Bot, chatId: number, now = new Date()): Promise<TickResult> {
+export async function runTick(
+  bot: Bot,
+  chatId: number,
+  now = new Date(),
+  // Passed in by the tick route; kept out of this file so briefs can use the button actions.
+  options: { briefs?: (settings: Settings, now: Date) => Promise<unknown> } = {},
+): Promise<TickResult> {
   const db = requireDb();
   const result: TickResult = { sent: 0, deferred: 0, cancelled: 0, failed: 0 };
   const settings = await getSettings();
@@ -112,6 +118,16 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
     if (result.failed === 0) await updateSettings({ last_tick_at: now.toISOString() });
     return result;
   };
+
+  // Briefs first. A fault here must not hold up the reminders below.
+  if (options.briefs) {
+    try {
+      await options.briefs(settings, now);
+    } catch (error) {
+      console.error("Briefs failed:", error);
+      result.failed++;
+    }
+  }
 
   // Free to send: no lease, or a lease so old that the tick holding it must have died.
   const free = `claimed_at.is.null,claimed_at.lt.${addMinutes(now, -LEASE_MINUTES).toISOString()}`;

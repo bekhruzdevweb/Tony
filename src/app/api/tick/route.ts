@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { getBot } from "@/lib/bot";
+import { runBriefs } from "@/lib/briefs";
 import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
 import { runTick } from "@/lib/reminders";
@@ -30,7 +31,10 @@ export async function POST(request: Request) {
     if (!tick_secret || !matches(given, tick_secret)) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    return Response.json({ ok: true, ...(await runTick(bot, chatId)) });
+    const result = await runTick(bot, chatId, new Date(), {
+      briefs: (settings, now) => runBriefs(bot, chatId, settings, now),
+    });
+    return Response.json({ ok: true, ...result });
   } catch (error) {
     console.error("Tick failed:", error);
     return Response.json({ ok: false, error: "Tick failed" }, { status: 500 });
