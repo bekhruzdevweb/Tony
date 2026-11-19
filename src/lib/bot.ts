@@ -6,7 +6,9 @@ import { think } from "./brain";
 import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
+  deleteNow,
   editHtml,
+  ERROR_MINUTES,
   hoursFromNow,
   protect,
   retire,
@@ -30,7 +32,7 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
-import { closestCommand, connectTelegram, HELP } from "./telegram-setup";
+import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, toggleFromBoard } from "./today-board";
 import { dayFromKey, dayView, inboxView } from "./views";
@@ -58,6 +60,18 @@ export function getBot(): Bot | undefined {
   // before TELEGRAM_OWNER_ID is set. It reveals nothing but the sender's own ID.
   // The same text is never sent twice running.
   refuseRepeats(bot);
+
+  // His commands (/today, /help, ...) are removed as soon as Tony has handled
+  // them: the answer is what matters. A mistyped command stays ten minutes
+  // beside its "did you mean" (see the text handler below).
+  bot.use(async (ctx, next) => {
+    await next();
+    const ownerId = env.telegramOwnerId;
+    const message = ctx.message;
+    if (!message || !ctx.chat || ownerId === undefined || ctx.chat.id !== ownerId) return;
+    if (!knownCommand(message.text)) return;
+    await deleteNow(bot, ctx.chat.id, message.message_id);
+  });
 
   bot.command("start", async (ctx) => {
     const ownerId = env.telegramOwnerId;
@@ -89,17 +103,35 @@ export function getBot(): Bot | undefined {
     return next();
   });
 
-  bot.command("ping", (ctx) => ctx.reply("pong"));
-
-  bot.command("help", (ctx) => ctx.reply(HELP));
-
   /** Sends formatted text to the chat of this update, recording it when it has a kind. */
   const say = (ctx: Context, html: string, options: Parameters<typeof sendTracked>[3] = {}) => sendTracked(bot, ctx.chat!.id, html, options);
 
+  /**
+   * An apology or "unknown command": removed after ten minutes, together
+   * with his message that caused it (unless that was a voice note, which is kept).
+   */
+  const oops = async (ctx: Context, text: string, options: { keepTheirs?: boolean } = {}) => {
+    const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
+    const sent = await ctx.reply(text);
+    await track(sent.message_id, "error", { deleteAfter });
+    if (ctx.message && !options.keepTheirs) await track(ctx.message.message_id, "error", { incoming: true, deleteAfter });
+  };
+
+  bot.command("ping", async (ctx) => {
+    const sent = await ctx.reply("pong");
+    await track(sent.message_id, "cmd:ping", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+  });
+
+  // One help message at a time.
+  bot.command("help", async (ctx) => {
+    await retire({ kinds: ["cmd:help"] });
+    const sent = await ctx.reply(HELP);
+    await track(sent.message_id, "cmd:help");
+  });
+
   /** A command he typed and its reply replace the previous pair of the same kind. */
-  const freshCommand = async (ctx: Context, kind: MessageKind) => {
+  const freshCommand = async (_ctx: Context, kind: MessageKind) => {
     await retire({ kinds: [kind] });
-    if (ctx.msg) await track(ctx.msg.message_id, kind, { incoming: true });
   };
 
   // The app: opens inside Telegram with one tap, and a one-time key for the
@@ -120,7 +152,7 @@ export function getBot(): Bot | undefined {
       );
     } catch (error) {
       console.error("Login code failed:", error);
-      return ctx.reply("My apologies, sir. I could not prepare a key just now.");
+      return oops(ctx, "My apologies, sir. I could not prepare a key just now.");
     }
   });
 
@@ -135,7 +167,7 @@ export function getBot(): Bot | undefined {
   const tasks = bot.errorBoundary(async ({ ctx, error }) => {
     console.error("Bot handler failed:", error);
     try {
-      if (ctx.chat) await ctx.reply("My apologies, sir. I could not reach the task list just now.");
+      if (ctx.chat) await oops(ctx, "My apologies, sir. I could not reach the task list just now.", { keepTheirs: Boolean(ctx.message?.voice) });
     } catch (replyError) {
       console.error("Could not send the apology:", replyError);
     }
@@ -147,10 +179,9 @@ export function getBot(): Bot | undefined {
     await say(ctx, view.html, { kind: "cmd:inbox" });
   });
 
-  // The pinned Today message. If it was lost, this sends a new one and pins it again.
-  tasks.command("today", async (ctx) => {
-    // His "/today" has done its job once the board is there.
-    if (ctx.msg) await track(ctx.msg.message_id, "cmd:today", { incoming: true, deleteAfter: new Date() });
+  // The pinned Today message (also /checklist and /list). Sends a new one,
+  // pins it, and removes the one before, so there is only ever one.
+  tasks.command(["today", ...TODAY_ALIASES], async (ctx) => {
     try {
       await postBoard(bot, ctx.chat.id);
     } catch (error) {
@@ -163,7 +194,6 @@ export function getBot(): Bot | undefined {
 
   // "/plan" or "/plan week": Tony proposes times for what is overdue or in the inbox.
   tasks.command("plan", async (ctx) => {
-    if (ctx.msg) await track(ctx.msg.message_id, "plan", { incoming: true });
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const result = await buildPlan({ scope: ctx.match.trim().toLowerCase().startsWith("week") ? "week" : "day" });
     if ("nothing" in result) return ctx.reply(`${result.nothing.replace(/\.$/, "")}, sir.`);
@@ -172,7 +202,6 @@ export function getBot(): Bot | undefined {
 
   tasks.command("tomorrow", async (ctx) => {
     await retire({ kinds: ["plan"] });
-    if (ctx.msg) await track(ctx.msg.message_id, "plan", { incoming: true });
     const now = new Date();
     const view = await dayView(addMinutes(now, 24 * 60), now);
     await say(ctx, view.html, { keyboard: view.keyboard, kind: "plan" });
@@ -494,7 +523,10 @@ export function getBot(): Bot | undefined {
       const task = await addInboxTask(text);
       const reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
       await logMessage("tony", reply);
-      await say(ctx, `My thinking is briefly unavailable, sir, so I saved ${b(task.title)} to the inbox as it stands.`);
+      // His words are safe in the inbox, so the apology (and, unless spoken, his message) go after ten minutes.
+      const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
+      await say(ctx, `My thinking is briefly unavailable, sir, so I saved ${b(task.title)} to the inbox as it stands.`, { kind: "error", deleteAfter });
+      if (ctx.message && !ctx.message.voice) await track(ctx.message.message_id, "error", { incoming: true, deleteAfter });
       return { reply, confirmed: false, completed: false };
     }
   };
@@ -559,7 +591,7 @@ export function getBot(): Bot | undefined {
       );
     }
     if (!words && !imageText && !file) {
-      return ctx.reply("Text, a voice note, a photo, a file or a forwarded post, sir; I cannot read that kind of message yet.");
+      return oops(ctx, "Text, a voice note, a photo, a file or a forwarded post, sir; I cannot read that kind of message yet.");
     }
 
     const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
@@ -593,7 +625,7 @@ export function getBot(): Bot | undefined {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) {
       const guess = closestCommand(text);
-      return ctx.reply(guess ? `I don't know that command, sir. Did you mean /${guess}?` : "I don't know that command, sir. /help lists the ones I do.");
+      return oops(ctx, guess ? `I don't know that command, sir. Did you mean /${guess}?` : "I don't know that command, sir. /help lists the ones I do.");
     }
     if (!text) return;
     // A forwarded post is material to read, not something he typed.
@@ -621,7 +653,7 @@ export function getBot(): Bot | undefined {
       );
     } catch (error) {
       console.error("Voice note failed:", error);
-      return ctx.reply("My apologies, sir. I could not hear that one; would you send it again or type it?");
+      return oops(ctx, "My apologies, sir. I could not hear that one; would you send it again or type it?", { keepTheirs: true });
     }
     if (!text) return ctx.reply("I heard only silence, sir. Would you say that again?");
     // Replies to a voice note are kept for a day before any tidying.

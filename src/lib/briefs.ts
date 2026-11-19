@@ -221,7 +221,8 @@ async function eveningReview(bot: Bot, chatId: number, settings: Settings, now: 
   const usePoll = candidates.length >= 2;
   if (left.length === 1 && !usePoll) parts.push("Move it to tomorrow?");
 
-  await retire({ kinds: ["brief:evening"] }, now);
+  // The morning brief has served the day; the evening review takes its place.
+  await retire({ kinds: ["brief:evening", "brief:morning"] }, now);
   const reviewId = await send(bot, chatId, parts.join("\n\n"), {
     // With several candidates the poll asks which; either way Tony can plan tomorrow himself.
     keyboard: left.length > 0 && !usePoll ? reviewKeyboard().row().text("🧭 Plan tomorrow for me", "pl:new:tomorrow") : candidates.length > 0 ? new InlineKeyboard().text("🧭 Plan tomorrow for me", "pl:new:tomorrow") : undefined,

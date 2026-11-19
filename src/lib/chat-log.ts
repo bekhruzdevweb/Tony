@@ -20,8 +20,12 @@ export type MessageKind =
   | "cmd:today"
   | "cmd:inbox"
   | "cmd:app"
+  | "cmd:help"
+  | "cmd:ping"
   | "plan"
-  | "voice";
+  | "voice"
+  // An apology, "I don't know that command", and the message that caused it.
+  | "error";
 
 /** Telegram lets a bot delete a message for 48 hours; stay safely inside that. */
 const DELETABLE_HOURS = 47;
@@ -29,6 +33,9 @@ export const CONFIRMATION_HOURS = 3;
 /** Replies to his voice notes are kept for a day. */
 export const VOICE_REPLY_HOURS = 24;
 const SEND_TIMEOUT_MS = 8_000;
+
+/** Errors and "unknown command" replies, and what caused them, go after ten minutes. */
+export const ERROR_MINUTES = 10;
 
 export const hoursFromNow = (hours: number, now = new Date()) => new Date(now.getTime() + hours * 60 * 60_000);
 
@@ -134,6 +141,21 @@ export function retire(which: { kinds?: MessageKind[]; taskId?: number; exceptMe
     if (which.exceptMessageId !== undefined) query = query.neq("message_id", which.exceptMessageId);
     return query;
   });
+}
+
+/**
+ * Removes one message now (his command, once it has been handled). If
+ * Telegram cannot be reached, the message is left to the next tick instead.
+ */
+export async function deleteNow(bot: Bot, chatId: number, messageId: number): Promise<void> {
+  try {
+    await bot.api.deleteMessage(chatId, messageId, timeout());
+    await quietly("deleteNow", () => requireDb().from("chat_messages").update({ deleted_at: new Date().toISOString() }).eq("message_id", messageId));
+  } catch (error) {
+    // Already gone, or too old: nothing more to do.
+    if ((error as { error_code?: number })?.error_code === 400) return;
+    await track(messageId, "cmd:today", { incoming: true, deleteAfter: new Date() });
+  }
 }
 
 /** He pinned it or replied to it: never remove it. */

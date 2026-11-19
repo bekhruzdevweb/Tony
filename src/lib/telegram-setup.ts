@@ -23,7 +23,7 @@ export const HELP = [
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today  /tomorrow  /plan  /inbox  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */
@@ -46,8 +46,18 @@ export async function connectTelegram(bot: Bot, appUrl: string | null | undefine
   return { menuButton: true };
 }
 
+/** Other names for /today. */
+export const TODAY_ALIASES = ["checklist", "list"];
+
 /** Every command Tony answers, including the ones kept out of the menu. */
-const KNOWN_COMMANDS = [...COMMANDS.map((entry) => entry.command), "start", "test"];
+const KNOWN_COMMANDS = [...COMMANDS.map((entry) => entry.command), ...TODAY_ALIASES, "start", "test"];
+
+/** The command a message starts with ("today" for "/today@TonyBot now"), if Tony knows it. */
+export function knownCommand(text: string | undefined): string | undefined {
+  const match = /^\/([a-z_]+)(?:@\w+)?(?:\s|$)/i.exec(text ?? "");
+  const command = match?.[1].toLowerCase();
+  return command && KNOWN_COMMANDS.includes(command) ? command : undefined;
+}
 
 /** Edit distance: how many single-letter changes turn one word into the other. */
 function distance(a: string, b: string): number {

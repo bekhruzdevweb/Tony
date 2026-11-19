@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { InlineKeyboard, type Bot } from "grammy";
-import { sendHtml } from "./chat-log";
+import { retire, sendHtml } from "./chat-log";
 import { requireDb } from "./db";
 import { esc } from "./html";
 import { finishTask } from "./recurrence";
@@ -11,15 +11,63 @@ import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
- * The pinned "Today" message: a header with progress, and one button per
- * task that ticks it off. There is exactly one, its message id is kept in
- * settings, and it is edited in place whenever anything about today changes.
+ * The pinned "Today" message: the whole day as a list in the text, and a
+ * short button per task that ticks it off. There is exactly one, its
+ * message id is kept in settings, and it is edited in place whenever
+ * anything about today changes.
+ *
+ *   📋 Today · Fri 20 Nov   1/3
+ *
+ *   ☐ ⚠️ Wed 23:29 Reply to the school
+ *   ☐ 18:00 English Speaking Club
+ *   ☑ 09:00 Morning walk          (struck through, at the bottom)
+ *
+ *   [☐ Reply to school] [☐ Speaking Club]
+ *   [☑ Morning walk]
+ *   [➕ Add]            [📱 App]
  */
 const MAX_BUTTONS = 40;
-const BAR_CELLS = 10;
+const BUTTON_ROOM = 17; // the label after "☐ ", about 18 characters in all
 
 const shortDay = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short", day: "numeric", month: "short" }).format(at).replace(",", "");
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+const weekday = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short" }).format(at);
+
+const FILLER_START = /^(attend|attending|go to|going to|join|visit|do|the|a|an)\s+/i;
+const FILLER_WORDS = new Set(["the", "a", "an", "this", "that", "my", "some", "your", "our"]);
+const CUT_BEFORE = new Set(["about", "for", "on", "with", "at", "in", "from", "and", "by", "before", "after", "via"]);
+
+/**
+ * A task's title cut down to fit a button: "Attend English Speaking Club –
+ * More Than a Game" becomes "Speaking Club", "Call the bank about the card"
+ * becomes "Call bank". The full title is in the message text above.
+ */
+export function shortLabel(title: string, room = BUTTON_ROOM): string {
+  // Only the part before a dash, colon, bracket or bar.
+  let words = title.split(/\s[–—-]\s|[:|(\[]|,\s/)[0].trim().replace(FILLER_START, "").split(/\s+/).filter(Boolean);
+  const fits = () => words.join(" ").length <= room;
+  if (!fits()) {
+    // "Call the bank about the card": keep what comes before "about", "for", "and"...
+    const cut = words.findIndex((word, n) => n >= 1 && CUT_BEFORE.has(word.toLowerCase()));
+    // A single word before it says little ("Preparation for IELTS exam"); then the words after it are the name.
+    const after = words.slice(cut + 1);
+    if (cut === 1 && after.length > 0 && after.join(" ").length <= room) words = after;
+    else if (cut >= 1) words = words.slice(0, cut);
+  }
+  if (!fits()) words = words.filter((word, n) => n === 0 || !FILLER_WORDS.has(word.toLowerCase()));
+  if (!fits()) {
+    // A name ("English Speaking Club") is best known by its last words; a to-do by its first.
+    const named = words.filter((word) => /^[A-Z0-9]/.test(word)).length >= 2;
+    const kept: string[] = [];
+    for (const word of named ? [...words].reverse() : words) {
+      if ([...kept, word].join(" ").length > room) break;
+      if (named) kept.unshift(word);
+      else kept.push(word);
+    }
+    words = kept.length ? kept : [words[named ? words.length - 1 : 0]];
+  }
+  const label = words.join(" ");
+  return label.length > room ? `${label.slice(0, room - 1)}…` : label;
+}
 
 type Board = { html: string; keyboard: InlineKeyboard; hash: string };
 
@@ -44,29 +92,45 @@ export async function boardView(day: Date): Promise<Board> {
   if (openRows.error || finishedRows.error) throw new Error(`boardView: ${(openRows.error ?? finishedRows.error)!.message}`);
 
   const open = openRows.data as Task[];
-  // With a time today, in order; then whatever was carried over from earlier days.
-  const timed = open.filter((task) => new Date(task.due_at!).getTime() >= start.getTime());
+  // Carried over from earlier days first, then today's in time order, then what is done.
   const carried = open.filter((task) => new Date(task.due_at!).getTime() < start.getTime());
+  const timed = open.filter((task) => new Date(task.due_at!).getTime() >= start.getTime());
   const done = (finishedRows.data as Task[]).filter((task) => task.status === "done" || (task.due_at !== null && new Date(task.due_at).getTime() >= end.getTime()));
+  const total = carried.length + timed.length + done.length;
 
-  const total = timed.length + carried.length + done.length;
-  const filled = total === 0 ? 0 : Math.round((done.length / total) * BAR_CELLS);
-  const bar = "▰".repeat(filled) + "▱".repeat(BAR_CELLS - filled);
-  const html = [
-    `<b>📋 Today · ${esc(shortDay(day))} · ${done.length}/${total} done</b>`,
-    total === 0 ? "Nothing is due today, sir." : bar,
-  ].join("\n");
-
-  const keyboard = new InlineKeyboard();
-  const rows: [string, string][] = [
-    ...timed.map((task): [string, string] => [`☐ ${formatTime(new Date(task.due_at!))}  ${clip(task.title, 36)}${task.persistent ? " 🔔" : ""}`, `td:${task.id}`]),
-    ...carried.map((task): [string, string] => [`☐ ⚠️ ${clip(task.title, 38)}`, `td:${task.id}`]),
-    ...done.map((task): [string, string] => [`☑ ${clip(task.title, 42)}`, `td:${task.id}`]),
+  const bell = (task: Task) => (task.persistent ? " 🔔" : "");
+  const lines = [
+    ...carried.map((task) => {
+      const at = new Date(task.due_at!);
+      return `☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${bell(task)}`;
+    }),
+    ...timed.map((task) => `☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${bell(task)}`),
+    // A repeating task done today shows the time it was done, not its next date.
+    ...done.map((task) => `☑ <s>${formatTime(new Date(task.completed_at ?? task.due_at!))} ${esc(task.title)}</s>`),
   ];
-  for (const [label, data] of rows.slice(0, MAX_BUTTONS)) keyboard.text(label, data).row();
+  const html = [`<b>📋 Today · ${esc(shortDay(day))}</b>   ${done.length}/${total}`, "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
+
+  // Two short buttons a row, in the same order as the list.
+  const buttons = [
+    ...[...carried, ...timed].map((task) => ({ task, mark: "☐" })),
+    ...done.map((task) => ({ task, mark: "☑" })),
+  ].slice(0, MAX_BUTTONS);
+  const labels = buttons.map(({ task }) => shortLabel(task.title));
+  // Two tasks that shorten to the same words are told apart by their time.
+  const label = (n: number) => {
+    const same = labels.filter((other) => other === labels[n]).length > 1;
+    const at = buttons[n].task.due_at ? formatTime(new Date(buttons[n].task.due_at!)) : "";
+    return `${buttons[n].mark} ${same && at ? `${shortLabel(buttons[n].task.title, BUTTON_ROOM - 6)} ${at}` : labels[n]}`;
+  };
+  const keyboard = new InlineKeyboard();
+  buttons.forEach(({ task }, n) => {
+    keyboard.text(label(n), `td:${task.id}`);
+    if (n % 2 === 1) keyboard.row();
+  });
+  if (buttons.length % 2 === 1) keyboard.row();
   // Telegram has no long-press menu on a message, so adding lives in a last row of its own.
   keyboard.text("➕ Add", "td:add");
-  if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 Open app", settings.app_url);
+  if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
 
   const hash = createHash("sha256").update(`${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
   return { html, keyboard, hash };
@@ -119,6 +183,8 @@ export async function postBoard(bot: Bot, chatId: number, now = new Date()): Pro
   const messageId = await sendHtml(bot, chatId, board.html, { keyboard: board.keyboard, silent: true });
   await updateSettings({ today_message_id: messageId, today_message_day: localDate(now), today_message_hash: board.hash });
   await bot.api.pinChatMessage(chatId, messageId, { disable_notification: true }).catch((error) => console.error("Could not pin the Today message:", error));
+  // Any older day list sent by /today before the board existed goes too.
+  await retire({ kinds: ["cmd:today"] }, now);
   if (previous && Number(previous) !== messageId) {
     await bot.api.unpinChatMessage(chatId, Number(previous)).catch(() => undefined);
     // A bot can delete its own message for 48 hours, which covers yesterday's.

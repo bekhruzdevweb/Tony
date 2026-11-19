@@ -171,15 +171,27 @@ rejects the markup the same words go out as plain text.
 - Sunday evening: the week in four numbers and "How did the week go?". The
   answer is kept as a memory note.
 
-**The pinned Today message.** One message, pinned silently: a header with
-the date, "X/Y done" and a progress bar, then a button per task. Tasks with
-a time today come first in order, then anything carried over (⚠️), then the
-done ones (☑) at the bottom, and a last row with ➕ Add and 📱 Open app. A tap
-ticks a task off or unticks it in plain code, and the same message is edited
-in place. It also redraws itself after every message, tap, reminder tick and
-change made in the app, but only talks to Telegram when something changed.
-A fresh one arrives with the morning brief (yesterday's is unpinned and
-deleted); `/today` re-sends and re-pins it. Its message id lives in settings.
+**The pinned Today message.** One message, pinned silently. The text is
+the whole day, left-aligned, time first:
+
+    📋 Today · Fri 20 Nov   1/3
+
+    ☐ ⚠️ Wed 23:29 Reply to the school
+    ☐ 18:00 English Speaking Club
+    ☑ 09:00 Morning walk            (struck through)
+
+Carried-over tasks (⚠️) come first, then today's in time order, then the
+done ones, struck through, at the bottom. Below it, a short button per task
+(about 18 characters, two to a row: "☐ Speaking Club") and a last row with
+➕ Add and 📱 App. Button labels are the title cut down to its core ("Attend
+English Speaking Club – More Than a Game" → "Speaking Club"); the full title
+is in the text. A tap ticks a task off or unticks it in plain code, and the
+same message is edited in place. It also redraws itself after every message,
+tap, reminder tick and change made in the app, but only talks to Telegram
+when something changed. A fresh one arrives with the morning brief;
+`/today` (also `/checklist` and `/list`) sends a new one and pins it. Either
+way the previous board is unpinned and deleted, so there is only ever one.
+Its message id lives in settings.
 
 **Media memory.** Every photo, video, document, GIF and voice note you send
 is saved: Telegram's file id (so the original can be sent back untouched),
@@ -191,8 +203,9 @@ it: the reminder is the original photo with your note and the usual buttons.
 sends the matching originals back. In the app a task with an attachment has
 a 📎 and shows the picture in its sheet, through a link that lasts a day.
 
-Both need migration `0010_board_and_media.sql`. Until it is applied the code
-falls back: `/today` sends the old checklist and media is read but not saved.
+Both need migration `0010_board_and_media.sql` (applied). Without it the
+code falls back: `/today` sends the old checklist and media is read but not
+saved.
 
 **Forwarded posts and photos.** Forward Tony a post, or send a photo, with
 or without a caption. He reads the words and the text in the image (Claude reads
@@ -217,14 +230,20 @@ checklist.
 
 | Message | Removed |
 |---------|---------|
+| Your commands (`/today`, `/help`, `/inbox`...) | as soon as Tony has handled them |
+| An apology, "I don't know that command", "my thinking is briefly unavailable", and your message that caused it | after 10 minutes (your voice notes are kept) |
+| `pong` | after 10 minutes |
+| `/help`, `/inbox`, `/app` replies | when you send the same command again |
+| The previous Today board | when a new one is sent |
 | A reminder's earlier nudges | when the task is done, skipped, snoozed or moved |
 | A confirmation ("Noted, sir…"), including a tapped reminder | after 3 hours (24 hours if it answered a voice note) |
-| Your `/today`, `/tomorrow`, `/inbox`, `/app` and the reply | when you send the same command again |
-| Yesterday's brief, plan, review and polls | when the new one arrives |
+| The morning brief | at the evening review |
+| Yesterday's plan, review and polls | when the new one arrives |
 
-Never removed: reminders still waiting for a tap, today's brief and plan,
-ordinary conversation, any message you replied to or pinned, and anything
-older than 47 hours (Telegram's limit for bots is 48).
+Never removed: the pinned board, reminders still waiting for a tap, your
+voice notes, the morning brief before evening, ordinary conversation, any
+message you replied to or pinned, and anything older than 47 hours
+(Telegram's limit for bots is 48).
 
 **Also:** a button tap writes its outcome into the message you tapped; reply
 to a reminder and Tony knows which task you mean; ✍ / 👌 reactions; silent
