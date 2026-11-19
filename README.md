@@ -171,27 +171,45 @@ rejects the markup the same words go out as plain text.
 - Sunday evening: the week in four numbers and "How did the week go?". The
   answer is kept as a memory note.
 
-**The pinned Today message.** One message, pinned silently. The text is
-the whole day, left-aligned, time first:
+**The pinned Today message.** One message, pinned silently, sent as a
+Telegram rich message (Bot API 10.1+, `sendRichMessage`):
 
-    📋 Today · Fri 20 Nov   1/3
+    Today · Fri 20 Nov                (heading)
+    1/3 done                          (small, italic)
 
     ☐ ⚠️ Wed 23:29 Reply to the school
     ☐ 18:00 English Speaking Club
-    ☑ 09:00 Morning walk            (struck through)
+    ☑ 09:00 Morning walk              (native checkboxes; done at the bottom)
 
-Carried-over tasks (⚠️) come first, then today's in time order, then the
-done ones, struck through, at the bottom. Below it, a short button per task
-(about 18 characters, two to a row: "☐ Speaking Club") and a last row with
-➕ Add and 📱 App. Button labels are the title cut down to its core ("Attend
-English Speaking Club – More Than a Game" → "Speaking Club"); the full title
-is in the text. A tap ticks a task off or unticks it in plain code, and the
-same message is edited in place. It also redraws itself after every message,
-tap, reminder tick and change made in the app, but only talks to Telegram
-when something changed. A fresh one arrives with the morning brief;
-`/today` (also `/checklist` and `/list`) sends a new one and pins it. Either
-way the previous board is unpinned and deleted, so there is only ever one.
-Its message id lives in settings.
+    [✓ Reply to school] [✓ Speaking Club]
+    [➕ Add]            [📱 App]
+
+The list uses Telegram's own checkboxes, ticked for what is done. Telegram
+does not tell a bot when someone taps one of those (Bot API 10.4 has no
+such update), so ticking is done with the buttons inside the message (Bot
+API 10.3): one short "✓" button per open task, two to a row ("Attend English
+Speaking Club – More Than a Game" → "✓ Speaking Club"). A tap ticks the
+task off in plain code and the same rich message is edited, so its checkbox
+fills in. If you tap a checkbox itself, Telegram may tick it on your screen
+only; the next edit puts it back to the truth.
+
+It redraws itself after every message, tap, reminder tick and change made
+in the app, but only talks to Telegram when something changed. A fresh one
+arrives with the morning brief; `/today` (also `/checklist` and `/list`)
+sends a new one and pins it. Either way the previous board is unpinned and
+deleted, so there is only ever one. Its message id lives in settings, with
+a note of which form it was sent in.
+
+If Telegram refuses the rich message, the board is sent as before: the
+day as text (`☐ 18:00 English Speaking Club`, done items `☑` struck
+through at the bottom) with short buttons, two to a row.
+
+**Rich messages elsewhere.** The morning brief and plans (`/plan`, "plan
+my day") are rich messages too: a heading, sections as lists, the plan's
+reasoning in a folding quotation, and the plan's buttons under it.
+Adjusting a plan edits the same message. Both are written once as HTML and
+converted (`src/lib/rich.ts`); if Telegram refuses the rich form, the HTML
+is sent as it is.
 
 **Media memory.** Every photo, video, document, GIF and voice note you send
 is saved: Telegram's file id (so the original can be sent back untouched),

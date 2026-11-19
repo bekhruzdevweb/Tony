@@ -32,6 +32,7 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
+import { editRich, sendRich } from "./rich";
 import { cleanFromCommand } from "./sweep";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
@@ -371,7 +372,7 @@ export function getBot(): Bot | undefined {
         }
         if (plan && chatId !== undefined && tapped) {
           const view = await planView(plan, new Date(), plan.status === "proposed" ? mode : "view");
-          await editHtml(bot, chatId, tapped.message_id, view.html, view.keyboard);
+          await editRich(bot, chatId, tapped.message_id, view.html, view.keyboard);
           if (plan.message_id === null || action === "re") await notePlanMessage(plan.id, tapped.message_id);
         }
       } finally {
@@ -459,7 +460,9 @@ export function getBot(): Bot | undefined {
     if (!plan) return;
     const view = await planView(plan);
     await retire({ kinds: ["plan"] });
-    const messageId = await sendTracked(bot, chatId, view.html, { keyboard: view.keyboard, kind: "plan" });
+    // A rich message: a heading, the day's times as a list, the reasoning folded away.
+    const messageId = await sendRich(bot, chatId, view.html, { keyboard: view.keyboard });
+    await track(messageId, "plan");
     await notePlanMessage(plan.id, messageId);
     await logMessage("tony", plain(view.html));
   };

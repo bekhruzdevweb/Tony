@@ -2,6 +2,7 @@ import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
 import { retire, sendHtml, track, type MessageKind } from "./chat-log";
+import { sendRich } from "./rich";
 import { requireDb } from "./db";
 import { b, code, esc, expandable, i, plain } from "./html";
 import { logMessage } from "./messages";
@@ -51,9 +52,9 @@ async function send(
   bot: Bot,
   chatId: number,
   html: string,
-  options: { keyboard?: InlineKeyboard; silent?: boolean; kind: MessageKind; taskId?: number },
+  options: { keyboard?: InlineKeyboard; silent?: boolean; kind: MessageKind; taskId?: number; rich?: boolean },
 ): Promise<number> {
-  const messageId = await sendHtml(bot, chatId, html, options);
+  const messageId = options.rich ? await sendRich(bot, chatId, html, options) : await sendHtml(bot, chatId, html, options);
   await track(messageId, options.kind, { taskId: options.taskId });
   await logMessage("tony", plain(html));
   return messageId;
@@ -101,7 +102,7 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   // The brief is the summary; the ticking is done on the pinned Today message that follows it.
   // (Until the board's database update is applied, the brief keeps its own tick boxes.)
   const boardReady = "today_message_id" in settings;
-  const briefId = await send(bot, chatId, html, { keyboard: boardReady ? undefined : view.keyboard, kind: "brief:morning" });
+  const briefId = await send(bot, chatId, html, { keyboard: boardReady ? undefined : view.keyboard, kind: "brief:morning", rich: true });
   await record(now, briefId, MORNING);
   // A fresh Today message for the new day, pinned; yesterday's is unpinned and removed.
   if (boardReady) await postBoard(bot, chatId, now).catch((error) => console.error("Could not post the Today message:", error));

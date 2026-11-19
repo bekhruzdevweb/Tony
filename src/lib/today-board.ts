@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { InlineKeyboard, type Bot } from "grammy";
 import { retire, sendHtml } from "./chat-log";
+import type { RichMessage } from "./rich";
 import { requireDb } from "./db";
 import { esc } from "./html";
 import { finishTask } from "./recurrence";
@@ -11,8 +12,11 @@ import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
- * The pinned "Today" message: the whole day as a list in the text, and a
- * short button per task that ticks it off. There is exactly one, its
+ * The pinned "Today" message, sent as a Telegram rich message: a heading,
+ * a "1/3 done" line, the day as a native checkbox list, and a short "✓"
+ * button per open task that ticks it off. If Telegram refuses the rich
+ * form, the HTML board below is sent instead: the whole day as a list in
+ * the text, and a short button per task. There is exactly one, its
  * message id is kept in settings, and it is edited in place whenever
  * anything about today changes.
  *
@@ -69,7 +73,18 @@ export function shortLabel(title: string, room = BUTTON_ROOM): string {
   return label.length > room ? `${label.slice(0, room - 1)}…` : label;
 }
 
-type Board = { html: string; keyboard: InlineKeyboard; hash: string };
+type RichBlock = NonNullable<RichMessage["blocks"]>[number];
+type RichButton = Extract<RichBlock, { type: "buttons" }>["buttons"][number];
+
+/**
+ * The board two ways: as a rich message (a heading, a native checkbox
+ * list and buttons inside it) and, if Telegram will not take that, as the
+ * HTML message it was before.
+ */
+type Board = { html: string; keyboard: InlineKeyboard; hash: string; rich: RichMessage; richHash: string };
+
+/** Which form the board in the chat was sent in is kept with its hash. */
+const RICH = "rich:";
 
 /** Thrown when the database has not yet been given the board's columns. */
 export class BoardNotReady extends Error {
@@ -99,14 +114,20 @@ export async function boardView(day: Date): Promise<Board> {
   const total = carried.length + timed.length + done.length;
 
   const bell = (task: Task) => (task.persistent ? " 🔔" : "");
+  // A done task keeps its own time; a repeating one has already rolled to its next date, so it shows when it was done.
+  const doneMoment = (task: Task) => {
+    const due = task.due_at ? new Date(task.due_at) : undefined;
+    return due && due.getTime() >= start.getTime() && due.getTime() < end.getTime() ? due : new Date(task.completed_at ?? task.due_at!);
+  };
+  const doneAt = (task: Task) => formatTime(doneMoment(task));
+  done.sort((x, y) => doneMoment(x).getTime() - doneMoment(y).getTime());
   const lines = [
     ...carried.map((task) => {
       const at = new Date(task.due_at!);
       return `☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${bell(task)}`;
     }),
     ...timed.map((task) => `☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${bell(task)}`),
-    // A repeating task done today shows the time it was done, not its next date.
-    ...done.map((task) => `☑ <s>${formatTime(new Date(task.completed_at ?? task.due_at!))} ${esc(task.title)}</s>`),
+    ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>`),
   ];
   const html = [`<b>📋 Today · ${esc(shortDay(day))}</b>   ${done.length}/${total}`, "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
 
@@ -133,7 +154,45 @@ export async function boardView(day: Date): Promise<Board> {
   if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
 
   const hash = createHash("sha256").update(`${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
-  return { html, keyboard, hash };
+
+  // The rich form. Native checkboxes show what is done; ticking happens on
+  // the buttons below the list, one per open task, because a tap on the
+  // checkbox itself is not reported to the bot.
+  const item = (text: string, checked: boolean) => ({
+    blocks: [{ type: "paragraph" as const, text }],
+    has_checkbox: true as const,
+    ...(checked ? { is_checked: true as const } : {}),
+  });
+  const items = [
+    ...carried.map((task) => {
+      const at = new Date(task.due_at!);
+      return item(`⚠️ ${weekday(at)} ${formatTime(at)} ${task.title}${bell(task)}`, false);
+    }),
+    ...timed.map((task) => item(`${formatTime(new Date(task.due_at!))} ${task.title}${bell(task)}`, false)),
+    ...done.map((task) => item(`${doneAt(task)} ${task.title}`, true)),
+  ];
+  const openTasks = [...carried, ...timed].slice(0, MAX_BUTTONS);
+  const openLabels = openTasks.map((task) => shortLabel(task.title));
+  const tickButtons: RichButton[] = openTasks.map((task, n) => {
+    const same = openLabels.filter((other) => other === openLabels[n]).length > 1;
+    return { text: `✓ ${same ? `${shortLabel(task.title, BUTTON_ROOM - 6)} ${formatTime(new Date(task.due_at!))}` : openLabels[n]}`, callback_data: `td:${task.id}` };
+  });
+  const rows: RichBlock[] = [];
+  for (let n = 0; n < tickButtons.length; n += 2) rows.push({ type: "buttons", buttons: tickButtons.slice(n, n + 2) });
+  const lastRow: RichButton[] = [{ text: "➕ Add", callback_data: "td:add" }];
+  if (settings.app_url?.startsWith("https://")) lastRow.push({ text: "📱 App", web_app: { url: settings.app_url } });
+  rows.push({ type: "buttons", buttons: lastRow });
+  const rich: RichMessage = {
+    blocks: [
+      { type: "heading", size: 2, text: `Today · ${shortDay(day)}` },
+      { type: "paragraph", text: { type: "italic", text: `${done.length}/${total} done` } },
+      total === 0 ? { type: "paragraph", text: "Nothing is due today, sir." } : { type: "list", items },
+      ...rows,
+    ],
+    skip_entity_detection: true,
+  };
+  const richHash = RICH + createHash("sha256").update(JSON.stringify(rich)).digest("hex");
+  return { html, keyboard, hash, rich, richHash };
 }
 
 const gone = (error: unknown) => /message to edit not found|message can't be edited|MESSAGE_ID_INVALID/i.test(String((error as { description?: string })?.description ?? error));
@@ -152,9 +211,13 @@ export async function refreshBoard(bot: Bot, chatId: number): Promise<void> {
     const day = parseLocalDateTime(`${String(settings.today_message_day).slice(0, 10)}T12:00`);
     if (!day) return;
     const board = await boardView(day);
-    if (board.hash === settings.today_message_hash) return;
+    const isRich = settings.today_message_hash?.startsWith(RICH) ?? false;
+    const hash = isRich ? board.richHash : board.hash;
+    if (hash === settings.today_message_hash) return;
     try {
-      await bot.api.editMessageText(chatId, Number(settings.today_message_id), board.html, { parse_mode: "HTML", reply_markup: board.keyboard });
+      // A rich message is edited with new rich content, so its checkboxes update in place.
+      if (isRich) await bot.api.editMessageText(chatId, Number(settings.today_message_id), board.rich);
+      else await bot.api.editMessageText(chatId, Number(settings.today_message_id), board.html, { parse_mode: "HTML", reply_markup: board.keyboard });
     } catch (error) {
       if (gone(error)) {
         // He deleted it: stop trying until /today or the next brief makes a new one.
@@ -163,7 +226,7 @@ export async function refreshBoard(bot: Bot, chatId: number): Promise<void> {
       }
       if (!unchanged(error)) throw error;
     }
-    await updateSettings({ today_message_hash: board.hash });
+    await updateSettings({ today_message_hash: hash });
   } catch (error) {
     console.error("Could not refresh the Today message:", error);
   }
@@ -180,8 +243,18 @@ export async function postBoard(bot: Bot, chatId: number, now = new Date()): Pro
   if (!("today_message_id" in settings)) throw new BoardNotReady();
   const previous = settings.today_message_id;
   const board = await boardView(now);
-  const messageId = await sendHtml(bot, chatId, board.html, { keyboard: board.keyboard, silent: true });
-  await updateSettings({ today_message_id: messageId, today_message_day: localDate(now), today_message_hash: board.hash });
+  let messageId: number;
+  let hash: string;
+  try {
+    messageId = (await bot.api.sendRichMessage(chatId, board.rich, { disable_notification: true })).message_id;
+    hash = board.richHash;
+  } catch (error) {
+    // Telegram would not take the rich form: the HTML board does the same job.
+    console.error("The rich Today message was refused; sending the plain board:", error);
+    messageId = await sendHtml(bot, chatId, board.html, { keyboard: board.keyboard, silent: true });
+    hash = board.hash;
+  }
+  await updateSettings({ today_message_id: messageId, today_message_day: localDate(now), today_message_hash: hash });
   await bot.api.pinChatMessage(chatId, messageId, { disable_notification: true }).catch((error) => console.error("Could not pin the Today message:", error));
   // Any older day list sent by /today before the board existed goes too.
   await retire({ kinds: ["cmd:today"] }, now);
