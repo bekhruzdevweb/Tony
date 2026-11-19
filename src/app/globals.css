@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* Design tokens from the product spec. */
+:root {
+  --primary: #5b8bff;
+  --accent: #7a5cff;
+  --ink: #0f172a;
+  --background: #ffffff;
+  --surface: #f6f7fb;
+  --secondary: #64748b;
+  --overdue: #ff5a5f;
+  --done: #34c759;
+  --hairline: rgb(15 23 42 / 0.08);
+  --tony-gradient: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f1f5f9;
+    --background: #0f172a;
+    --surface: #1e2638;
+    --secondary: #94a3b8;
+    --overdue: #ff6b6f;
+    --done: #30d158;
+    --hairline: rgb(241 245 249 / 0.1);
+  }
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-accent: var(--accent);
+  --color-ink: var(--ink);
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-secondary: var(--secondary);
+  --color-overdue: var(--overdue);
+  --color-done: var(--done);
+  --color-hairline: var(--hairline);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+  --text-title: 34px;
+  --text-section: 22px;
+  --text-body: 17px;
+  --text-secondary: 15px;
+  --text-caption: 13px;
+  --radius-card: 12px;
+  --radius-sheet: 20px;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+}
