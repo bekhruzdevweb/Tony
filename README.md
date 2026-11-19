@@ -234,26 +234,25 @@ After a deployment that adds a new kind of update (poll votes were one),
 send `/start` to Tony once: it refreshes the webhook, the command list and
 the Menu button.
 
-**Spoken replies.** Set `TTS_MODEL` (on Groq:
+**Spoken replies.** Tony speaks on two occasions: in answer to a voice
+note, and for the morning brief. What he says aloud is short (whole
+sentences, up to about 300 characters); the full reply is in the text
+message beside it.
+
+His voice is ElevenLabs (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, model
+`eleven_flash_v2_5`). The audio is asked for as Opus and sent to Telegram as
+it is when it arrives in an Ogg stream; if it does not, the same words are
+asked for as plain samples and encoded to OGG/Opus on the server, so
+Telegram always shows a voice bubble.
+
+If ElevenLabs fails for any reason (an outage, a rejected key, credits run
+out), Orpheus on Groq speaks instead (`TTS_MODEL`, default
 `canopylabs/orpheus-v1-english`, after accepting its terms in the Groq
-console) and optionally `TTS_VOICE`. Tony then answers voice notes aloud;
-the WAV is converted on the server to OGG/Opus, so Telegram shows a voice
-bubble. With `TTS_SPEAK=all` he also speaks the morning brief and, for a
-persistent reminder, the third nudge onwards.
-
-His delivery follows the occasion, using Orpheus's bracketed vocal
-directions (free-form, one or two words). The direction is added only to
-what is sent to the speech model; text messages never contain it.
-
-| When | Direction |
-|------|-----------|
-| 21:00 to 07:00, whatever the occasion | `[calm]` |
-| A persistent reminder's third nudge onwards | `[firmly]` |
-| The morning brief; a task just completed | `[cheerful]` |
-| Anything else | none (his ordinary voice) |
-
-Orpheus accepts 200 characters per request, so longer text is split at
-sentence ends into up to three requests and joined into one voice note.
+console; `TTS_VOICE`, default `daniel`; `TTS_MODEL=none` switches the
+fallback off). Orpheus takes bracketed vocal directions, added only to what
+is sent to it: `[calm]` from 21:00 to 07:00, `[cheerful]` for the morning
+brief and a task just completed. ElevenLabs is never sent one, and anything
+in square brackets is removed from the words before they go to it.
 
 ## Tony's brain
 
@@ -263,8 +262,8 @@ Tony reads every message with an AI model and acts through seven tools
 code and never reach a model.
 
 The brain is Claude (`claude-haiku-5-5`) through the Anthropic API, using
-the official SDK. Groq is kept for his voice (Whisper to hear, Orpheus to
-speak) and as the fallback: if a call to Claude fails for any reason (rate
+the official SDK. Groq is kept for his hearing (Whisper), as the fallback voice
+(Orpheus) and as the fallback: if a call to Claude fails for any reason (rate
 limit, outage, a rejected key, a declined request), the same request goes to
 `openai/gpt-oss-120b` on Groq, so the message is still handled. Photos are
 read by Claude too, with a Groq vision model behind it.

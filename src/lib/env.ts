@@ -81,20 +81,26 @@ export const env = {
   get sttModel() {
     return read("STT_MODEL") ?? "whisper-large-v3";
   },
-  /** Spoken replies: off unless TTS_MODEL is set. */
+  /** Tony's voice: ElevenLabs. */
+  get elevenLabsApiKey() {
+    return read("ELEVENLABS_API_KEY");
+  },
+  get elevenLabsVoiceId() {
+    return read("ELEVENLABS_VOICE_ID");
+  },
+  get elevenLabsModel() {
+    return read("ELEVENLABS_MODEL") ?? "eleven_flash_v2_5";
+  },
+  get elevenLabsBaseUrl() {
+    return (read("ELEVENLABS_BASE_URL") ?? "https://api.elevenlabs.io").replace(/\/+$/, "");
+  },
+  /** The fallback voice: Orpheus on Groq. "none" switches it off. */
   get ttsModel() {
-    return read("TTS_MODEL");
+    const value = read("TTS_MODEL") ?? "canopylabs/orpheus-v1-english";
+    return value.toLowerCase() === "none" ? undefined : value;
   },
   get ttsVoice() {
     return read("TTS_VOICE") ?? "daniel";
-  },
-  /**
-   * What Tony says aloud: "replies" (the default) answers voice notes;
-   * "all" also speaks the morning brief and the later nudges of a
-   * persistent reminder.
-   */
-  get ttsSpeakAll() {
-    return read("TTS_SPEAK")?.toLowerCase() === "all";
   },
   get supabaseUrl() {
     return read("SUPABASE_URL");

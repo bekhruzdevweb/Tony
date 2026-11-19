@@ -3,7 +3,6 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
 import { retire, sendHtml, track, type MessageKind } from "./chat-log";
 import { requireDb } from "./db";
-import { env } from "./env";
 import { b, code, esc, expandable, i, plain } from "./html";
 import { logMessage } from "./messages";
 import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
@@ -107,8 +106,8 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   // A fresh Today message for the new day, pinned; yesterday's is unpinned and removed.
   if (boardReady) await postBoard(bot, chatId, now).catch((error) => console.error("Could not post the Today message:", error));
   let sent = 1;
-  if (env.ttsSpeakAll) {
-    // The brief in a sentence or two, said cheerfully.
+  {
+    // The brief in a sentence or two, said aloud.
     const first = view.open[0];
     const spoken = [
       "Good morning, sir.",
