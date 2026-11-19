@@ -2,6 +2,8 @@ import Image from "next/image";
 import { connection } from "next/server";
 import { getDb, isDatabaseReady } from "@/lib/db";
 import { env } from "@/lib/env";
+import { getClockStatus } from "@/lib/settings";
+import { formatTime } from "@/lib/time";
 
 function Row({ label, hint, ready }: { label: string; hint: string; ready: boolean }) {
   return (
@@ -27,6 +29,8 @@ export default async function Home() {
 
   const databaseReady = await isDatabaseReady();
 
+  const clock = databaseReady ? await getClockStatus() : undefined;
+
   const rows = [
     {
       label: "Telegram bot",
@@ -45,6 +49,11 @@ export default async function Home() {
           ? "Connected, but the tables are missing: run the migration"
           : "SUPABASE_URL and SUPABASE_SECRET_KEY, tables in place",
       ready: databaseReady,
+    },
+    {
+      label: "Reminder clock",
+      hint: clock?.lastTick ? `Last tick at ${formatTime(clock.lastTick)} Tashkent time` : "No tick received yet",
+      ready: clock?.ready ?? false,
     },
   ];
   const allReady = rows.every((row) => row.ready);
@@ -76,7 +85,7 @@ export default async function Home() {
       </ul>
 
       <p className="mt-auto pt-10 text-center text-caption text-secondary">
-        Phase 2 of 8 · Tasks core
+        Phase 3 of 8 · Reminder engine
       </p>
     </main>
   );

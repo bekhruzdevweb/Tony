@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { getBot } from "@/lib/bot";
+import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
+import { updateSettings } from "@/lib/settings";
 
 function matches(given: string, expected: string) {
   const a = Buffer.from(given);
@@ -39,6 +41,8 @@ export async function GET(request: Request) {
       { command: "inbox", description: "Tasks without a date" },
       { command: "ping", description: "Check that Tony is awake" },
     ]);
+    // Tell the reminder clock in the database where this deployment lives.
+    if (getDb()) await updateSettings({ app_url: url.origin });
     const me = await bot.api.getMe();
     return Response.json({ ok: true, bot: `@${me.username}`, webhook: webhookUrl });
   } catch (error) {

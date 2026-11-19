@@ -31,3 +31,37 @@ export function dayBounds(now = new Date(), timeZone = TIMEZONE): { start: Date;
 export function formatTime(at: Date, timeZone = TIMEZONE): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at);
 }
+
+const MINUTE = 60_000;
+
+/** Minutes since local midnight, 0-1439. */
+export function minuteOfDay(at: Date, timeZone = TIMEZONE): number {
+  const [h, m] = formatTime(at, timeZone).split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** "23:00" or "23:00:00" to minutes since midnight. */
+export function parseClock(clock: string): number {
+  const [h, m] = clock.split(":").map(Number);
+  return h * 60 + (m || 0);
+}
+
+/** True when `at` falls in the window [start, end), which may wrap midnight. */
+export function inWindow(at: Date, start: string, end: string, timeZone = TIMEZONE): boolean {
+  const now = minuteOfDay(at, timeZone);
+  const from = parseClock(start);
+  const to = parseClock(end);
+  if (from === to) return false;
+  return from < to ? now >= from && now < to : now >= from || now < to;
+}
+
+export function addMinutes(at: Date, minutes: number): Date {
+  return new Date(at.getTime() + minutes * MINUTE);
+}
+
+/** The next full hour that is at least an hour away: 18:30 gives 20:00. */
+export function laterThisEvening(now: Date): Date {
+  // Whole-hour zones only, which Asia/Tashkent is.
+  const hour = 60 * MINUTE;
+  return new Date(Math.ceil((now.getTime() + hour) / hour) * hour);
+}

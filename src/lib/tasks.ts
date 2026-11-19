@@ -14,12 +14,13 @@ export type Task = {
   due_at: string | null;
   repeat_rule: "daily" | "weekdays" | "weekly" | null;
   persistent: boolean;
+  persistent_schedule: number[] | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 };
 
-const OPEN: TaskStatus[] = ["inbox", "todo", "in_progress"];
+export const OPEN_STATUSES: TaskStatus[] = ["inbox", "todo", "in_progress"];
 export const MAX_TITLE_LENGTH = 500;
 
 /** A task with no date: it waits in the Inbox. */
@@ -51,7 +52,7 @@ export async function listToday(now = new Date()): Promise<{ overdue: Task[]; to
   const { data, error } = await requireDb()
     .from("tasks")
     .select()
-    .in("status", OPEN)
+    .in("status", OPEN_STATUSES)
     .lt("due_at", end.toISOString())
     .order("due_at", { ascending: true });
   if (error) throw new Error(`listToday: ${error.message}`);

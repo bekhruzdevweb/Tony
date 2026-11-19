@@ -9,8 +9,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | # | Phase | Status |
 |---|-------|--------|
 | 1 | Setup: site loads, bot answers `/ping` with `pong` | Passed |
-| 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Built, awaiting your check |
-| 3 | Reminder engine | Not started |
+| 2 | Tasks core, no AI: text becomes an Inbox task, `/today` and `/inbox` | Passed |
+| 3 | Reminder engine: every-minute clock, buttons, persistent mode, quiet hours, caps | Built, awaiting your check |
 | 4 | Tony's brain | Not started |
 | 5 | Voice notes | Not started |
 | 6 | The app (PWA) | Not started |
@@ -49,17 +49,38 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 **Done when:** the site shows three green dots and the bot answers `/ping`
 with `pong`.
 
-## Phase 2 check
+## Phase 3 check
 
-1. **Create the tables.** In Supabase open SQL Editor, paste the whole of
-   [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
-   and run it. It is safe to run twice.
-2. Reload the site: the Database dot should stay green. If it says the tables
-   are missing, the migration has not run.
-3. Open `https://<your-site>/api/telegram/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`
-   once more, so `/today` and `/inbox` appear in the bot's command menu.
+The migration `supabase/migrations/0002_reminder_engine.sql` adds the engine's
+columns and starts a database clock (pg_cron + pg_net) that calls
+`/api/tick` once a minute. The clock's password is generated inside the
+database and never leaves it. The site's fourth dot, **Reminder clock**, is
+green while ticks arrive.
 
-**Done when:** sending `buy notebook` to the bot shows it in `/inbox`.
+Until Tony understands "at 6 pm" (Phase 4), three test commands create dated
+tasks, each due 2 minutes after you send it:
+
+| Command | Creates |
+|---------|---------|
+| `/test` | a persistent task that nudges every minute: 4 nudges, then a closing message |
+| `/test full` | a persistent task on the real schedule (0, 15, 30, 60, 90, 120 minutes) |
+| `/test once` | an ordinary one-time reminder with Done / Snooze / Reschedule |
+
+**Done when:** `/test` nudges at +2, +3, +4 minutes and stops as soon as you
+tap **Starting now**.
+
+Rules the engine follows:
+
+- A persistent reminder repeats until Starting now, Skip today or Done is
+  tapped. After its last step Tony says he will leave it for today; the task
+  stays open and overdue for the morning brief (Phase 7).
+- Quiet hours (23:00 to 07:00): no follow-up nudges, unless the task itself
+  was set inside that window.
+- At most 6 unprompted messages an hour. A first reminder waits for room; a
+  follow-up nudge is skipped. Replies to your own messages and taps do not count.
+- Button taps run plain code, never the AI model.
+- If the site moves to a new address, open `/api/telegram/setup?secret=...`
+  again: it tells the clock where to call.
 
 ## Database rules
 
