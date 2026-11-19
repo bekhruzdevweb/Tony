@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Empty, Icon, Section, TaskRow, isOpen } from "./ui";
+import { pushBack, tonyFetch, webApp } from "./telegram";
 import type { Tony } from "./use-tony";
 
 type View = { name: "menu" } | { name: "project"; id: number } | { name: "settings" };
@@ -42,6 +43,10 @@ export function Menu(props: {
   const { tony, now, theme, onTheme, onClose, onOpen, onToggle } = props;
   const { state, act } = tony;
   const [view, setView] = useState<View>({ name: "menu" });
+  // Telegram's Back button: out of a sub-page first, then out of the menu.
+  const inSubPage = view.name !== "menu";
+  useEffect(() => pushBack(() => (inSubPage ? setView({ name: "menu" }) : onClose())), [inSubPage, onClose]);
+
   const open = state.tasks.filter(isOpen);
   const project = view.name === "project" ? state.projects.find((p) => p.id === view.id) : undefined;
   const heading = view.name === "settings" ? "Settings" : project ? project.name : "Tony";
@@ -147,6 +152,8 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
   const { state, act, say } = tony;
   const { settings, status } = state;
   const [schedule, setSchedule] = useState(settings.persistent_schedule.join(", "));
+  // Inside Telegram the theme follows Telegram and there is nothing to sign out of.
+  const inTelegram = webApp() !== undefined;
 
   const time = (key: "brief_morning" | "brief_evening" | "quiet_start" | "quiet_end") => (
     <input
@@ -167,7 +174,7 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
   };
 
   const signOut = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await tonyFetch("/api/auth/logout", { method: "POST" });
     window.location.reload();
   };
 
@@ -195,23 +202,25 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
         </li>
       </Section>
 
-      <Section title="Appearance">
-        <li className="p-1">
-          <div className="grid grid-cols-3 gap-1">
-            {(["system", "light", "dark"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={theme === option}
-                onClick={() => onTheme(option)}
-                className={`h-10 rounded-[9px] text-sub font-medium capitalize ${theme === option ? "bg-background shadow-sm" : "text-secondary"}`}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </li>
-      </Section>
+      {!inTelegram && (
+        <Section title="Appearance">
+          <li className="p-1">
+            <div className="grid grid-cols-3 gap-1">
+              {(["system", "light", "dark"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={theme === option}
+                  onClick={() => onTheme(option)}
+                  className={`h-10 rounded-[9px] text-sub font-medium capitalize ${theme === option ? "bg-background shadow-sm" : "text-secondary"}`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </li>
+        </Section>
+      )}
 
       <Section title="Tony's memory">
         {state.memory.length === 0 && <li className="px-4 py-3 text-sub text-secondary">Nothing remembered yet. Tell Tony a habit or preference.</li>}
@@ -252,9 +261,11 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
         </Row>
       </Section>
 
-      <button type="button" onClick={signOut} className="mt-6 h-11 w-full rounded-card bg-surface text-body font-medium text-overdue">
-        Sign out
-      </button>
+      {!inTelegram && (
+        <button type="button" onClick={signOut} className="mt-6 h-11 w-full rounded-card bg-surface text-body font-medium text-overdue">
+          Sign out
+        </button>
+      )}
     </>
   );
 }

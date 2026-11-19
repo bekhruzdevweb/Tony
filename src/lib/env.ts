@@ -42,6 +42,13 @@ export const env = {
   get sttModel() {
     return read("STT_MODEL") ?? "whisper-large-v3";
   },
+  /** Spoken replies: off unless TTS_MODEL is set. */
+  get ttsModel() {
+    return read("TTS_MODEL");
+  },
+  get ttsVoice() {
+    return read("TTS_VOICE") ?? "daniel";
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

@@ -37,13 +37,12 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
   const [sending, setSending] = useState(false);
   const { start, end } = dayBounds(now);
   const dated = state.tasks.filter((t) => t.due_at);
-  const overdue = dated.filter((t) => isOpen(t) && new Date(t.due_at!).getTime() < start.getTime()).sort(byDue);
-  const today = dated
-    .filter((t) => {
-      const at = new Date(t.due_at!).getTime();
-      return at >= start.getTime() && at < end.getTime();
-    })
-    .sort(byDue);
+  const dueTime = (t: Task) => new Date(t.due_at!).getTime();
+  // Overdue: every open task whose time has passed, from earlier days or
+  // earlier today. A task he has started is in hand, so it stays under Today.
+  const isOverdue = (t: Task) => isOpen(t) && t.status !== "in_progress" && dueTime(t) < now.getTime();
+  const overdue = dated.filter(isOverdue).sort(byDue);
+  const today = dated.filter((t) => !isOverdue(t) && dueTime(t) >= start.getTime() && dueTime(t) < end.getTime()).sort(byDue);
   const open = today.filter(isOpen);
   const finished = today.filter((t) => !isOpen(t));
   const row = { projects: state.projects, now, onOpen, onToggle };
@@ -71,7 +70,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
         {open.length > 0 && (
           <Section title={`Today · ${open.length}`}>
             {open.map((task) => (
-              <TaskRow key={task.id} task={task} {...row} overdue={new Date(task.due_at!).getTime() < now.getTime() && task.status !== "in_progress"} when="time" />
+              <TaskRow key={task.id} task={task} {...row} />
             ))}
           </Section>
         )}

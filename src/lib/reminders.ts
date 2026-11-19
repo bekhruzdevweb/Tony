@@ -229,7 +229,11 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
         const sent = await bot.api.sendMessage(
           chatId,
           message.text,
-          { reply_markup: message.keyboard },
+          {
+            reply_markup: message.keyboard,
+            // A follow-up on an ordinary, low-priority task arrives without sound.
+            disable_notification: isFollowUp && !task.persistent && task.priority === 4,
+          },
           // grammY types its own AbortSignal; the platform's one is what it runs on.
           AbortSignal.timeout(SEND_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.sendMessage>[3],
         );
@@ -260,4 +264,34 @@ export async function runTick(bot: Bot, chatId: number, now = new Date()): Promi
   }
 
   return finish();
+}
+
+/** The task a reminder message was about, for when he replies to that message. */
+export async function taskForReminderMessage(messageId: number): Promise<Task | undefined> {
+  const { data, error } = await requireDb()
+    .from("reminders")
+    .select("task:tasks(*)")
+    .eq("telegram_message_id", messageId)
+    .order("id", { ascending: false })
+    .limit(1);
+  fail("taskForReminderMessage", error);
+  const row = (data ?? [])[0] as { task: Task | Task[] | null } | undefined;
+  const task = Array.isArray(row?.task) ? row.task[0] : row?.task;
+  return task ?? undefined;
+}
+
+/** Recent reminder messages for a task, other than the one just tapped. */
+export async function otherReminderMessages(taskId: number, except?: number): Promise<number[]> {
+  const { data, error } = await requireDb()
+    .from("reminders")
+    .select("telegram_message_id")
+    .eq("task_id", taskId)
+    .in("state", ["sent", "acknowledged"])
+    .order("id", { ascending: false })
+    .limit(8);
+  fail("otherReminderMessages", error);
+  return ((data ?? []) as { telegram_message_id: number | null }[])
+    .filter((row) => row.telegram_message_id !== null)
+    .map((row) => Number(row.telegram_message_id))
+    .filter((id) => id !== except);
 }

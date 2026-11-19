@@ -47,6 +47,20 @@ async function loadContext() {
  * Throws if the model cannot be reached; the caller decides the fallback.
  */
 export async function respond(text: string, channel: Channel = "telegram", now = new Date()): Promise<string> {
+  return (await think(text, { channel, now })).reply;
+}
+
+/**
+ * As respond, and also reports which tools succeeded. `context` is a note
+ * for the model only (for example, which reminder he is replying to); it is
+ * not stored in the conversation.
+ */
+export async function think(
+  text: string,
+  options: { channel?: Channel; now?: Date; context?: string } = {},
+): Promise<{ reply: string; tools: string[] }> {
+  const { channel = "telegram", now = new Date(), context: note } = options;
+  const tools: string[] = [];
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
@@ -55,7 +69,7 @@ export async function respond(text: string, channel: Channel = "telegram", now =
     ...history.map(
       (m): ChatMessage => (m.role === "user" ? { role: "user", content: m.text } : { role: "assistant", content: m.text }),
     ),
-    { role: "user", content: text },
+    { role: "user", content: note ? `${text}\n\n[${note}]` : text },
   ];
 
   let reply: string | undefined;
@@ -73,7 +87,9 @@ export async function respond(text: string, channel: Channel = "telegram", now =
       let result: unknown;
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        result = await runTool(call.function.name, args, now);
+        const outcome = await runTool(call.function.name, args, now);
+        if (outcome.ok) tools.push(call.function.name);
+        result = outcome;
       } catch (error) {
         console.error(`Tool ${call.function.name} failed:`, error);
         result = { ok: false, error: "the tool failed; nothing was changed" };
@@ -84,5 +100,5 @@ export async function respond(text: string, channel: Channel = "telegram", now =
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
   await logMessage("tony", reply, channel);
-  return reply;
+  return { reply, tools };
 }

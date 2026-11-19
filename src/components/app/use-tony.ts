@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppResult, AppState } from "@/lib/app-types";
+import { haptic, tonyFetch } from "./telegram";
 
 const POLL_MS = 4000;
 
@@ -26,7 +27,7 @@ export function useTony(initial: AppState) {
     // A change is on its way; its answer will carry newer state than a poll could.
     if (busy.current > 0) return;
     try {
-      const response = await fetch("/api/app", { cache: "no-store" });
+      const response = await tonyFetch("/api/app", { cache: "no-store" });
       if (response.status === 401) return setSignedOut(true);
       const result = (await response.json()) as AppResult;
       if (result.ok && busy.current === 0) setState(result.state);
@@ -55,7 +56,7 @@ export function useTony(initial: AppState) {
       busy.current++;
       if (optimistic) setState(optimistic);
       try {
-        const response = await fetch("/api/app", {
+        const response = await tonyFetch("/api/app", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action, ...payload }),
@@ -63,7 +64,10 @@ export function useTony(initial: AppState) {
         if (response.status === 401) setSignedOut(true);
         const result = (await response.json()) as AppResult;
         if (result.state) setState(result.state);
-        if (!result.ok) say(result.error, "error");
+        if (!result.ok) {
+          haptic("error");
+          say(result.error, "error");
+        }
         return result;
       } catch {
         say("No connection. That change was not saved.", "error");

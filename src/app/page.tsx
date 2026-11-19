@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { Login } from "@/components/app/login";
+import { Gate } from "@/components/app/gate";
 import { TonyApp } from "@/components/app/tony-app";
 import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
@@ -23,5 +23,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ l
       botUsername = null;
     }
   }
-  return <Login botUsername={botUsername} expired={(await searchParams).login === "expired"} />;
+  return <Gate botUsername={botUsername} expired={(await searchParams).login === "expired"} />;
 }

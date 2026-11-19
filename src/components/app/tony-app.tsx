@@ -9,6 +9,7 @@ import { Menu, type Theme } from "./menu";
 import { ChatScreen, InboxScreen, TodayScreen, UpcomingScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
 import { Icon, isOpen } from "./ui";
+import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
 type Tab = "today" | "inbox" | "upcoming" | "chat";
@@ -41,8 +42,14 @@ export function TonyApp({ initial }: { initial: AppState }) {
   const now = new Date(state.now);
 
   useEffect(() => {
+    // Inside Telegram the app wears Telegram's colours; elsewhere it can be installed.
+    if (webApp()) return applyTelegramTheme();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  // Telegram's Back button closes the task sheet (the menu handles its own).
+  const sheetOpen = sheet !== null;
+  useEffect(() => (sheetOpen ? pushBack(() => setSheet(null)) : undefined), [sheetOpen]);
 
   useEffect(() => {
     if (signedOut) window.location.reload();
@@ -68,7 +75,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
   const toggle = useCallback(
     (task: Task) => {
       if (isOpen(task)) {
-        navigator.vibrate?.(10);
+        haptic("success");
         void act("complete_task", { id: task.id }, patch(task.id, { status: "done" }));
       } else {
         void act("update_task", { id: task.id, status: "todo" }, patch(task.id, { status: task.due_at ? "todo" : "inbox" }));
@@ -89,7 +96,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
 
   const voice = async (audio: Blob) => {
     try {
-      const response = await fetch("/api/app/voice", { method: "POST", headers: { "Content-Type": audio.type || "audio/webm" }, body: audio });
+      const response = await tonyFetch("/api/app/voice", { method: "POST", headers: { "Content-Type": audio.type || "audio/webm" }, body: audio });
       const result = await response.json();
       if (result.state) tony.setState(result.state);
       if (!result.ok) say(result.error, "error");
@@ -122,7 +129,10 @@ export function TonyApp({ initial }: { initial: AppState }) {
             <button
               type="button"
               aria-label="New task"
-              onClick={() => setSheet({})}
+              onClick={() => {
+                haptic("tap");
+                setSheet({});
+              }}
               className="grid size-14 -translate-y-3 place-items-center rounded-full text-white shadow-lg shadow-accent/35 transition-transform active:scale-95"
               style={{ background: "var(--tony-gradient)" }}
             >
@@ -153,7 +163,11 @@ export function TonyApp({ initial }: { initial: AppState }) {
           target={sheet}
           projects={state.projects}
           onClose={() => setSheet(null)}
-          onSave={async (action, payload) => (await act(action, payload)).ok}
+          onSave={async (action, payload) => {
+            const ok = (await act(action, payload)).ok;
+            if (ok) haptic("success");
+            return ok;
+          }}
           onDelete={(task) => {
             setSheet(null);
             void act("update_task", { id: task.id, status: "dropped" }, (s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== task.id) }));
@@ -175,7 +189,10 @@ function TabButton({ item, active, onSelect }: { item: (typeof TABS)[number]; ac
     <button
       type="button"
       aria-current={active ? "page" : undefined}
-      onClick={() => onSelect(item.id)}
+      onClick={() => {
+        haptic("select");
+        onSelect(item.id);
+      }}
       className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors ${active ? "text-primary" : "text-secondary"}`}
     >
       {item.icon}

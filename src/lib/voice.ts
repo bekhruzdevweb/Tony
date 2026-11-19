@@ -64,3 +64,23 @@ export async function transcribeVoice(bot: Bot, fileId: string): Promise<string>
   // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
   return transcribeAudio(bytes, name.replace(/\.oga$/i, ".ogg"), "audio/ogg");
 }
+
+/**
+ * Text to speech, for answering a voice note aloud. Returns undefined when
+ * spoken replies are switched off (no TTS_MODEL).
+ */
+export async function speak(text: string): Promise<{ bytes: Uint8Array; type: string } | undefined> {
+  const model = env.ttsModel;
+  const apiKey = env.sttApiKey;
+  if (!model || !apiKey) return undefined;
+  const response = await fetch(`${env.sttBaseUrl}/audio/speech`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, voice: env.ttsVoice, input: text.slice(0, 600), response_format: "wav" }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) {
+    throw new VoiceError(`Text-to-speech answered ${response.status}: ${(await response.text().catch(() => "")).slice(0, 200)}`);
+  }
+  return { bytes: new Uint8Array(await response.arrayBuffer()), type: response.headers.get("content-type") ?? "audio/wav" };
+}

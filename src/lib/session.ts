@@ -1,8 +1,9 @@
 import "server-only";
 import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getDb } from "./db";
 import { getSettings, updateSettings } from "./settings";
+import { isOwnerInitData } from "./telegram-auth";
 
 /**
  * Sign-in for the app. Tony has one user, who is already proven by his
@@ -23,14 +24,14 @@ function same(a: string, b: string) {
 }
 
 /** A fresh code, stored only as a hash. */
-export async function createLoginCode(): Promise<{ code: string; link?: string }> {
+export async function createLoginCode(): Promise<{ code: string; appUrl: string | null }> {
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await updateSettings({
     login_token_hash: sha256(code),
     login_token_expires_at: new Date(Date.now() + CODE_MINUTES * 60_000).toISOString(),
   });
   const { app_url } = await getSettings();
-  return { code, link: app_url ? `${app_url.replace(/\/+$/, "")}/api/auth/login?code=${code}` : undefined };
+  return { code, appUrl: app_url ? app_url.replace(/\/+$/, "") : null };
 }
 
 /** True once, for the right code. Any attempt, right or wrong, uses the code up. */
@@ -52,6 +53,8 @@ export async function startSession(): Promise<void> {
   (await cookies()).set(SESSION_COOKIE, `${expires}.${sign(expires, session_secret)}`, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
+    // Lax keeps other sites from making requests with this cookie. Inside
+    // Telegram, requests carry Telegram's own signed data instead.
     sameSite: "lax",
     path: "/",
     expires: new Date(expires),
@@ -62,8 +65,16 @@ export async function endSession(): Promise<void> {
   (await cookies()).delete(SESSION_COOKIE);
 }
 
+/** The header a Mini App request carries: Telegram's signed sign-in data. */
+export const INIT_DATA_HEADER = "x-telegram-init-data";
+
 /** Whether this request comes from the signed-in owner. */
 export async function hasSession(): Promise<boolean> {
+  // Inside Telegram, each request proves itself; no cookie is needed (some
+  // Telegram clients run the app in a frame where cookies are not kept).
+  const initData = (await headers()).get(INIT_DATA_HEADER);
+  if (initData && isOwnerInitData(initData)) return true;
+
   const value = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!value || !getDb()) return false;
   const [expiresText, signature] = value.split(".");

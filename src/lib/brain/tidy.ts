@@ -8,8 +8,10 @@
  * earlier one is dropped.
  */
 export function tidyReply(text: string): string {
-  const glued = text.trim().split(/(?<=[a-z0-9"”’)][.!?])(?=[A-Z“"])/);
-  const last = glued[glued.length - 1]
+  const glued = text.trim().split(/(?<=[a-z0-9"”’)][.!?])(?=[A-Z“])/);
+  // A real second copy is a whole reply; a few stray characters are not.
+  const tail = glued[glued.length - 1];
+  const last = (glued.length > 1 && tail.trim().length < 12 ? text.trim() : tail)
     // Telegram shows plain text, so markdown emphasis is only noise.
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/[ \t]+\n/g, "\n")
