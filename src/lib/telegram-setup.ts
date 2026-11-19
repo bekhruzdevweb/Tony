@@ -7,6 +7,7 @@ export const COMMANDS = [
   { command: "plan", description: "Let Tony plan the day (or: /plan week)" },
   { command: "inbox", description: "Tasks without a date" },
   { command: "app", description: "Open the app, or get a key for it" },
+  { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
   { command: "ping", description: "Check that Tony is awake" },
 ];
@@ -23,7 +24,7 @@ export const HELP = [
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today (or /list)  /tomorrow  /plan  /inbox  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /clean  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */

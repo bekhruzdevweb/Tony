@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { after } from "next/server";
 import { getBot } from "@/lib/bot";
 import { runBriefs } from "@/lib/briefs";
 import { runSuggestions } from "@/lib/suggest";
@@ -8,6 +9,7 @@ import { pruneUpdates } from "@/lib/dedupe";
 import { env } from "@/lib/env";
 import { runTick } from "@/lib/reminders";
 import { getSettings } from "@/lib/settings";
+import { sweepOnceAfterDeploy } from "@/lib/sweep";
 import { refreshBoard } from "@/lib/today-board";
 
 export const maxDuration = 30;
@@ -48,6 +50,8 @@ export async function POST(request: Request) {
     if (new Date().getMinutes() === 7) await pruneUpdates().catch(() => undefined);
     // Last, tidy the chat: remove messages whose time has come.
     const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));
+    // Once after a deployment, a full sweep of the chat. After the answer, so the clock is not kept waiting.
+    after(() => sweepOnceAfterDeploy(bot, chatId).catch((error) => console.error("One-time sweep failed:", error)));
     return Response.json({ ok: true, ...result, cleaned: cleaned?.deleted ?? 0 });
   } catch (error) {
     console.error("Tick failed:", error);

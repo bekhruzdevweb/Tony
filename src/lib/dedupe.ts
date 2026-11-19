@@ -34,7 +34,8 @@ export async function firstSight(updateId: number): Promise<boolean> {
 
 /** Forgets update ids old enough that Telegram will never resend them. */
 export async function pruneUpdates(now = new Date()): Promise<void> {
-  const { error } = await requireDb().from("updates_seen").delete().lt("seen_at", new Date(now.getTime() - 2 * 24 * 60 * 60_000).toISOString());
+  // Negative numbers are not Telegram's: they mark one-time jobs that have run, and are kept.
+  const { error } = await requireDb().from("updates_seen").delete().gt("update_id", 0).lt("seen_at", new Date(now.getTime() - 2 * 24 * 60 * 60_000).toISOString());
   if (error) console.error(`pruneUpdates: ${error.message}`);
 }
 
@@ -56,7 +57,11 @@ export function refuseRepeats(bot: Bot): void {
       const { data } = await db.from("settings").select("last_sent_hash, last_sent_at, last_sent_id").limit(1).maybeSingle();
       const last = data as LastSent | null;
       const recent = last?.last_sent_at ? Date.now() - new Date(last.last_sent_at).getTime() < REPEAT_WINDOW_MS : false;
-      if (last && recent && last.last_sent_hash === hash && last.last_sent_id !== null) {
+      // A repeat only counts if the first copy is still in the chat; one already removed is no repeat.
+      const removed =
+        last?.last_sent_id != null &&
+        Boolean((await db.from("chat_messages").select("id").eq("message_id", last.last_sent_id).not("deleted_at", "is", null).limit(1)).data?.length);
+      if (last && recent && !removed && last.last_sent_hash === hash && last.last_sent_id !== null) {
         console.warn("Skipped a repeated message:", message.text.slice(0, 80));
         // Answer as Telegram would have, pointing at the message already in the chat.
         const stood = { message_id: Number(last.last_sent_id), date: Math.floor(Date.now() / 1000), chat: { id: Number(message.chat_id), type: "private" }, text: message.text };

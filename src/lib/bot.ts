@@ -32,6 +32,7 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
+import { cleanFromCommand } from "./sweep";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, toggleFromBoard } from "./today-board";
@@ -171,6 +172,11 @@ export function getBot(): Bot | undefined {
     } catch (replyError) {
       console.error("Could not send the apology:", replyError);
     }
+  });
+
+  // /clean: sweeps the recent chat in plain code. His command is the newest message, and goes with the rest.
+  tasks.command("clean", async (ctx) => {
+    await cleanFromCommand(bot, ctx.chat.id, ctx.msg.message_id);
   });
 
   tasks.command("inbox", async (ctx) => {

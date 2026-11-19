@@ -240,7 +240,18 @@ checklist.
 | The morning brief | at the evening review |
 | Yesterday's plan, review and polls | when the new one arrives |
 
-Never removed: the pinned board, reminders still waiting for a tap, your
+**`/clean`** sweeps the whole recent chat in plain code (no AI). Telegram
+numbers a private chat's messages one after another, so Tony walks back
+from the newest number about 500 messages (stopping at 47 hours, the limit
+for a bot) and deletes them with `deleteMessages`, 100 at a time; numbers
+already gone are skipped. It keeps the pinned Today board (and anything
+else pinned), reminders still waiting for a tap, and the latest morning
+brief; everything else, yours and Tony's, goes. Then "Chat cleaned, sir."
+appears and removes itself after 10 seconds. The same sweep runs once by
+itself on the first tick after a deployment that changes `SWEEP_ONCE_ID`
+in `src/lib/sweep.ts`.
+
+Outside `/clean`, never removed: the pinned board, reminders still waiting for a tap, your
 voice notes, the morning brief before evening, ordinary conversation, any
 message you replied to or pinned, and anything older than 47 hours
 (Telegram's limit for bots is 48).
