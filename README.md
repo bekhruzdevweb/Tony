@@ -125,9 +125,13 @@ understood; Tony replies in English. Optional settings: `STT_MODEL`,
 - Follow-ups on ordinary P4 tasks, such as the inbox nudge, arrive silently.
 - `/help` lists what Tony understands; the command list has `/today`,
   `/inbox`, `/app`, `/help`, `/ping`.
-- Spoken replies to voice notes are off by default. To switch them on, set
-  `TTS_MODEL` (on Groq: `canopylabs/orpheus-v1-english`, after accepting its
-  terms in the Groq console) and optionally `TTS_VOICE`.
+- Spoken replies to voice notes: set `TTS_MODEL` (on Groq:
+  `canopylabs/orpheus-v1-english`, after accepting its terms in the Groq
+  console) and optionally `TTS_VOICE`. The speech arrives as WAV and is
+  converted on the server to OGG/Opus, so Telegram shows a voice bubble.
+- Tony is told that voice notes reach him as transcripts, and his replies
+  are cleaned before sending: leaked filler, repeated copies and internal
+  task numbers are removed.
 
 ## Tony's brain
 

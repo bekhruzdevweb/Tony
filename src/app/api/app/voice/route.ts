@@ -1,6 +1,6 @@
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
-import { respond } from "@/lib/brain";
+import { think } from "@/lib/brain";
 import { hasSession } from "@/lib/session";
 import { transcribeAudio } from "@/lib/voice";
 
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   if (!text) return json({ ok: false, error: "I heard only silence, sir." });
 
   try {
-    const reply = await respond(text, "app");
+    const { reply } = await think(text, { channel: "app", context: "He said this in a voice note; this is its transcript, so you did hear him." });
     return json({ ok: true, state: await loadAppState(), reply });
   } catch (error) {
     console.error("Brain failed after voice:", error);

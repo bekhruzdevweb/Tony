@@ -13,6 +13,7 @@ import { addScheduledTask, otherReminderMessages, taskForReminderMessage } from 
 import { addInboxTask, listInbox, listToday } from "./tasks";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { connectTelegram, HELP } from "./telegram-setup";
+import { wavToOggOpus } from "./ogg-opus";
 import { MAX_VOICE_SECONDS, speak, transcribeVoice } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
@@ -192,13 +193,16 @@ export function getBot(): Bot | undefined {
 
   // One path for typed and spoken messages: the brain, with a safe fallback.
   // Returns what Tony said, so a voice note can also be answered aloud.
-  const answer = async (ctx: Context, text: string): Promise<string> => {
+  const answer = async (ctx: Context, text: string, note?: string): Promise<string> => {
     // Replying to one of Tony's reminders says which task is meant.
-    let context: string | undefined;
+    let context = note;
     const repliedTo = ctx.message?.reply_to_message?.message_id;
     if (repliedTo !== undefined) {
       const task = await taskForReminderMessage(repliedTo).catch(() => undefined);
-      if (task) context = `He is replying to your reminder about task #${task.id} "${task.title}". His message is about that task.`;
+      if (task) {
+        const about = `He is replying to your reminder about task #${task.id} "${task.title}". His message is about that task.`;
+        context = context ? `${context} ${about}` : about;
+      }
     }
 
     try {
@@ -249,16 +253,24 @@ export function getBot(): Bot | undefined {
       return ctx.reply("My apologies, sir. I could not hear that one; would you send it again or type it?");
     }
     if (!text) return ctx.reply("I heard only silence, sir. Would you say that again?");
-    const reply = await answer(ctx, text);
+    const reply = await answer(ctx, text, "He said this in a voice note; this is its transcript, so you did hear him.");
 
     // Spoken to, Tony answers aloud as well (when a voice is configured).
     try {
       const audio = await speak(reply);
       if (audio) {
-        const ogg = audio.type.includes("ogg");
-        const file = new InputFile(audio.bytes, ogg ? "tony.ogg" : "tony.wav");
-        if (ogg) await ctx.replyWithVoice(file);
-        else await ctx.replyWithAudio(file, { title: "Tony", performer: "Tony" });
+        let voice: Uint8Array | undefined = audio.type.includes("ogg") ? audio.bytes : undefined;
+        if (!voice) {
+          // Telegram shows a voice bubble only for OGG/Opus; the speech service sends WAV.
+          try {
+            voice = wavToOggOpus(audio.bytes);
+          } catch (error) {
+            console.error("Could not convert the spoken reply to a voice note:", error);
+          }
+        }
+        if (voice) await ctx.replyWithVoice(new InputFile(voice, "tony.ogg"));
+        // Better a music-player message than no voice at all.
+        else await ctx.replyWithAudio(new InputFile(audio.bytes, "tony.wav"), { title: "Tony", performer: "Tony" });
       }
     } catch (error) {
       console.error("Spoken reply failed:", error);

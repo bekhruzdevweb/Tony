@@ -72,11 +72,13 @@ export async function think(
     { role: "user", content: note ? `${text}\n\n[${note}]` : text },
   ];
 
+  // Every task number the model has seen, so none of them can leak into a reply.
+  const taskIds = new Set(context.tasks.map((task) => task.id));
   let reply: string | undefined;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answer = await chat(messages, TOOLS);
     if (!answer.tool_calls) {
-      reply = tidyReply(answer.content ?? "");
+      reply = tidyReply(answer.content ?? "", [...taskIds]);
       break;
     }
     // Anything the model says while calling a tool is dropped: it has not seen
@@ -88,6 +90,7 @@ export async function think(
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
         const outcome = await runTool(call.function.name, args, now);
+        for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) tools.push(call.function.name);
         result = outcome;
       } catch (error) {

@@ -1,4 +1,31 @@
 /**
+ * Removes what the model sometimes leaks around its answer:
+ * - filler before the real text, seen as runs of dots with stray words
+ *   ("...... ......... The........ The...... Noted, sir.");
+ * - leftover markers from its internal format;
+ * - internal task numbers ("#5"), which mean nothing to the user.
+ */
+export function stripJunk(text: string, taskIds: number[] = []): string {
+  let out = text
+    .replace(/…/g, "...")
+    .replace(/<\|[^|>]{0,40}\|>/g, " ")
+    .trim()
+    .replace(/^(?:analysis|commentary|final)\b[:\s]*/i, "");
+  // Filler: four or more dots are never punctuation, with or without a stray word in front.
+  // ("Hmm... very well" has three and is left alone.)
+  out = out.replace(/^(?:\s*(?:[A-Za-z]{1,12})?\.{4,})+\s*/, "");
+  out = out.replace(/\s*(?:\b[A-Za-z]{1,12})?\.{4,}/g, " ");
+  // "task #5", "(#5)", "#5 Read some books": drop the number, keep the words.
+  // Only numbers that are really task numbers, so "Room #4" in a title survives.
+  for (const id of taskIds) {
+    out = out
+      .replace(new RegExp(`\\s*\\(#${id}\\)`, "g"), "")
+      .replace(new RegExp(`(^|[\\s"“(])#${id}\\b[:,]?\\s*`, "g"), "$1");
+  }
+  return out.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+([.,!?])/g, "$1").trim();
+}
+
+/**
  * Small repairs to the model's wording before it reaches the lock screen.
  *
  * The model sometimes returns its reply twice in one string, glued together
@@ -7,7 +34,8 @@
  * only what follows the last one is kept, and any sentence that repeats an
  * earlier one is dropped.
  */
-export function tidyReply(text: string): string {
+export function tidyReply(raw: string, taskIds: number[] = []): string {
+  const text = stripJunk(raw, taskIds);
   const glued = text.trim().split(/(?<=[a-z0-9"”’)][.!?])(?=[A-Z“])/);
   // A real second copy is a whole reply; a few stray characters are not.
   const tail = glued[glued.length - 1];
