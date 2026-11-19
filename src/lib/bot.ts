@@ -1,5 +1,6 @@
 import "server-only";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
+import type { MessageOrigin } from "grammy/types";
 import { runAction } from "./actions";
 import { think } from "./brain";
 import { runEvening } from "./briefs";
@@ -25,12 +26,13 @@ import { finishTask } from "./recurrence";
 import { parseAction } from "./reminder-messages";
 import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
 import { createLoginCode } from "./session";
-import { getSettings } from "./settings";
+import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
 import { connectTelegram, HELP } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { dayFromKey, dayView, inboxView } from "./views";
-import { MAX_VOICE_SECONDS, speak, transcribeVoice } from "./voice";
+import { readImage } from "./vision";
+import { downloadTelegramFile, MAX_VOICE_SECONDS, speak, transcribeVoice } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -75,7 +77,7 @@ export function getBot(): Bot | undefined {
   bot.use((ctx, next) => {
     const ownerId = env.telegramOwnerId;
     // A poll vote names the voter but no chat; in a private chat the two ids are the same.
-    const who = ctx.chat?.id ?? ctx.from?.id ?? ctx.pollAnswer?.user?.id;
+    const who = ctx.chat?.id ?? ctx.from?.id ?? ctx.pollAnswer?.user?.id ?? ctx.businessConnection?.user.id;
     if (ownerId !== undefined && who !== ownerId) return;
     return next();
   });
@@ -172,6 +174,47 @@ export function getBot(): Bot | undefined {
       taskId: task.id,
       deleteAfter: hoursFromNow(CONFIRMATION_HOURS),
     });
+  });
+
+  // He connected (or disconnected) Tony under Telegram Business. Only needed for native checklists.
+  tasks.on("business_connection", async (ctx) => {
+    const ownerId = env.telegramOwnerId;
+    const connection = ctx.businessConnection;
+    if (ownerId === undefined || connection.user.id !== ownerId) return;
+    await updateSettings({ business_connection_id: connection.is_enabled ? connection.id : null });
+    await sendTracked(
+      bot,
+      ownerId,
+      connection.is_enabled
+        ? "Connected under Telegram Business, sir. Send /checklist and I shall try a native checklist here."
+        : "The Business connection is switched off, sir. The button checklists carry on as before.",
+    );
+  });
+
+  // A trial of Telegram's native checklist in this chat. Telegram's documentation does not say whether
+  // a connected bot may post one into its own chat, so this finds out and reports exactly what Telegram answers.
+  tasks.command("checklist", async (ctx) => {
+    const { business_connection_id } = await getSettings();
+    if (!business_connection_id) {
+      return ctx.reply(
+        "No Business connection yet, sir. In Telegram: Settings → Telegram Business → Chatbots, add me, and choose which chats I may access. Then send /checklist again.",
+      );
+    }
+    const view = await dayView(new Date());
+    const open = [...view.overdue, ...view.open].slice(0, 30);
+    if (open.length === 0) return ctx.reply("Nothing is open today, sir, so there is nothing to put in a checklist.");
+    try {
+      await bot.api.sendChecklist(business_connection_id, bot.botInfo.id, {
+        title: "Today",
+        tasks: open.map((task) => ({ id: task.id, text: `${formatTime(new Date(task.due_at!))} ${task.title}`.slice(0, 100) })),
+        others_can_mark_tasks_as_done: true,
+      });
+      return await ctx.reply("That worked, sir: Telegram accepted a native checklist in this chat. Tell Claude, and /today can be switched over.");
+    } catch (error) {
+      const reason = String((error as { description?: string })?.description ?? error).slice(0, 300);
+      console.error("Native checklist refused:", error);
+      return ctx.reply(`Telegram refused a native checklist in this chat, sir. Its answer: ${reason}`);
+    }
   });
 
   // A vote in one of Tony's polls. Plain code, like the buttons.
@@ -334,12 +377,71 @@ export function getBot(): Bot | undefined {
     }
   };
 
+  /** Where a forwarded message came from, in words. */
+  const originOf = (origin: MessageOrigin): string => {
+    if (origin.type === "channel") return `the channel "${origin.chat.title}"`;
+    if (origin.type === "chat") return `the chat "${"title" in origin.sender_chat && origin.sender_chat.title ? origin.sender_chat.title : "unknown"}"`;
+    if (origin.type === "user") return [origin.sender_user.first_name, origin.sender_user.last_name].filter(Boolean).join(" ");
+    return origin.sender_user_name;
+  };
+
+  /**
+   * A forwarded post, a photo, or other media with a caption. Tony reads
+   * the words and the text in the image, tells him what it is and offers to
+   * make it a task. It is also remembered as "the last thing he shared", so
+   * a following "schedule this for tomorrow" has something to point at.
+   */
+  const shareItem = async (ctx: Context) => {
+    const message = ctx.message;
+    if (!message) return;
+    const words = (message.text ?? message.caption ?? "").trim();
+    // An album arrives as one message per photo; only the captioned one is read.
+    if (message.media_group_id && !words) return;
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+
+    let imageText: string | undefined;
+    let imageFailed = false;
+    if (message.photo?.length) {
+      // The largest size that is still small enough to send to the model.
+      const size = [...message.photo].reverse().find((photo) => (photo.file_size ?? 0) <= 3_500_000) ?? message.photo[0];
+      try {
+        const file = await downloadTelegramFile(bot, size.file_id);
+        imageText = await readImage(file.bytes);
+      } catch (error) {
+        console.error("Could not read the photo:", error);
+        imageFailed = true;
+      }
+    }
+    if (!words && !imageText) {
+      return ctx.reply(imageFailed ? "My apologies, sir. I could not read that image just now." : "Text, a voice note, a photo or a forwarded post, sir; I cannot read that kind of message yet.");
+    }
+
+    const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
+    const image = imageText ? `Text in the image: ${imageText}` : imageFailed ? "(Its image could not be read.)" : undefined;
+    // What Tony keeps as "the last thing he shared".
+    const shared = [forwarded ? `Post forwarded from ${forwarded}` : "A photo he sent", forwarded ? words : words ? `He wrote with it: ${words}` : undefined, image]
+      .filter(Boolean)
+      .join("\n");
+    // What the brain is asked: his own caption is his words; a forwarded post is all material.
+    const asked = forwarded ? `[He forwarded this to you]\n${shared}` : words ? `${words}\n\n[He attached a photo. ${image ?? ""}]` : `[He sent you a photo]\n${image}`;
+
+    try {
+      await answer(ctx, asked);
+    } finally {
+      await updateSettings({ last_shared_text: shared.slice(0, 2000), last_shared_at: new Date().toISOString() }).catch((error) =>
+        console.error("Could not remember the shared item:", error),
+      );
+    }
+  };
+
   tasks.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) {
       return ctx.reply("I don't know that command, sir. Try /help.");
     }
     if (!text) return;
+    // A forwarded post is material to read, not something he typed.
+    if (ctx.message.forward_origin) return shareItem(ctx);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     await answer(ctx, text);
   });
@@ -390,7 +492,10 @@ export function getBot(): Bot | undefined {
     }
   });
 
-  tasks.on("message", (ctx) => ctx.reply("Text or a voice note, sir; I cannot read that kind of message yet."));
+  // Photos, and any other media that carries a caption or was forwarded.
+  tasks.on(["message:photo", "message:caption"], (ctx) => shareItem(ctx));
+
+  tasks.on("message", (ctx) => ctx.reply("Text, a voice note, a photo or a forwarded post, sir; I cannot read that kind of message yet."));
 
   cached = { token, bot };
   return bot;

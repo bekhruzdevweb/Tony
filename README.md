@@ -135,6 +135,22 @@ rejects the markup the same words go out as plain text.
 - Sunday evening: the week in four numbers and "How did the week go?". The
   answer is kept as a memory note.
 
+**Forwarded posts and photos.** Forward Tony a post, or send a photo, with
+or without a caption. He reads the words and the text in the image (a
+vision model, `VISION_MODEL`, default `qwen/qwen3.8-27b` on Groq), says in a
+line what it is, and offers to make it a task with its date. The item is
+remembered for 12 hours as "the last thing you shared", so "schedule this for
+tomorrow", typed or spoken, refers to it.
+
+**Native checklists (trial).** Telegram's own checklists can only be sent
+through a Telegram Business connection, on behalf of your account, and its
+documentation does not say whether a connected bot may post one into its own
+chat. `/checklist` tries it and reports Telegram's answer. To connect: in
+@BotFather turn on Business Mode for the bot; then Telegram → Settings →
+Telegram Business → Chatbots → add the bot, with access limited to selected
+chats and none selected for anyone else. Until this is proven, `/today`,
+`/tomorrow` and the brief use the button checklist.
+
 **Tidying.** Messages Tony will remove later are recorded in
 `chat_messages`; the minute tick deletes what is due.
 

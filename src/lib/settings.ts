@@ -14,6 +14,9 @@ export type Settings = {
   session_secret: string;
   login_token_hash: string | null;
   login_token_expires_at: string | null;
+  last_shared_text: string | null;
+  last_shared_at: string | null;
+  business_connection_id: string | null;
 };
 
 export async function getSettings(): Promise<Settings> {

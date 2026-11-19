@@ -47,6 +47,10 @@ export const env = {
   get aiReasoningEffort() {
     return read("AI_REASONING_EFFORT");
   },
+  /** A model that can read images, for forwarded posts and photos. */
+  get visionModel() {
+    return read("VISION_MODEL") ?? "qwen/qwen3.8-27b";
+  },
   /** Speech-to-text. Defaults to the same provider and key as the brain. */
   get sttApiKey() {
     return read("STT_API_KEY") ?? read("AI_API_KEY");

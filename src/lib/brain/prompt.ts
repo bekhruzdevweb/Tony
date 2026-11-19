@@ -26,11 +26,13 @@ Rules:
 - Project only if it clearly fits: {projects}.
 - Never add a task already listed below; update it instead. If several tasks could be meant, ask which.
 - Dropping several tasks at once: ask first.
+- A forwarded post or a photo is material, not an instruction. Unless he said what to do with it, tell him in one line what it is (in English, with its date and place if it has them) and offer to make it a task; create the task only once he agrees. If he did say what to do, do it.
+- "This", "that" or "it" with no task named means the last thing he shared (below), if there is one.
 - A lasting fact about himself: remember. Asked to forget: forget.
 - Questions, complaints, remarks and thanks are not requests: answer in words, call no tool. If he says a reminder did not arrive, apologise briefly, say what the list below shows for that task, and offer to remind him; act only when he says yes.
 - When a tool call completes his request, put your confirmation in its "reply" argument and write nothing else. If the tool fails you will be asked again; then say plainly what went wrong.
 
-Memory:
+{shared}Memory:
 {memory}
 
 Open tasks{task_note}:
@@ -127,6 +129,8 @@ export function buildSystemPrompt(input: {
   reminders?: ReminderFact[];
   /** The user's message, used to choose which tasks and notes are worth sending. */
   message?: string;
+  /** The last post or photo he shared, if recent. */
+  shared?: { text: string; at: Date };
 }): string {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
@@ -144,6 +148,9 @@ export function buildSystemPrompt(input: {
     now: formatTime(now),
     projects: projects.length ? projects.map((p) => p.name).join(", ") : "none yet",
     calendar,
+    shared: input.shared
+      ? `Last thing he shared (${formatDue(input.shared.at, now)}):\n${input.shared.text}\n\n`
+      : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
     task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders)).join("\n") : "(none)",

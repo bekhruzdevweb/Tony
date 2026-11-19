@@ -13,12 +13,26 @@ const HISTORY_CHARS = 280;
 const clip = (text: string) => (text.length > HISTORY_CHARS ? `${text.slice(0, HISTORY_CHARS)}…` : text);
 const MAX_ROUNDS = 5;
 
+/** How long "this" keeps meaning the last forwarded post or photo. */
+const SHARED_HOURS = 12;
+/** Enough of a post to find its date and subject, without spending the minute's token allowance on it. */
+const SHARED_CHARS = 700;
+
+function recentShare(row: { last_shared_text: string | null; last_shared_at: string | null } | null) {
+  if (!row?.last_shared_text || !row.last_shared_at) return undefined;
+  const at = new Date(row.last_shared_at);
+  if (Date.now() - at.getTime() > SHARED_HOURS * 60 * 60_000) return undefined;
+  const text = row.last_shared_text;
+  return { at, text: text.length > SHARED_CHARS ? `${text.slice(0, SHARED_CHARS)}…` : text };
+}
+
 async function loadContext() {
   const db = requireDb();
-  const [memory, tasks, projects] = await Promise.all([
+  const [memory, tasks, projects, settings] = await Promise.all([
     db.from("memory").select("id, fact").order("id"),
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(60),
     db.from("projects").select("id, name").order("sort_order"),
+    db.from("settings").select("last_shared_text, last_shared_at").limit(1).maybeSingle(),
   ]);
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
@@ -41,6 +55,7 @@ async function loadContext() {
     tasks: openTasks,
     projects: projects.data as ProjectRef[],
     reminders: (reminders.data ?? []) as ReminderFact[],
+    shared: recentShare(settings.data as { last_shared_text: string | null; last_shared_at: string | null } | null),
   };
 }
 

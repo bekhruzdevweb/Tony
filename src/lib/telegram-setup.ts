@@ -18,12 +18,13 @@ export const HELP = [
   "• \"What's left today?\"",
   "• \"I work out in the evenings\" and I shall remember it.",
   "Reply to one of my reminders and I know which task you mean.",
+  "Forward me a post or send a photo and I shall read it and offer to make it a task.",
   "",
   "/today  /tomorrow  /inbox  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */
-export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer"] as const;
+export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer", "business_connection"] as const;
 
 /**
  * The bot's command list, its Menu button and its webhook. With an https

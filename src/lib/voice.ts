@@ -10,7 +10,7 @@ export const MAX_VOICE_SECONDS = 600;
 export class VoiceError extends Error {}
 
 /** Fetches a file the user sent to the bot. */
-async function downloadTelegramFile(bot: Bot, fileId: string): Promise<{ bytes: ArrayBuffer; name: string }> {
+export async function downloadTelegramFile(bot: Bot, fileId: string): Promise<{ bytes: ArrayBuffer; name: string }> {
   const file = await bot.api.getFile(fileId);
   if (!file.file_path) throw new VoiceError("Telegram gave no file path");
   if ((file.file_size ?? 0) > MAX_BYTES) throw new VoiceError("File too large");
