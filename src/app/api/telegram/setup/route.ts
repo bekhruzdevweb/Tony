@@ -3,7 +3,7 @@ import { getBot } from "@/lib/bot";
 import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
 import { updateSettings } from "@/lib/settings";
-import { connectTelegram } from "@/lib/telegram-setup";
+import { ALLOWED_UPDATES, connectTelegram } from "@/lib/telegram-setup";
 
 function matches(given: string, expected: string) {
   const a = Buffer.from(given);
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   try {
     await bot.api.setWebhook(webhookUrl, {
       secret_token: secretToken,
-      allowed_updates: ["message", "callback_query"],
+      allowed_updates: [...ALLOWED_UPDATES],
     });
     // Tell the reminder clock in the database where this deployment lives.
     if (getDb()) await updateSettings({ app_url: url.origin });

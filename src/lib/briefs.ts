@@ -1,60 +1,60 @@
 import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
+import { retire, sendHtml, track, type MessageKind } from "./chat-log";
 import { requireDb } from "./db";
+import { b, code, esc, expandable, i, plain } from "./html";
 import { logMessage } from "./messages";
+import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
 import { data } from "./reminder-messages";
 import type { Settings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, formatTime, minuteOfDay, parseClock } from "./time";
+import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
+import { dayView, loadProjects, taskLine } from "./views";
 
 /** A brief that could not go out on time is still sent for this long, then skipped for the day. */
 const LATE_WINDOW_MINUTES = 180;
-const SEND_TIMEOUT_MS = 8_000;
 const DAY_MS = 24 * 60 * 60_000;
 /** Spec: inbox items untouched for 3 days get a nudge. */
 const STALE_DAYS = 3;
-const MAX_CARRIED_PROMPTS = 2;
+const MAX_MISSED_POLLS = 2;
 
+// Which daily message a "brief" row in the reminders table stands for.
 const MORNING = 0;
 const EVENING = 1;
+const WEEKLY = 3;
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n === 1 ? "One" : spell(n)} ${n === 1 ? one : many}`;
 const spell = (n: number) => ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"][n] ?? String(n);
-const lower = (title: string) => (/^[A-Z][a-z]/.test(title) ? title[0].toLowerCase() + title.slice(1) : title);
-
-function list(items: string[], max = 6): string {
-  const shown = items.slice(0, max);
-  const more = items.length - shown.length;
-  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ");
-}
-
-type Sender = (text: string, keyboard?: InlineKeyboard, options?: { silent?: boolean; taskId?: number; kind?: "brief" | "stale"; attempt?: number }) => Promise<void>;
+const shortDay = (at: Date, timeZone: string) => new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short" }).format(at).replace(",", "");
+const weekdayOf = (at: Date, timeZone: string) => new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short" }).format(at);
 
 /**
- * Records every unprompted message as a reminder row, so the hourly cap
+ * Notes an unprompted message in the reminders table, so the hourly cap
  * counts it, a reply to it finds its task, and "sent today?" has an answer.
  */
-function sender(bot: Bot, chatId: number, now: Date): Sender {
-  return async (text, keyboard, options = {}) => {
-    const sent = await bot.api.sendMessage(
-      chatId,
-      text,
-      { reply_markup: keyboard, disable_notification: options.silent },
-      AbortSignal.timeout(SEND_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.sendMessage>[3],
-    );
-    const { error } = await requireDb().from("reminders").insert({
-      task_id: options.taskId ?? null,
-      fire_at: now.toISOString(),
-      kind: options.kind ?? "brief",
-      attempt: options.attempt ?? 0,
-      state: "sent",
-      sent_at: new Date().toISOString(),
-      telegram_message_id: sent.message_id,
-    });
-    if (error) console.error("Could not record a brief:", error.message);
-    await logMessage("tony", text);
-  };
+async function record(now: Date, messageId: number | null, attempt: number, options: { taskId?: number; kind?: "brief" | "stale" } = {}): Promise<void> {
+  const { error } = await requireDb().from("reminders").insert({
+    task_id: options.taskId ?? null,
+    fire_at: now.toISOString(),
+    kind: options.kind ?? "brief",
+    attempt,
+    state: messageId === null ? "cancelled" : "sent",
+    sent_at: new Date().toISOString(),
+    telegram_message_id: messageId,
+  });
+  if (error) console.error("Could not record a brief:", error.message);
+}
+
+async function send(
+  bot: Bot,
+  chatId: number,
+  html: string,
+  options: { keyboard?: InlineKeyboard; silent?: boolean; kind: MessageKind; taskId?: number },
+): Promise<number> {
+  const messageId = await sendHtml(bot, chatId, html, options);
+  await track(messageId, options.kind, { taskId: options.taskId });
+  await logMessage("tony", plain(html));
+  return messageId;
 }
 
 async function openTasks(): Promise<Task[]> {
@@ -81,59 +81,39 @@ function isTime(clock: string, now: Date, timeZone: string): boolean {
   return late >= 0 && late < LATE_WINDOW_MINUTES;
 }
 
-/** "Monday", or "yesterday" when it was. */
-function dayName(at: Date, now: Date, timeZone: string): string {
-  const today = dayBounds(now, timeZone).start.getTime();
-  if (at.getTime() >= today - DAY_MS) return "yesterday";
-  return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "long" }).format(at);
-}
-
-export function morningText(today: Task[], carried: Task[], timeZone: string): string {
-  const parts = ["Good morning, sir."];
-  if (today.length > 0) {
-    const items = today.map((task) => `${lower(task.title)} ${formatTime(new Date(task.due_at!), timeZone)}`);
-    parts.push(`Today: ${today.length} ${today.length === 1 ? "task" : "tasks"}. ${list(items)[0].toUpperCase()}${list(items).slice(1)}.`);
-  } else {
-    parts.push("Nothing is scheduled for today.");
-  }
-  if (carried.length > 0) parts.push(`${plural(carried.length, "item")} carried over.`);
-  return parts.join(" ");
-}
-
 /**
- * Morning brief: today's tasks, then a question for each task left open from
- * an earlier day, then a quiet nudge for the stalest inbox item.
+ * Morning brief: the day as a checklist, then a poll for each task left open
+ * from an earlier day, then a quiet nudge for the stalest inbox item.
  */
 async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: Date): Promise<number> {
-  const send = sender(bot, chatId, now);
-  const { start, end } = dayBounds(now, settings.timezone);
   const tasks = await openTasks();
-  const dated = tasks.filter((task) => task.due_at);
-  const today = dated.filter((task) => new Date(task.due_at!).getTime() >= start.getTime() && new Date(task.due_at!).getTime() < end.getTime());
-  const carried = dated.filter((task) => new Date(task.due_at!).getTime() < start.getTime());
+  const { start } = dayBounds(now, settings.timezone);
+  const carried = tasks.filter((task) => task.due_at && new Date(task.due_at).getTime() < start.getTime());
+  const inboxCount = tasks.filter((task) => task.status === "inbox").length;
 
+  const view = await dayView(now, now, { lead: "Good morning, sir." });
+  const html = inboxCount > 0 ? `${view.html}\n\n📥 ${i(`${inboxCount} in the inbox`)}` : view.html;
   const appUrl = settings.app_url?.startsWith("https://") ? settings.app_url : undefined;
-  await send(morningText(today, carried, settings.timezone), appUrl ? new InlineKeyboard().webApp("Open app", appUrl) : undefined, { attempt: MORNING });
+  if (appUrl) view.keyboard.webApp("Open app", appUrl);
+
+  // Yesterday's brief and plan make way for today's.
+  await retire({ kinds: ["brief:morning", "plan"] }, now);
+  const briefId = await send(bot, chatId, html, { keyboard: view.keyboard, kind: "brief:morning" });
+  await record(now, briefId, MORNING);
   let sent = 1;
 
   // Missed tasks come back, one question each, oldest first.
-  for (const task of carried.slice(0, MAX_CARRIED_PROMPTS)) {
-    const keyboard = new InlineKeyboard()
-      .text("Today", data("today", task.id))
-      .text("Tomorrow", data("tomorrow", task.id))
-      .text("Drop", data("drop", task.id));
-    await send(
-      `One item from ${dayName(new Date(task.due_at!), now, settings.timezone)} remains open: ${lower(task.title)}. Shall I put it on today?`,
-      keyboard,
-      { taskId: task.id, kind: "brief", attempt: 2 },
-    );
+  for (const task of carried.slice(0, MAX_MISSED_POLLS)) {
+    await retire({ kinds: ["prompt"], taskId: task.id }, now);
+    const pollId = await sendMissedPoll(bot, chatId, task, now);
+    await record(now, pollId, 2, { taskId: task.id });
     sent++;
   }
 
   // One forgotten inbox item a day, asked about quietly, and not again for three days.
   const stale = tasks
     .filter((task) => task.status === "inbox" && now.getTime() - new Date(task.updated_at).getTime() >= STALE_DAYS * DAY_MS)
-    .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    .sort((x, y) => x.updated_at.localeCompare(y.updated_at));
   for (const task of stale) {
     const recent = await requireDb()
       .from("reminders")
@@ -148,11 +128,14 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
       .text("Tomorrow", data("tomorrow", task.id))
       .text("This weekend", data("weekend", task.id))
       .text("Drop", data("drop", task.id));
-    await send(`Sir, "${task.title}" has sat in the inbox for ${days} days. Shall I schedule it?`, keyboard, {
-      taskId: task.id,
-      kind: "stale",
+    await retire({ kinds: ["stale"], taskId: task.id }, now);
+    const id = await send(bot, chatId, `📥 Sir, ${b(task.title)} has sat in the inbox for ${b(`${days} days`)}. Shall I schedule it?`, {
+      keyboard,
       silent: true,
+      kind: "stale",
+      taskId: task.id,
     });
+    await record(now, id, 0, { taskId: task.id, kind: "stale" });
     sent++;
     break;
   }
@@ -177,33 +160,93 @@ function chooseKeyboard(tasks: Task[]): InlineKeyboard {
   return keyboard.text("That will do", "ev:leave");
 }
 
-/** Evening review: what is still open, and whether to move it. */
+/** What was completed today, newest last. */
+async function doneToday(now: Date, timeZone: string): Promise<Task[]> {
+  const { start } = dayBounds(now, timeZone);
+  const { data: rows, error } = await requireDb().from("tasks").select().eq("status", "done").gte("completed_at", start.toISOString()).order("completed_at");
+  if (error) throw new Error(`briefs: ${error.message}`);
+  return rows as Task[];
+}
+
+/**
+ * Evening review: what is still open and what got done, then the question of
+ * tomorrow. With several candidates that question is a poll ("Which ones
+ * tomorrow?"); with one, three buttons.
+ */
 async function eveningReview(bot: Bot, chatId: number, settings: Settings, now: Date): Promise<number> {
-  const send = sender(bot, chatId, now);
-  const left = await leftToday(now, settings.timezone);
-  if (left.length === 0) {
-    // Nothing to decide. Say so only if there was a day's work to speak of.
-    const { start } = dayBounds(now, settings.timezone);
-    const done = await requireDb().from("tasks").select("id", { count: "exact", head: true }).eq("status", "done").gte("completed_at", start.toISOString());
-    if (done.error) throw new Error(`briefs: ${done.error.message}`);
-    const text = (done.count ?? 0) > 0 ? "Evening, sir. Everything for today is done." : undefined;
-    // Recorded either way, so the review is not attempted again tonight.
-    if (text) await send(text, undefined, { attempt: EVENING, silent: true });
-    else await requireDb().from("reminders").insert({ fire_at: now.toISOString(), kind: "brief", attempt: EVENING, state: "cancelled", sent_at: now.toISOString() });
-    return text ? 1 : 0;
+  const timeZone = settings.timezone;
+  const [left, done, all, projects] = await Promise.all([leftToday(now, timeZone), doneToday(now, timeZone), openTasks(), loadProjects()]);
+  if (left.length === 0 && done.length === 0) {
+    // Nothing to review. Recorded, so the review is not attempted again tonight.
+    await record(now, null, EVENING);
+    return 0;
   }
-  const names = list(left.map((task) => lower(task.title)));
-  const text =
-    left.length === 1
-      ? `Evening, sir. One task is still open: ${names}. Move it to tomorrow?`
-      : `Evening, sir. ${spell(left.length)} tasks are still open: ${names}. Move them to tomorrow?`;
-  await send(text, reviewKeyboard(), { attempt: EVENING });
-  return 1;
+
+  const parts = [`<b>🌙 Evening review · ${esc(shortDay(now, timeZone))}</b>`];
+  if (left.length > 0) {
+    const lines = left.map((task) => {
+      const at = new Date(task.due_at!);
+      const late = at.getTime() < now.getTime() && task.status !== "in_progress";
+      const sameDay = at.getTime() >= dayBounds(now, timeZone).start.getTime();
+      return `${late ? "⚠️ " : ""}${taskLine(task, projects, sameDay ? formatTime(at, timeZone) : `${weekdayOf(at, timeZone)} ${formatTime(at, timeZone)}`)}`;
+    });
+    parts.push([b(`Still open · ${left.length}`), ...lines].join("\n"));
+  } else {
+    parts.push("Everything for today is done, sir.");
+  }
+  if (done.length > 0) {
+    const lines = [`✅ ${b(`Done today · ${done.length}`)}`, ...done.map((task) => `${code(formatTime(new Date(task.completed_at!), timeZone))} ${esc(task.title)}`)].join("\n");
+    parts.push(done.length > 3 ? expandable(lines) : lines);
+  }
+
+  // Candidates for tomorrow: what is left, then the inbox, oldest first.
+  const inbox = all.filter((task) => task.status === "inbox").sort((x, y) => x.created_at.localeCompare(y.created_at));
+  const candidates = [...left, ...inbox];
+  const usePoll = candidates.length >= 2;
+  if (left.length === 1 && !usePoll) parts.push("Move it to tomorrow?");
+
+  await retire({ kinds: ["brief:evening"] }, now);
+  const reviewId = await send(bot, chatId, parts.join("\n\n"), {
+    keyboard: left.length > 0 && !usePoll ? reviewKeyboard() : undefined,
+    silent: left.length === 0,
+    kind: "brief:evening",
+  });
+  await record(now, reviewId, EVENING);
+  let sent = 1;
+  if (usePoll) {
+    await sendPlanPoll(bot, chatId, candidates);
+    sent++;
+  }
+  return sent;
+}
+
+/** Sunday: the week in three lines and one question. */
+async function weeklyReview(bot: Bot, chatId: number, settings: Settings, now: Date): Promise<number> {
+  const db = requireDb();
+  const since = new Date(now.getTime() - 7 * DAY_MS).toISOString();
+  const [done, added, open] = await Promise.all([
+    db.from("tasks").select("id", { count: "exact", head: true }).eq("status", "done").gte("completed_at", since),
+    db.from("tasks").select("id", { count: "exact", head: true }).gte("created_at", since),
+    openTasks(),
+  ]);
+  if (done.error || added.error) throw new Error(`briefs: ${(done.error ?? added.error)!.message}`);
+  const overdue = open.filter((task) => task.due_at && new Date(task.due_at).getTime() < now.getTime()).length;
+  const inbox = open.filter((task) => task.status === "inbox").length;
+
+  const html = [
+    `<b>📊 The week · to ${esc(shortDay(now, settings.timezone))}</b>`,
+    [`✅ ${b(String(done.count ?? 0))} done`, `➕ ${b(String(added.count ?? 0))} added`, `⚠️ ${b(String(overdue))} overdue`, `📥 ${b(String(inbox))} in the inbox`].join("\n"),
+  ].join("\n\n");
+  const id = await send(bot, chatId, html, { silent: true, kind: "brief:evening" });
+  await record(now, id, WEEKLY);
+  await sendWeekPoll(bot, chatId);
+  return 2;
 }
 
 /**
  * Called from the minute tick. Sends the morning brief and the evening
- * review once each per day, at the times set in Settings.
+ * review once each per day at the times set in Settings, and the weekly
+ * review after Sunday's evening review.
  */
 export async function runBriefs(bot: Bot, chatId: number, settings: Settings, now: Date): Promise<number> {
   const { start } = dayBounds(now, settings.timezone);
@@ -211,33 +254,33 @@ export async function runBriefs(bot: Bot, chatId: number, settings: Settings, no
   if (isTime(settings.brief_morning, now, settings.timezone) && !(await alreadySent(MORNING, start))) {
     sent += await morningBrief(bot, chatId, settings, now);
   }
-  if (isTime(settings.brief_evening, now, settings.timezone) && !(await alreadySent(EVENING, start))) {
-    sent += await eveningReview(bot, chatId, settings, now);
+  if (isTime(settings.brief_evening, now, settings.timezone)) {
+    if (!(await alreadySent(EVENING, start))) sent += await eveningReview(bot, chatId, settings, now);
+    if (weekdayOf(now, settings.timezone) === "Sun" && !(await alreadySent(WEEKLY, start))) sent += await weeklyReview(bot, chatId, settings, now);
   }
   return sent;
 }
 
 export type EveningOutcome = { text?: string; toast?: string; keyboard: InlineKeyboard | null };
 
-/** The evening review's buttons. Plain code, like every other button. */
+/** The evening review's buttons (used when there is a single task to decide). Texts are Telegram HTML. */
 export async function runEvening(action: string, taskId: number | undefined, now = new Date()): Promise<EveningOutcome> {
-  const timeZone = "Asia/Tashkent";
   switch (action) {
     case "moveall": {
-      const left = await leftToday(now, timeZone);
+      const left = await leftToday(now, TIMEZONE);
       for (const task of left) await runAction("tomorrow", task.id, undefined, now);
-      return { text: left.length ? `Moved ${left.length === 1 ? "it" : `all ${left.length}`} to tomorrow, sir.` : "There was nothing left to move, sir.", keyboard: null };
+      return { text: left.length ? `Moved ${left.length === 1 ? "it" : `all ${spell(left.length).toLowerCase()}`} to ${b("tomorrow")}, sir.` : "There was nothing left to move, sir.", keyboard: null };
     }
     case "choose": {
-      const left = await leftToday(now, timeZone);
+      const left = await leftToday(now, TIMEZONE);
       return left.length ? { keyboard: chooseKeyboard(left) } : { text: "Nothing is left open, sir.", keyboard: null };
     }
     case "tom":
     case "drop": {
       if (taskId === undefined) return { keyboard: null };
       const outcome = await runAction(action === "tom" ? "tomorrow" : "drop", taskId, undefined, now);
-      const left = await leftToday(addMinutes(now, 0), timeZone);
-      return left.length ? { toast: outcome.text, keyboard: chooseKeyboard(left) } : { text: "All settled, sir.", keyboard: null };
+      const left = await leftToday(now, TIMEZONE);
+      return left.length ? { toast: outcome.text ? plain(outcome.text) : undefined, keyboard: chooseKeyboard(left) } : { text: "All settled, sir.", keyboard: null };
     }
     default:
       return { text: "Very good, sir. They stay where they are.", keyboard: null };

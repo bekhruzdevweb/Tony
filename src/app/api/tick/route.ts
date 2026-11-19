@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { getBot } from "@/lib/bot";
 import { runBriefs } from "@/lib/briefs";
+import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
 import { runTick } from "@/lib/reminders";
@@ -34,7 +35,9 @@ export async function POST(request: Request) {
     const result = await runTick(bot, chatId, new Date(), {
       briefs: (settings, now) => runBriefs(bot, chatId, settings, now),
     });
-    return Response.json({ ok: true, ...result });
+    // Last, tidy the chat: remove messages whose time has come.
+    const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));
+    return Response.json({ ok: true, ...result, cleaned: cleaned?.deleted ?? 0 });
   } catch (error) {
     console.error("Tick failed:", error);
     return Response.json({ ok: false, error: "Tick failed" }, { status: 500 });

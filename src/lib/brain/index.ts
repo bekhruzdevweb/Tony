@@ -61,9 +61,11 @@ export async function respond(text: string, channel: Channel = "telegram", now =
 export async function think(
   text: string,
   options: { channel?: Channel; now?: Date; context?: string } = {},
-): Promise<{ reply: string; tools: string[] }> {
+): Promise<{ reply: string; tools: string[]; titles: string[] }> {
   const { channel = "telegram", now = new Date(), context: note } = options;
   const tools: string[] = [];
+  // Titles of the tasks the tools touched, so the reply can show them in bold.
+  const titles: string[] = [];
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
@@ -99,6 +101,8 @@ export async function think(
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
+          const touched = (outcome as { task?: unknown }).task;
+          if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
           if (typeof args.reply === "string" && args.reply.trim()) prepared = args.reply;
           else allSucceeded = false; // nothing prepared (a lookup, say): the model must speak next
         } else {
@@ -121,5 +125,5 @@ export async function think(
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
   await logMessage("tony", reply, channel);
-  return { reply, tools };
+  return { reply, tools, titles };
 }

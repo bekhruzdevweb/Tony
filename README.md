@@ -117,21 +117,50 @@ understood; Tony replies in English. Optional settings: `STT_MODEL`,
 
 ## In the Telegram chat
 
-- A button tap writes its outcome into the message you tapped, and clears
-  the buttons on that task's other reminders.
-- Reply to any reminder and Tony knows which task you mean.
-- A small reaction on your message when something was written down (✍) or
-  ticked off (👌).
-- Follow-ups on ordinary P4 tasks, such as the inbox nudge, arrive silently.
-- `/help` lists what Tony understands; the command list has `/today`,
-  `/inbox`, `/app`, `/help`, `/ping`.
-- Spoken replies to voice notes: set `TTS_MODEL` (on Groq:
-  `canopylabs/orpheus-v1-english`, after accepting its terms in the Groq
-  console) and optionally `TTS_VOICE`. The speech arrives as WAV and is
-  converted on the server to OGG/Opus, so Telegram shows a voice bubble.
-- Tony is told that voice notes reach him as transcripts, and his replies
-  are cleaned before sending: leaked filler, repeated copies and internal
-  task numbers are removed.
+**Formatting.** Tony's structured messages use Telegram's HTML: a bold
+header with the date, `code` times, project names in italics, 🔔 for
+persistent tasks, ⚠️ for overdue ones, and long sections folded into an
+expandable quote. Everything you typed is escaped, and if Telegram ever
+rejects the markup the same words go out as plain text.
+
+**Checklist.** `/today`, `/tomorrow` and the morning brief are checklists: a
+☐ button per task ticks it off in place, ☑ unticks it.
+
+**Polls** (not anonymous, so Tony can read the vote):
+
+- Evening review, when there are two or more candidates: "Which ones
+  tomorrow?" over what is still open and the inbox. The picks are scheduled
+  for tomorrow and Tony answers with tomorrow's plan as a checklist.
+- A task left open from an earlier day: a poll of new times, or Drop it.
+- Sunday evening: the week in four numbers and "How did the week go?". The
+  answer is kept as a memory note.
+
+**Tidying.** Messages Tony will remove later are recorded in
+`chat_messages`; the minute tick deletes what is due.
+
+| Message | Removed |
+|---------|---------|
+| A reminder's earlier nudges | when the task is done, skipped, snoozed or moved |
+| A confirmation ("Noted, sir…"), including a tapped reminder | after 3 hours (24 hours if it answered a voice note) |
+| Your `/today`, `/tomorrow`, `/inbox`, `/app` and the reply | when you send the same command again |
+| Yesterday's brief, plan, review and polls | when the new one arrives |
+
+Never removed: reminders still waiting for a tap, today's brief and plan,
+ordinary conversation, any message you replied to or pinned, and anything
+older than 47 hours (Telegram's limit for bots is 48).
+
+**Also:** a button tap writes its outcome into the message you tapped; reply
+to a reminder and Tony knows which task you mean; ✍ / 👌 reactions; silent
+follow-ups on ordinary P4 tasks; `/help`.
+
+After a deployment that adds a new kind of update (poll votes were one),
+send `/start` to Tony once: it refreshes the webhook, the command list and
+the Menu button.
+
+**Spoken replies** to voice notes: set `TTS_MODEL` (on Groq:
+`canopylabs/orpheus-v1-english`, after accepting its terms in the Groq
+console) and optionally `TTS_VOICE`. The WAV is converted on the server to
+OGG/Opus, so Telegram shows a voice bubble.
 
 ## Tony's brain
 

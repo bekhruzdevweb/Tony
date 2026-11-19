@@ -1,6 +1,8 @@
 import "server-only";
 import type { Bot } from "grammy";
 import { requireDb } from "./db";
+import { retire, sendHtml, track } from "./chat-log";
+import { plain } from "./html";
 import { logMessage } from "./messages";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
@@ -24,8 +26,6 @@ export const HOURLY_MESSAGE_CAP = 6;
 const BATCH = 20;
 /** How long a tick may hold a reminder while sending it. */
 const LEASE_MINUTES = 2;
-/** Telegram normally answers in well under a second. */
-const SEND_TIMEOUT_MS = 8_000;
 /** Stop starting new sends after this long, so the tick ends well inside its time limit. */
 const TICK_BUDGET_MS = 18_000;
 
@@ -40,6 +40,9 @@ export async function settleReminders(taskId: number): Promise<void> {
   fail("settleReminders", cancelled.error);
   const acknowledged = await db.from("reminders").update({ state: "acknowledged" }).eq("task_id", taskId).eq("state", "sent");
   fail("settleReminders", acknowledged.error);
+  // The question is answered, so the messages that asked it can be tidied
+  // away. (A message just tapped is given a new fate by its handler.)
+  await retire({ kinds: ["reminder", "prompt", "stale"], taskId });
 }
 
 /** Replace whatever is pending for the task with a fresh reminder at `at`. */
@@ -242,18 +245,11 @@ export async function runTick(
     // hold the tick until the platform kills it.
     for (let tryNumber = 1; tryNumber <= 2 && messageId === undefined; tryNumber++) {
       try {
-        const sent = await bot.api.sendMessage(
-          chatId,
-          message.text,
-          {
-            reply_markup: message.keyboard,
-            // A follow-up on an ordinary, low-priority task arrives without sound.
-            disable_notification: isFollowUp && !task.persistent && task.priority === 4,
-          },
-          // grammY types its own AbortSignal; the platform's one is what it runs on.
-          AbortSignal.timeout(SEND_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.sendMessage>[3],
-        );
-        messageId = sent.message_id;
+        messageId = await sendHtml(bot, chatId, message.text, {
+          keyboard: message.keyboard,
+          // A follow-up on an ordinary, low-priority task arrives without sound.
+          silent: isFollowUp && !task.persistent && task.priority === 4,
+        });
       } catch (error) {
         console.error(`Reminder ${reminder.id}: send attempt ${tryNumber} failed:`, error);
       }
@@ -272,7 +268,9 @@ export async function runTick(
       .update({ state: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, claimed_at: null })
       .eq("id", reminder.id);
     fail("runTick: mark sent", saved.error);
-    await logMessage("tony", message.text);
+    await logMessage("tony", plain(message.text));
+    // Tracked, so it is removed once the task is done, skipped or moved.
+    await track(messageId, "reminder", { taskId: task.id });
 
     sentThisHour++;
     result.sent++;

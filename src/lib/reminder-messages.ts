@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { b } from "./html";
 import type { Task } from "./tasks";
 import { formatTime, laterThisEvening } from "./time";
 
@@ -26,10 +27,10 @@ export const doneKeyboard = (taskId: number) => new InlineKeyboard().text("Done"
 export const rescheduleKeyboard = (taskId: number) =>
   new InlineKeyboard().text("In 1 hour", data("snooze", taskId, 60)).text("Tomorrow", data("tomorrow", taskId));
 
-/** A plain, one-time reminder at the due time. */
+/** A plain, one-time reminder at the due time. Texts here are Telegram HTML. */
 export function dueReminder(task: Task): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: `Sir, a reminder: ${task.title}.`,
+    text: `Sir, a reminder: ${b(task.title)}.`,
     keyboard: new InlineKeyboard()
       .text("Done", data("done", task.id))
       .text("Snooze 15 min", data("snooze", task.id, 15))
@@ -47,7 +48,7 @@ export function persistentReminder(
   now: Date,
   nextAt: Date | undefined,
 ): { text: string; keyboard?: InlineKeyboard } {
-  if (!nextAt) return { text: `I'll leave "${task.title}" here for today, sir.` };
+  if (!nextAt) return { text: `I'll leave ${b(task.title)} here for today, sir.` };
 
   // The three main buttons never change place from one nudge to the next, so
   // a thumb aiming at "15 min" cannot land on something else. The offer to
@@ -63,11 +64,11 @@ export function persistentReminder(
 
   const text =
     attempt === 0
-      ? `Sir, it's time: ${task.title}.`
+      ? `🔔 Sir, it's time: ${b(task.title)}.`
       : attempt === 1
-        ? `A gentle reminder, sir. "${task.title}" is still waiting.`
+        ? `A gentle reminder, sir. ${b(task.title)} is still waiting.`
         : attempt === 2
-          ? `Sir, shall I move "${task.title}" to later today?`
-          : `Still nothing logged for "${task.title}", sir. I'll check again at ${formatTime(nextAt)}.`;
+          ? `Sir, shall I move ${b(task.title)} to later today?`
+          : `Still nothing logged for ${b(task.title)}, sir. I'll check again at ${b(formatTime(nextAt))}.`;
   return { text, keyboard };
 }
