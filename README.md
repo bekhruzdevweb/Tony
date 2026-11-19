@@ -149,8 +149,19 @@ calling works:
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | the provider |
 | `AI_MODEL` | `openai/gpt-oss-120b` | the model |
 
-If the model is unreachable or out of quota, Tony saves the message to the
-inbox as written and says so, so nothing you send is lost.
+| `AI_FALLBACK_MODEL` | `openai/gpt-oss-20b` (on Groq) | used when the main model is rate limited; `none` switches it off |
+| `AI_REASONING_EFFORT` | unset | optional `low` / `medium` / `high` for reasoning models |
+
+Free tiers limit tokens per minute (8,000 on Groq for this model), so each
+message is kept small: a short prompt, only the tasks and memory notes that
+bear on the message, six clipped turns of history, and a confirmation written
+in the same call as the action, so most messages cost one model call.
+
+When the provider answers 429, Tony keeps "typing…" showing, waits the time
+it names (up to 15 seconds) and tries once more; if that fails he uses the
+fallback model, which has its own allowance. Only if all of that fails does
+he save the message to the inbox as written and say so. Each call's real
+token use and the minute's remaining allowance are written to the Vercel log.
 
 ## Reminder engine
 

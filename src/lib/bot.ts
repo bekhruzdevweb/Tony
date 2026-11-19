@@ -205,8 +205,11 @@ export function getBot(): Bot | undefined {
       }
     }
 
+    // "typing…" lasts about five seconds in Telegram; renew it for as long
+    // as Tony is thinking, which includes waiting out a rate limit.
+    const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
     try {
-      const { reply, tools } = await think(text, { channel: "telegram", context });
+      const { reply, tools } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
       await ctx.reply(reply);
       // A small acknowledgement on his own message when something was written down or ticked off.
       const reaction = tools.includes("complete_task")

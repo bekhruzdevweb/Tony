@@ -32,6 +32,21 @@ export const env = {
   get aiModel() {
     return read("AI_MODEL") ?? "openai/gpt-oss-120b";
   },
+  /**
+   * Used when the main model is out of its per-minute allowance. Limits are
+   * per model, so a second model is a second allowance. Set to "none" to
+   * switch the fallback off.
+   */
+  get aiFallbackModel() {
+    const value = read("AI_FALLBACK_MODEL");
+    if (value) return value.toLowerCase() === "none" ? undefined : value;
+    // The default only makes sense on the default provider.
+    return read("AI_BASE_URL") ? undefined : "openai/gpt-oss-20b";
+  },
+  /** Optional: "low", "medium" or "high", for models that reason before answering. */
+  get aiReasoningEffort() {
+    return read("AI_REASONING_EFFORT");
+  },
   /** Speech-to-text. Defaults to the same provider and key as the brain. */
   get sttApiKey() {
     return read("STT_API_KEY") ?? read("AI_API_KEY");

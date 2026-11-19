@@ -7,7 +7,10 @@ import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact 
 import { tidyReply } from "./tidy";
 import { runTool, TOOLS } from "./tools";
 
-const HISTORY = 12;
+/** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
+const HISTORY = 6;
+const HISTORY_CHARS = 280;
+const clip = (text: string) => (text.length > HISTORY_CHARS ? `${text.slice(0, HISTORY_CHARS)}…` : text);
 const MAX_ROUNDS = 5;
 
 async function loadContext() {
@@ -65,9 +68,9 @@ export async function think(
   await logMessage("user", text, channel);
 
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt({ now, ...context }) },
+    { role: "system", content: buildSystemPrompt({ now, ...context, message: text }) },
     ...history.map(
-      (m): ChatMessage => (m.role === "user" ? { role: "user", content: m.text } : { role: "assistant", content: m.text }),
+      (m): ChatMessage => (m.role === "user" ? { role: "user", content: clip(m.text) } : { role: "assistant", content: clip(m.text) }),
     ),
     { role: "user", content: note ? `${text}\n\n[${note}]` : text },
   ];
@@ -85,19 +88,34 @@ export async function think(
     // the result yet, and keeping it made the final reply repeat itself
     // ("Remembered, sir.Your preference is noted, sir.").
     messages.push({ role: "assistant", content: null, tool_calls: answer.tool_calls });
+    // The confirmation the model wrote alongside its tool call, usable only if every call succeeds.
+    let prepared: string | undefined;
+    let allSucceeded = true;
     for (const call of answer.tool_calls) {
       let result: unknown;
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
         const outcome = await runTool(call.function.name, args, now);
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
-        if (outcome.ok) tools.push(call.function.name);
+        if (outcome.ok) {
+          tools.push(call.function.name);
+          if (typeof args.reply === "string" && args.reply.trim()) prepared = args.reply;
+          else allSucceeded = false; // nothing prepared (a lookup, say): the model must speak next
+        } else {
+          allSucceeded = false;
+        }
         result = outcome;
       } catch (error) {
         console.error(`Tool ${call.function.name} failed:`, error);
+        allSucceeded = false;
         result = { ok: false, error: "the tool failed; nothing was changed" };
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+    }
+    // Done in one model call: no second round just to say "Noted, sir".
+    if (allSucceeded && prepared) {
+      reply = tidyReply(prepared, [...taskIds]);
+      if (reply) break;
     }
   }
 

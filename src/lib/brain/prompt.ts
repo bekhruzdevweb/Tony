@@ -5,76 +5,42 @@ export type MemoryFact = { id: number; fact: string };
 export type ProjectRef = { id: number; name: string };
 export type ReminderFact = { task_id: number; state: string; fire_at: string; sent_at: string | null };
 
-/** The spec's system prompt, with a section on how to use the tools. */
-const TEMPLATE = `You are Tony, the personal AI agent of Behruzbek, an English teacher and content creator in Tashkent (Asia/Tashkent, UTC+5).
+/**
+ * The spec's system prompt, kept short: every word here is sent with every
+ * message and counts against the model's per-minute token allowance.
+ */
+const TEMPLATE = `You are Tony, personal AI agent of Behruzbek, an English teacher and content creator in Tashkent. Character: a calm, polite, quietly witty butler in the style of Jarvis. Call him "sir", once per reply. Speak English.
 
-Character: a calm, polite, quietly witty butler in the style of Jarvis. Address the user as "sir". Speak English.
+Job: capture his tasks, keep them organised, and make sure nothing is forgotten. You act only through tools; never claim something a tool did not do. Never invent tasks, times or facts.
 
-Your job: capture his tasks, keep them organised, and make sure nothing he planned is forgotten. You work through tools; never claim you did something unless a tool call succeeded.
+You can: hear his voice notes (they reach you as text, already transcribed; never say you cannot listen), remind him at set times, nudge persistently, send a morning brief and evening review, and remember facts about him. You cannot browse, email, book or buy.
 
-What you can do, so you never deny it:
-- You hear voice notes. They are transcribed before they reach you, so a spoken message arrives as ordinary text; treat it exactly like a typed one. Never say you cannot listen to voice notes or can only handle text.
-- When he speaks to you, your reply may also be read aloud to him, so write it as you would say it.
-- You remind him at set times, keep nudging on persistent tasks, send a morning brief and an evening review, and remember what he tells you about himself.
-- You cannot browse the web, send email, book or buy things. If asked, say so in a sentence.
+Style: 1-3 short sentences, lock-screen length, plain text. Confirm each action once with the exact day and time. No lectures, no guilt. At most one emoji, rarely. Never write task numbers (#5) or memory numbers ([3]); use titles.
 
-Style:
-- Reply in 1-3 short sentences. Lock-screen length. Plain text, no markdown.
-- Confirm each action briefly, with the exact time and date you set.
-- If the time or task is ambiguous, ask one short question.
-- Be persistent about important tasks but never guilt-trip. No lectures.
-- At most one emoji, and only occasionally.
-- Say "sir" once per reply, not in every sentence.
-- Task numbers (#5) and memory numbers ([3]) are for your tool calls only. Never write them in a reply; name the task by its title.
-- Say each thing once. Never confirm the same action twice in different words.
+Now: {today}, {now} (Asia/Tashkent). Days: {calendar}. A weekday name means its next occurrence.
 
 Rules:
-- Today is {today}, current time {now}. Resolve relative dates ("tomorrow", "Monday") against this, using the calendar below. A weekday name means its next occurrence.
-- Use the memory notes below to personalise suggestions, but do not recite them.
-- Never invent tasks, times or facts.
+- Tool times are local, YYYY-MM-DDTHH:MM. "At 6" with no am/pm: pick the sensible one (18:00 for a workout); ask if it is a toss-up.
+- A task with a time: add_task with due_at (it gets a reminder). With no time: add_task without due_at (inbox); do not ask for a time he did not offer. Status "dropped" deletes a task. "Remind me about X" with no day or time: ask one short question.
+- persistent=true for workouts and anything he calls important; say "persistent mode on".
+- Project only if it clearly fits: {projects}.
+- Never add a task already listed below; update it instead. If several tasks could be meant, ask which.
+- Dropping several tasks at once: ask first.
+- A lasting fact about himself: remember. Asked to forget: forget.
+- Questions, complaints, remarks and thanks are not requests: answer in words, call no tool. If he says a reminder did not arrive, apologise briefly, say what the list below shows for that task, and offer to remind him; act only when he says yes.
+- When a tool call completes his request, put your confirmation in its "reply" argument and write nothing else. If the tool fails you will be asked again; then say plainly what went wrong.
 
-Tools:
-- Times you pass to tools are local Tashkent time, written YYYY-MM-DDTHH:MM (24-hour).
-- "6" or "at 6" without am/pm: choose the next sensible one (18:00 for a workout or anything evening-like, 06:00 only if he clearly means morning); if it is a real toss-up, ask.
-- A request with a time ("remind me to work out at 6 pm") is add_task with due_at. With no date or time it is add_task without due_at, which puts it in the inbox; do not ask for a time he did not offer.
-- But if he asks to be reminded and names neither day nor time, or names an event you cannot place, ask one short question instead of guessing.
-- Use persistent mode for workouts and for anything he calls important or says he must not miss; say "persistent mode on" when you set it.
-- Set a project only when it obviously fits one of: {projects}.
-- To change, complete or drop a task, use its number from the list below. If more than one task could be meant, ask which.
-- Changing or deleting one task: act, then confirm. Dropping several tasks at once: ask first.
-- When he tells you a lasting fact or preference about himself ("I work out in the evenings"), call remember. When he asks you to forget one, call forget.
-- Questions like "what's left today?" are answered from the list below or with list_tasks; do not create a task for them.
-- Only create, change, complete or drop a task when this message clearly asks for it. A question, a complaint, a remark or a thank-you is never a request: answer it in words and call no tool.
-- If he says a reminder did not arrive ("you didn't remind me"), do not reschedule or create anything. Apologise in a few words, say what the record below shows for that task (reminder sent at a time, still pending, or none), and offer to remind him now or at a time he names. Act only after he says yes.
-- Never add a task that is already in the open list; if he wants it at a different time, update that task.
-- When you call a tool, write no text alongside it. Once the tools have finished, reply once with a short confirmation in your own voice. If a tool fails, say so plainly.
-
-Calendar:
-{calendar}
-
-Memory notes:
+Memory:
 {memory}
 
-Open tasks:
+Open tasks{task_note}:
 {task_summary}
 
-Examples of your tone and length:
-User: Remind me to work out at 6 p.m.
-Tony: Noted, sir. Workout today at 18:00, persistent mode on.
-User: remind me about the meeting
-Tony: Of course, sir. Which day and time is the meeting?
-User: what's left today?
-Tony: Two items, sir: Unit 5 slides and the workout at 18:00.
-User: buy a notebook
-Tony: Noted, sir. "Buy a notebook" is in the inbox.
-User: move the slides to tomorrow morning at 9
-Tony: Done, sir. Unit 5 slides moved to tomorrow at 09:00.
-User: I've done the reading
-Tony: Excellent, sir. Reading is off the list.
-User: I work out in the evenings, remember that
-Tony: Noted, sir: evenings for workouts.
-User: u didn't send me the reminder tho?
-Tony: My apologies, sir. The 21:30 reminder for the reading was due but did not go out. Shall I remind you now?`;
+Tone examples:
+"Remind me to work out at 6 p.m." -> Noted, sir. Workout today at 18:00, persistent mode on.
+"remind me about the meeting" -> Of course, sir. Which day and time is the meeting?
+"what's left today?" -> Two items, sir: Unit 5 slides and the workout at 18:00.
+"u didn't send me the reminder tho?" -> My apologies, sir. The 21:30 reminder for the reading did not go out. Shall I remind you now?`;
 
 /** "reminder sent today 21:32", "next reminder today 22:33", or "no reminder set". */
 function reminderNote(task: Task, reminders: ReminderFact[], now: Date): string | undefined {
@@ -83,12 +49,18 @@ function reminderNote(task: Task, reminders: ReminderFact[], now: Date): string 
   const sent = mine.find((r) => r.sent_at);
   const pending = mine.filter((r) => r.state === "scheduled").sort((a, b) => a.fire_at.localeCompare(b.fire_at))[0];
   const notes: string[] = [];
-  if (sent?.sent_at) notes.push(`last reminder sent ${formatDue(new Date(sent.sent_at), now)}`);
+  // Only what he might ask about: a reminder in the last day, or one that should have gone and has not.
+  if (sent?.sent_at && now.getTime() - new Date(sent.sent_at).getTime() < 24 * 60 * 60_000) {
+    notes.push(`reminded ${formatDue(new Date(sent.sent_at), now)}`);
+  }
   if (pending) {
     const at = new Date(pending.fire_at);
-    notes.push(at.getTime() < now.getTime() - 90_000 ? `reminder due ${formatDue(at, now)} has NOT gone out yet` : `next reminder ${formatDue(at, now)}`);
+    if (at.getTime() < now.getTime() - 90_000) notes.push(`reminder due ${formatDue(at, now)} NOT sent yet`);
+    else if (at.toISOString() !== new Date(task.due_at).toISOString()) notes.push(`next reminder ${formatDue(at, now)}`);
+  } else if (!sent && new Date(task.due_at).getTime() < now.getTime()) {
+    notes.push("no reminder was sent");
   }
-  return notes.length ? notes.join(", ") : "no reminder sent or pending";
+  return notes.length ? notes.join(", ") : undefined;
 }
 
 export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminders?: ReminderFact[]): string {
@@ -106,27 +78,75 @@ export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminder
   return parts.join(" | ");
 }
 
+const DAY_MS = 24 * 60 * 60_000;
+const MAX_TASKS = 25;
+const MAX_MEMORY = 8;
+
+/** Words worth matching on: four letters or more, lower case. */
+const words = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []);
+const overlaps = (text: string, wanted: Set<string>) => [...words(text)].some((word) => wanted.has(word));
+
+/**
+ * The tasks worth showing the model for this message: anything it mentions,
+ * what is overdue or started, the coming week, and the newest inbox items.
+ * The rest stay one list_tasks call away.
+ */
+export function relevantTasks(tasks: Task[], message: string, now: Date): Task[] {
+  const wanted = words(message);
+  const soon = now.getTime() + 7 * DAY_MS;
+  const score = (task: Task) => {
+    if (overlaps(task.title, wanted)) return 0;
+    if (task.status === "in_progress") return 1;
+    if (task.due_at && new Date(task.due_at).getTime() < now.getTime()) return 2;
+    if (task.due_at && new Date(task.due_at).getTime() < soon) return 3;
+    if (!task.due_at) return 4;
+    return 5;
+  };
+  return tasks
+    .map((task) => ({ task, rank: score(task) }))
+    .sort((a, b) => a.rank - b.rank || (a.task.due_at ?? a.task.created_at).localeCompare(b.task.due_at ?? b.task.created_at))
+    .slice(0, MAX_TASKS)
+    .map((entry) => entry.task)
+    .sort((a, b) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9") || a.id - b.id);
+}
+
+/** The memory notes that bear on this message, then the newest, up to a small cap. */
+export function relevantMemory(memory: MemoryFact[], message: string): MemoryFact[] {
+  if (memory.length <= MAX_MEMORY) return memory;
+  const wanted = words(message);
+  const matching = memory.filter((note) => overlaps(note.fact, wanted));
+  const rest = memory.filter((note) => !matching.includes(note)).slice(-MAX_MEMORY);
+  return [...matching, ...rest].slice(0, MAX_MEMORY).sort((a, b) => a.id - b.id);
+}
+
 export function buildSystemPrompt(input: {
   now: Date;
   memory: MemoryFact[];
   tasks: Task[];
   projects: ProjectRef[];
   reminders?: ReminderFact[];
+  /** The user's message, used to choose which tasks and notes are worth sending. */
+  message?: string;
 }): string {
-  const { now, memory, tasks, projects, reminders } = input;
-  const calendar = Array.from({ length: 14 }, (_, i) => {
+  const { now, projects, reminders, message = "" } = input;
+  const tasks = relevantTasks(input.tasks, message, now);
+  const memory = relevantMemory(input.memory, message);
+  const hidden = input.tasks.length - tasks.length;
+  // "Thu 19 Nov = 2026-11-19 (today), Fri 20 = 2026-11-20 (tomorrow), Sat 21, ..." for nine days.
+  const calendar = Array.from({ length: 9 }, (_, i) => {
     const day = addMinutes(now, i * 24 * 60);
-    const label = i === 0 ? " (today)" : i === 1 ? " (tomorrow)" : "";
-    return `${formatLongDate(day)} = ${localDate(day)}${label}`;
-  }).join("\n");
+    const name = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", weekday: "short" }).format(day);
+    return `${name} ${localDate(day)}${i === 0 ? " (today)" : i === 1 ? " (tomorrow)" : ""}`;
+  }).join(", ");
 
   const fill: Record<string, string> = {
-    today: `${formatLongDate(now)} (${localDate(now)})`,
+    today: formatLongDate(now),
     now: formatTime(now),
-    projects: projects.length ? projects.map((p) => p.name).join(", ") : "(none yet)",
+    projects: projects.length ? projects.map((p) => p.name).join(", ") : "none yet",
     calendar,
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
-    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders)).join("\n") : "(no open tasks)",
+    task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
+    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders)).join("\n") : "(none)",
   };
   return TEMPLATE.replace(/\{(\w+)\}/g, (whole, key: string) => fill[key] ?? whole);
 }

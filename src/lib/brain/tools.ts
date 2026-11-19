@@ -7,97 +7,55 @@ import { addMinutes, dayBounds, formatDue, parseLocalDateTime, toWholeMinute } f
 import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
 
-const LOCAL_TIME = "Local Tashkent time, YYYY-MM-DDTHH:MM (24-hour).";
+const TIME = "YYYY-MM-DDTHH:MM";
+/** Lets the model confirm in the same call, so most messages need one model call, not two. */
+const reply = { type: "string", description: "What to tell him on success." };
+const id = { type: "integer" };
 
 const taskFields = {
-  title: { type: "string", description: "Short task title, in the user's words, without the time." },
-  due_at: { type: "string", description: `When it is due. ${LOCAL_TIME} Omit for an undated inbox task.` },
-  project: { type: "string", description: "Project name, only if it clearly fits an existing one." },
-  priority: { type: "integer", enum: [1, 2, 3, 4], description: "1 is most urgent, 4 is normal (default)." },
-  persistent: { type: "boolean", description: "Keep nudging until he taps Start or Skip." },
-  repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"], description: "Repeat rule." },
-  notes: { type: "string", description: "Extra detail worth keeping." },
+  title: { type: "string", description: "Short, without the time." },
+  due_at: { type: "string", description: TIME },
+  project: { type: "string" },
+  priority: { type: "integer", description: "1 urgent to 4 normal" },
+  persistent: { type: "boolean" },
+  repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
+  notes: { type: "string" },
 };
+
+const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
+  type: "function",
+  function: { name, description, parameters: { type: "object", properties, required } },
+});
 
 /** The seven tools from the spec: everything Tony can do. */
 export const TOOLS: ToolDefinition[] = [
-  {
-    type: "function",
-    function: {
-      name: "add_task",
-      description: "Create a task. With due_at it is scheduled and reminded; without, it goes to the inbox.",
-      parameters: { type: "object", properties: taskFields, required: ["title"] },
+  tool("add_task", "Create a task.", { ...taskFields, reply }, ["title"]),
+  tool(
+    "update_task",
+    "Change or drop a task.",
+    {
+      id,
+      ...taskFields,
+      clear_due: { type: "boolean", description: "Back to inbox." },
+      status: { type: "string", enum: ["todo", "dropped", "skipped"] },
+      reply,
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_task",
-      description:
-        "Change a task: rename, reschedule (due_at), move to the inbox (clear_due), set priority, project, persistent, repeat, or drop it (status 'dropped').",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "integer", description: "The task number." },
-          ...taskFields,
-          clear_due: { type: "boolean", description: "Remove the date and put the task back in the inbox." },
-          status: { type: "string", enum: ["todo", "dropped", "skipped"], description: "'dropped' deletes the task from his lists." },
-        },
-        required: ["id"],
-      },
+    ["id"],
+  ),
+  tool("complete_task", "Mark a task done.", { id, reply }, ["id"]),
+  tool(
+    "list_tasks",
+    "List tasks.",
+    {
+      day: { type: "string", description: "today|tomorrow|overdue|YYYY-MM-DD" },
+      status: { type: "string", enum: ["open", "inbox", "done"] },
+      project: { type: "string" },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "complete_task",
-      description: "Mark a task done and cancel its pending reminders.",
-      parameters: { type: "object", properties: { id: { type: "integer", description: "The task number." } }, required: ["id"] },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_tasks",
-      description: "List tasks, filtered by day, status or project.",
-      parameters: {
-        type: "object",
-        properties: {
-          day: { type: "string", description: "'today', 'tomorrow', 'overdue' or a date YYYY-MM-DD." },
-          status: { type: "string", enum: ["open", "inbox", "done"], description: "Default 'open'." },
-          project: { type: "string", description: "Project name." },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "set_reminder",
-      description: "Add one extra reminder for an existing task at a given time, without changing when it is due.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" }, at: { type: "string", description: LOCAL_TIME } },
-        required: ["task_id", "at"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "remember",
-      description: "Save a lasting fact or preference the user stated about himself.",
-      parameters: { type: "object", properties: { fact: { type: "string", description: "One short sentence." } }, required: ["fact"] },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "forget",
-      description: "Delete a saved memory note by its number.",
-      parameters: { type: "object", properties: { id: { type: "integer", description: "The note's number in brackets." } }, required: ["id"] },
-    },
-  },
+    [],
+  ),
+  tool("set_reminder", "Extra reminder; due time unchanged.", { task_id: id, at: { type: "string", description: TIME }, reply }, ["task_id", "at"]),
+  tool("remember", "Save a fact about him.", { fact: { type: "string" }, reply }, ["fact"]),
+  tool("forget", "Delete a memory note.", { id: { type: "integer" }, reply }, ["id"]),
 ];
 
 const normaliseTitle = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
