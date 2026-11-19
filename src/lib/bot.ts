@@ -22,6 +22,7 @@ import { b, code, emphasise, plain } from "./html";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
+import { applyPlan, buildPlan, dismissPlan, loadPlan, notePlanMessage, planView, removePlanItem, shiftPlanItem } from "./planner";
 import { parseAction } from "./reminder-messages";
 import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
 import { createLoginCode } from "./session";
@@ -145,6 +146,15 @@ export function getBot(): Bot | undefined {
     await freshCommand(ctx, "cmd:today");
     const view = await dayView(new Date());
     await say(ctx, view.html, { keyboard: view.keyboard, kind: "cmd:today" });
+  });
+
+  // "/plan" or "/plan week": Tony proposes times for what is overdue or in the inbox.
+  tasks.command("plan", async (ctx) => {
+    if (ctx.msg) await track(ctx.msg.message_id, "plan", { incoming: true });
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const result = await buildPlan({ scope: ctx.match.trim().toLowerCase().startsWith("week") ? "week" : "day" });
+    if ("nothing" in result) return ctx.reply(`${result.nothing.replace(/\.$/, "")}, sir.`);
+    await showPlan(ctx.chat.id, result.plan.id);
   });
 
   tasks.command("tomorrow", async (ctx) => {
@@ -290,6 +300,93 @@ export function getBot(): Bot | undefined {
       return;
     }
 
+    // A plan's buttons ("pl:..."): apply it, adjust it, or make a new one.
+    if (payload.startsWith("pl:")) {
+      const [, action, a, b2, c] = payload.split(":");
+      let toast: string | undefined;
+      try {
+        if (action === "new") {
+          const now = new Date();
+          const result = await buildPlan({ scope: "day", day: a === "tomorrow" ? addMinutes(now, 24 * 60) : now, now });
+          if ("nothing" in result) toast = result.nothing;
+          else if (chatId !== undefined) await showPlan(chatId, result.plan.id);
+          return;
+        }
+        const planId = Number(a);
+        let plan = await loadPlan(planId);
+        let mode: "view" | "adjust" = "adjust";
+        if (!plan) {
+          toast = "That plan is gone, sir.";
+          return;
+        }
+        if (action === "ap") {
+          const done = await applyPlan(planId);
+          plan = done.plan;
+          mode = "view";
+          toast = done.applied ? `Applied: ${done.applied} ${done.applied === 1 ? "task" : "tasks"} scheduled.` : "Nothing was left to apply, sir.";
+        } else if (action === "m") {
+          const moved = await shiftPlanItem(planId, Number(b2), Number(c));
+          plan = moved.plan ?? plan;
+          toast = moved.note;
+        } else if (action === "x") {
+          plan = (await removePlanItem(planId, Number(b2))) ?? plan;
+        } else if (action === "no") {
+          plan = (await dismissPlan(planId)) ?? plan;
+          mode = "view";
+        } else if (action === "re") {
+          await dismissPlan(planId);
+          const again = await buildPlan({ scope: plan.scope, day: new Date(`${plan.day.slice(0, 10)}T12:00:00+05:00`), instructions: "Propose different times from before." });
+          if ("nothing" in again) toast = again.nothing;
+          else plan = again.plan;
+          mode = "view";
+        } else if (action === "noop") {
+          return;
+        }
+        if (plan && chatId !== undefined && tapped) {
+          const view = await planView(plan, new Date(), plan.status === "proposed" ? mode : "view");
+          await editHtml(bot, chatId, tapped.message_id, view.html, view.keyboard);
+          if (plan.message_id === null || action === "re") await notePlanMessage(plan.id, tapped.message_id);
+        }
+      } finally {
+        await ctx.answerCallbackQuery(toast ? { text: toast.slice(0, 190) } : undefined).catch(() => undefined);
+      }
+      return;
+    }
+
+    // An answer to a question Tony asked with buttons ("ch:<n>"), or "Other".
+    if (payload.startsWith("ch:")) {
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      const { pending_choices: pending } = await getSettings();
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      if (!pending) return;
+      const pick = payload.slice(3);
+      if (pick === "other") {
+        await updateSettings({ pending_note: `You asked him: "${pending.question}". He chose to answer in his own words; his next message is that answer.`, pending_note_at: new Date().toISOString() });
+        await say(ctx, "Tell me in your own words, sir.");
+        return;
+      }
+      const chosen = pending.options[Number(pick)];
+      if (!chosen) return;
+      if (base !== undefined && chatId !== undefined && tapped) await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${emphasise(chosen)}`);
+      await answer(ctx, chosen, { note: `He tapped this as his answer to your question: "${pending.question}". Act on it; do not ask again.` });
+      return;
+    }
+
+    // "Other…" on a suggestion: he will say when, in words.
+    if (payload.startsWith("oth:") || payload.startsWith("sg:no:")) {
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      const taskId = Number(payload.split(":").pop());
+      if (tapped) await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+      if (payload.startsWith("sg:no:")) return;
+      const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+      const task = found.data as Task | null;
+      if (!task) return;
+      await updateSettings({ pending_note: `You asked him when he would do task #${task.id} "${task.title}". His next message is probably the answer: set that time with update_task.`, pending_note_at: new Date().toISOString() });
+      await say(ctx, `When would suit for ${b(task.title)}, sir?`);
+      return;
+    }
+
     const parsed = parseAction(payload);
     if (!parsed) return ctx.answerCallbackQuery({ text: "I no longer recognise that button, sir." });
     let outcome;
@@ -329,6 +426,17 @@ export function getBot(): Bot | undefined {
     }
   });
 
+  /** Sends a proposed plan with [Apply] [Adjust]; it replaces any earlier plan in the chat. */
+  const showPlan = async (chatId: number, planId: number) => {
+    const plan = await loadPlan(planId);
+    if (!plan) return;
+    const view = await planView(plan);
+    await retire({ kinds: ["plan"] });
+    const messageId = await sendTracked(bot, chatId, view.html, { keyboard: view.keyboard, kind: "plan" });
+    await notePlanMessage(plan.id, messageId);
+    await logMessage("tony", plain(view.html));
+  };
+
   const MUTATING = ["add_task", "update_task", "complete_task", "set_reminder", "remember", "forget"];
 
   // One path for typed and spoken messages: the brain, with a safe fallback.
@@ -350,7 +458,22 @@ export function getBot(): Bot | undefined {
     // as Tony is thinking, which includes waiting out a rate limit.
     const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
     try {
-      const { reply, tools, titles } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      const { reply, tools, titles, planId, choices } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      // Whatever he was asked before has now been answered or overtaken.
+      await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
+      if (planId !== undefined && ctx.chat) {
+        await showPlan(ctx.chat.id, planId);
+        return { reply, confirmed: false, completed: false };
+      }
+      if (choices && ctx.chat) {
+        // A question with guessable answers arrives as buttons, plus a way to say something else.
+        const keyboard = new InlineKeyboard();
+        choices.options.forEach((option, index) => keyboard.text(option, `ch:${index}`).row());
+        keyboard.text("Other…", "ch:other");
+        await updateSettings({ pending_choices: choices });
+        await say(ctx, emphasise(choices.question), { keyboard });
+        return { reply, confirmed: false, completed: false };
+      }
       const confirmed = tools.some((tool) => MUTATING.includes(tool));
       // A confirmation shows the task and time in bold and is tidied away later; conversation stays.
       await say(

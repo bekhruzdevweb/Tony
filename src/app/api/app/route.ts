@@ -1,9 +1,10 @@
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
-import { respond } from "@/lib/brain";
+import { think } from "@/lib/brain";
 import { runTool } from "@/lib/brain/tools";
 import { requireDb } from "@/lib/db";
 import { logMessage } from "@/lib/messages";
+import { applyPlan, buildPlan, dismissPlan } from "@/lib/planner";
 import { hasSession } from "@/lib/session";
 import { updateSettings } from "@/lib/settings";
 import { addInboxTask } from "@/lib/tasks";
@@ -58,12 +59,39 @@ export async function POST(request: Request) {
           break;
         }
         try {
-          reply = await respond(text, "app");
+          const thought = await think(text, { channel: "app" });
+          reply = thought.reply;
+          // The app has no buttons in Chat: a plan waits under Plans, and options are listed.
+          if (thought.planId !== undefined) reply = "I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.";
+          else if (thought.choices) reply = `${thought.choices.question} (${thought.choices.options.join(" / ")})`;
         } catch (error) {
           console.error("Brain failed, saving to inbox instead:", error);
           const task = await addInboxTask(text);
           reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
           await logMessage("tony", reply, "app");
+        }
+        break;
+      }
+
+      case "plan": {
+        const result = await buildPlan({ scope: body.scope === "week" ? "week" : "day" });
+        if ("nothing" in result) problem = result.nothing;
+        break;
+      }
+
+      case "apply_plan":
+      case "dismiss_plan": {
+        const id = Number(body.id);
+        if (!Number.isSafeInteger(id)) {
+          problem = "Unknown plan";
+          break;
+        }
+        if (body.action === "apply_plan") {
+          const done = await applyPlan(id);
+          reply = done.applied ? `Applied, sir: ${done.applied} ${done.applied === 1 ? "task" : "tasks"} scheduled.` : undefined;
+          if (!done.applied) problem = "Nothing was left to apply";
+        } else {
+          await dismissPlan(id);
         }
         break;
       }

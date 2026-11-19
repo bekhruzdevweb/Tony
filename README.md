@@ -115,6 +115,42 @@ a typed message. The language is detected, so Uzbek and Russian notes are
 understood; Tony replies in English. Optional settings: `STT_MODEL`,
 `STT_BASE_URL`, `STT_API_KEY`.
 
+## Agent mode
+
+Tony proposes instead of waiting to be told.
+
+**Planner.** "Plan my day", "plan the week", "schedule them yourself",
+`/plan`, `/plan week`, the **Plan tomorrow for me** button on the evening
+review, or **Plans** in the app. Tony takes what is waiting (overdue tasks
+and the inbox), what is already fixed on those days, and what he knows about
+your habits, and proposes a time for each task with a reason.
+
+- The AI model proposes; code decides. Every proposed time is checked against
+  the day (08:00 until an hour before quiet hours), the current time and the
+  fixed events, and moved to the nearest free hour if it clashes. Things are
+  kept an hour apart, with at most five new tasks a day.
+- If the model is unavailable, a rule-based planner fills the slots: habits
+  from memory first ("Works out in the evenings" puts Workout at 18:00), then
+  the first free hour. The plan says which of the two made it.
+- A plan changes nothing until you tap **Apply**. **Adjust** gives each task
+  −1h / +1h / ✕, plus Plan again and Drop plan.
+- Each plan is stored with its overall reason and one per task; the app shows
+  them under the avatar → **Plans**.
+
+**Suggestions.** Every quarter of an hour Tony looks for an overdue task
+whose own reminders have finished (or, once a day, an inbox item when the
+next hour and a half is free) and proposes one concrete slot, with buttons:
+Yes / Tomorrow / Drop it / Other. At most three a day, never two within two
+hours, never in quiet hours, and within the hourly message cap.
+
+**Buttons instead of open questions.** When Tony must ask and the answers
+can be guessed, he asks with two to four buttons and an Other button. A tap
+is fed back to him as your answer; Other lets you answer in words.
+
+**Self-knowledge.** His prompt carries one block of what he can always do
+(hear voice notes and answer aloud, read forwarded posts and photos, set
+reminders, plan, brief, remember) with the instruction never to deny it.
+
 ## In the Telegram chat
 
 **Formatting.** Tony's structured messages use Telegram's HTML: a bold

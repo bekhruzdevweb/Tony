@@ -1,5 +1,6 @@
 import "server-only";
 import { requireDb } from "../db";
+import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { scheduleReminder, settleReminders } from "../reminders";
 import { MAX_TITLE_LENGTH, OPEN_STATUSES, type Task } from "../tasks";
@@ -56,6 +57,23 @@ export const TOOLS: ToolDefinition[] = [
   tool("set_reminder", "Extra reminder; due time unchanged.", { task_id: id, at: { type: "string", description: TIME }, reply }, ["task_id", "at"]),
   tool("remember", "Save a fact about him.", { fact: { type: "string" }, reply }, ["fact"]),
   tool("forget", "Delete a memory note.", { id: { type: "integer" }, reply }, ["id"]),
+  // Agent mode: not in the spec's seven. Tony proposes; nothing changes until the plan is applied.
+  tool(
+    "plan",
+    "Propose a schedule for the overdue and inbox tasks in free slots. He sees it with Apply and Adjust.",
+    {
+      scope: { type: "string", enum: ["day", "week"] },
+      day: { type: "string", description: "today|tomorrow|YYYY-MM-DD (first day)" },
+      instructions: { type: "string", description: "His wishes for this plan, if any." },
+    },
+    ["scope"],
+  ),
+  tool(
+    "ask",
+    "Ask him a question with tappable answers.",
+    { question: { type: "string" }, options: { type: "array", items: { type: "string" }, description: "2-4 short likely answers." } },
+    ["question", "options"],
+  ),
 ];
 
 const normaliseTitle = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -255,6 +273,23 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       check("forget", error);
       const removed = data as { fact: string }[];
       return removed.length ? { ok: true, forgot: removed[0].fact } : fail(`no memory note [${id}]`);
+    }
+
+    case "plan": {
+      const scope = args.scope === "week" ? "week" : "day";
+      const dayText = typeof args.day === "string" ? args.day.trim().toLowerCase() : "today";
+      const day = dayText === "tomorrow" ? addMinutes(now, 24 * 60) : dayText === "today" || !dayText ? now : parseLocalDateTime(dayText);
+      if (!day) return fail(`could not read day "${args.day}"`);
+      const result = await buildPlan({ scope, day, now, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
+      if ("nothing" in result) return fail(result.nothing);
+      return { ok: true, plan_id: result.plan.id, placed: result.plan.items.length, left_out: result.plan.left_out.length };
+    }
+
+    case "ask": {
+      const question = typeof args.question === "string" ? args.question.trim().slice(0, 300) : "";
+      const options = Array.isArray(args.options) ? args.options.map((option) => String(option).trim().slice(0, 40)).filter(Boolean).slice(0, 4) : [];
+      if (!question || options.length < 2) return fail("ask needs a question and at least two options");
+      return { ok: true, question, options };
     }
 
     default:

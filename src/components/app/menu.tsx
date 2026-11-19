@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { AppState } from "@/lib/app-types";
+import type { AppPlan, AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
-import { formatTime } from "@/lib/time";
+import { formatDue, formatLongDate, formatTime } from "@/lib/time";
 import { Empty, Icon, Section, TaskRow, isOpen } from "./ui";
 import { pushBack, tonyFetch, webApp } from "./telegram";
 import type { Tony } from "./use-tony";
 
-type View = { name: "menu" } | { name: "project"; id: number } | { name: "settings" };
+type View = { name: "menu" } | { name: "project"; id: number } | { name: "settings" } | { name: "plans" };
 export type Theme = "system" | "light" | "dark";
 
 const COLORS = ["#5B8BFF", "#7A5CFF", "#34C759", "#FF9F0A", "#FF5A5F", "#64748B"];
@@ -49,7 +49,7 @@ export function Menu(props: {
 
   const open = state.tasks.filter(isOpen);
   const project = view.name === "project" ? state.projects.find((p) => p.id === view.id) : undefined;
-  const heading = view.name === "settings" ? "Settings" : project ? project.name : "Tony";
+  const heading = view.name === "settings" ? "Settings" : view.name === "plans" ? "Tony's plans" : project ? project.name : "Tony";
 
   return (
     <div className="fade-in fixed inset-0 z-30 flex justify-center bg-black/40" onClick={onClose}>
@@ -86,6 +86,13 @@ export function Menu(props: {
               </Section>
               <Section title="More">
                 <li>
+                  <button type="button" onClick={() => setView({ name: "plans" })} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
+                    <span className="flex-1 text-body">Plans</span>
+                    {state.plans.some((plan) => plan.status === "proposed") && <span className="rounded-full bg-primary/15 px-2 py-px text-caption font-medium text-primary">New</span>}
+                    <span className="text-secondary/60">{Icon.chevron}</span>
+                  </button>
+                </li>
+                <li>
                   <button type="button" onClick={() => setView({ name: "settings" })} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
                     <span className="flex-1 text-body">Settings</span>
                     <span className="text-secondary/60">{Icon.chevron}</span>
@@ -98,6 +105,8 @@ export function Menu(props: {
           {project && <ProjectTasks state={state} projectId={project.id} now={now} onOpen={onOpen} onToggle={onToggle} />}
 
           {view.name === "settings" && <Settings tony={tony} theme={theme} onTheme={onTheme} />}
+
+          {view.name === "plans" && <Plans tony={tony} now={now} />}
         </div>
       </div>
     </div>
@@ -266,6 +275,90 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
           Sign out
         </button>
       )}
+    </>
+  );
+}
+
+const STATUS: Record<AppPlan["status"], string> = { proposed: "Proposed", applied: "Applied", dismissed: "Set aside" };
+
+/** What Tony proposed, where he put each task, and why. */
+function Plans({ tony, now }: { tony: Tony; now: Date }) {
+  const { state, act, say } = tony;
+  const [busy, setBusy] = useState(false);
+
+  const run = async (action: string, payload: Record<string, unknown> = {}) => {
+    if (busy) return;
+    setBusy(true);
+    const result = await act(action, payload);
+    if (result.ok && result.reply) say(result.reply);
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button type="button" disabled={busy} onClick={() => run("plan", { scope: "day" })} className="h-11 rounded-card bg-surface text-body font-medium text-primary disabled:opacity-40">
+          Plan my day
+        </button>
+        <button type="button" disabled={busy} onClick={() => run("plan", { scope: "week" })} className="h-11 rounded-card bg-surface text-body font-medium text-primary disabled:opacity-40">
+          Plan my week
+        </button>
+      </div>
+      {state.plans.length === 0 && <Empty>No plans yet, sir. Ask for one above, or tell me to plan your day.</Empty>}
+      {state.plans.map((plan) => (
+        <section key={plan.id} className="mt-6">
+          <div className="mb-1.5 flex items-center justify-between px-1">
+            <h2 className="text-caption font-semibold tracking-wide text-secondary uppercase">
+              {plan.scope === "week" ? "Week from " : ""}
+              {formatLongDate(new Date(`${plan.day}T12:00:00+05:00`)).replace(/ \d{4}$/, "")}
+            </h2>
+            <span className={`text-caption font-medium ${plan.status === "proposed" ? "text-primary" : plan.status === "applied" ? "text-done" : "text-secondary"}`}>{STATUS[plan.status]}</span>
+          </div>
+          <div className="overflow-hidden rounded-card bg-surface">
+            {plan.why && (
+              <p className="border-b border-hairline px-4 py-3 text-sub">
+                <span className="font-semibold">Why. </span>
+                {plan.why}
+                {plan.planned_by === "rules" && <span className="text-secondary"> (Planned by rule; my thinking was unavailable.)</span>}
+              </p>
+            )}
+            <ul className="divide-y divide-hairline">
+              {plan.items.map((item) => (
+                <li key={`${item.task_id}-${item.at}`} className="flex gap-3 px-4 py-2.5">
+                  <span className="w-16 shrink-0 pt-0.5 text-sub font-medium tabular-nums">
+                    {plan.scope === "week" ? formatDue(new Date(item.at), now).replace(/ \d{1,2}:\d{2}$/, "") + " " : ""}
+                    {formatTime(new Date(item.at))}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-body leading-snug">{item.title}</span>
+                    {item.why && <span className="block text-caption text-secondary">{item.why}</span>}
+                  </span>
+                </li>
+              ))}
+              {plan.left_out.map((item) => (
+                <li key={`left-${item.task_id}`} className="flex gap-3 px-4 py-2.5 text-secondary">
+                  <span className="w-16 shrink-0 pt-0.5 text-sub">Later</span>
+                  <span className="min-w-0">
+                    <span className="block text-body leading-snug">{item.title}</span>
+                    <span className="block text-caption">{item.why}</span>
+                  </span>
+                </li>
+              ))}
+              {plan.items.length === 0 && plan.left_out.length === 0 && <li className="px-4 py-3 text-sub text-secondary">Nothing needed a slot.</li>}
+            </ul>
+            {plan.status === "proposed" && plan.items.length > 0 && (
+              <div className="grid grid-cols-2 gap-px border-t border-hairline">
+                <button type="button" disabled={busy} onClick={() => run("apply_plan", { id: plan.id })} className="h-11 text-body font-semibold text-primary disabled:opacity-40">
+                  Apply
+                </button>
+                <button type="button" disabled={busy} onClick={() => run("dismiss_plan", { id: plan.id })} className="h-11 text-body text-secondary disabled:opacity-40">
+                  Set aside
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      ))}
     </>
   );
 }

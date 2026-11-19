@@ -40,7 +40,7 @@ export function retryDelay(status: number, headers: Headers, body: string): numb
   return Math.ceil((Number(match[1] ?? 0) * 60 + seconds) * 1000);
 }
 
-async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefinition[]): Promise<Answer> {
+async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
   const apiKey = env.aiApiKey;
   if (!apiKey) throw new ModelError("AI_API_KEY is not set");
 
@@ -53,7 +53,8 @@ async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefin
         model,
         messages,
         tools,
-        tool_choice: "auto",
+        // `force` names a tool the model must call (used when a structured answer is needed).
+        tool_choice: force ? { type: "function", function: { name: force } } : "auto",
         temperature: 0.3,
         // Tony's replies are short; a modest ceiling keeps one call from reserving a large share of the minute's allowance.
         max_tokens: 1200,
@@ -89,9 +90,9 @@ async function callOnce(model: string, messages: ChatMessage[], tools: ToolDefin
  * it names and try once more; if the wait is too long or the retry fails,
  * use the fallback model, which has its own allowance. Only then give up.
  */
-export async function chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<Answer> {
+export async function chat(messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
   try {
-    return await callOnce(env.aiModel, messages, tools);
+    return await callOnce(env.aiModel, messages, tools, force);
   } catch (first) {
     if (!(first instanceof ModelError) || first.status !== 429) throw first;
     console.warn(`Rate limited: ${first.message}`);
@@ -100,7 +101,7 @@ export async function chat(messages: ChatMessage[], tools: ToolDefinition[]): Pr
     if (wait <= MAX_WAIT_MS) {
       await new Promise((resolve) => setTimeout(resolve, wait + 250));
       try {
-        return await callOnce(env.aiModel, messages, tools);
+        return await callOnce(env.aiModel, messages, tools, force);
       } catch (second) {
         if (!(second instanceof ModelError) || second.status !== 429) throw second;
         console.warn(`Still rate limited after waiting ${wait} ms.`);
@@ -110,7 +111,7 @@ export async function chat(messages: ChatMessage[], tools: ToolDefinition[]): Pr
     const fallback = env.aiFallbackModel;
     if (fallback && fallback !== env.aiModel) {
       console.warn(`Using the fallback model ${fallback}.`);
-      return await callOnce(fallback, messages, tools);
+      return await callOnce(fallback, messages, tools, force);
     }
     throw first;
   }

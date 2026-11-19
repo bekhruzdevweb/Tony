@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { getBot } from "@/lib/bot";
 import { runBriefs } from "@/lib/briefs";
+import { runSuggestions } from "@/lib/suggest";
 import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
 import { env } from "@/lib/env";
@@ -33,7 +34,11 @@ export async function POST(request: Request) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     const result = await runTick(bot, chatId, new Date(), {
-      briefs: (settings, now) => runBriefs(bot, chatId, settings, now),
+      // Briefs first, then at most one unprompted suggestion.
+      briefs: async (settings, now) => {
+        const briefs = await runBriefs(bot, chatId, settings, now);
+        if (briefs === 0) await runSuggestions(bot, chatId, settings, now);
+      },
     });
     // Last, tidy the chat: remove messages whose time has come.
     const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));

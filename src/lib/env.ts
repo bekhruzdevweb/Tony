@@ -47,6 +47,10 @@ export const env = {
   get aiReasoningEffort() {
     return read("AI_REASONING_EFFORT");
   },
+  /** Test aid: look for a suggestion on every tick instead of every quarter of an hour. */
+  get suggestEveryTick() {
+    return read("TONY_SUGGEST_EVERY_TICK") === "1";
+  },
   /** A model that can read images, for forwarded posts and photos. */
   get visionModel() {
     return read("VISION_MODEL") ?? "qwen/qwen3.8-27b";

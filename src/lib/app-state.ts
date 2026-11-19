@@ -1,5 +1,5 @@
 import "server-only";
-import type { AppMemory, AppMessage, AppProject, AppState } from "./app-types";
+import type { AppMemory, AppMessage, AppPlan, AppProject, AppState } from "./app-types";
 import { getBot } from "./bot";
 import { requireDb } from "./db";
 import { env } from "./env";
@@ -12,17 +12,18 @@ const clock = (value: string) => value.slice(0, 5);
 export async function loadAppState(now = new Date()): Promise<AppState> {
   const db = requireDb();
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
-  const [open, closed, projects, memory, messages, settings, clockStatus] = await Promise.all([
+  const [open, closed, projects, memory, messages, plans, settings, clockStatus] = await Promise.all([
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(500),
     // Recently finished tasks stay visible, struck through, for a day.
     db.from("tasks").select().in("status", ["done", "skipped"]).gte("updated_at", dayAgo).order("updated_at", { ascending: false }).limit(50),
     db.from("projects").select().order("sort_order").order("id"),
     db.from("memory").select().order("id", { ascending: false }),
     db.from("messages").select().order("id", { ascending: false }).limit(80),
+    db.from("plans").select().order("id", { ascending: false }).limit(8),
     getSettings(),
     getClockStatus(now),
   ]);
-  for (const result of [open, closed, projects, memory, messages]) {
+  for (const result of [open, closed, projects, memory, messages, plans]) {
     if (result.error) throw new Error(`loadAppState: ${result.error.message}`);
   }
 
@@ -43,6 +44,7 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
     projects: projects.data as AppProject[],
     memory: memory.data as AppMemory[],
     messages: (messages.data as AppMessage[]).reverse(),
+    plans: plans.data as AppPlan[],
     settings: {
       brief_morning: clock(settings.brief_morning),
       brief_evening: clock(settings.brief_evening),

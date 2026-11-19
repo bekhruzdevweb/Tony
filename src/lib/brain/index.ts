@@ -26,13 +26,21 @@ function recentShare(row: { last_shared_text: string | null; last_shared_at: str
   return { at, text: text.length > SHARED_CHARS ? `${text.slice(0, SHARED_CHARS)}…` : text };
 }
 
+/** A question Tony put to him stays "open" this long. */
+const NOTE_MINUTES = 30;
+
+function recentNote(row: { pending_note: string | null; pending_note_at: string | null } | null) {
+  if (!row?.pending_note || !row.pending_note_at) return undefined;
+  return Date.now() - new Date(row.pending_note_at).getTime() > NOTE_MINUTES * 60_000 ? undefined : row.pending_note;
+}
+
 async function loadContext() {
   const db = requireDb();
   const [memory, tasks, projects, settings] = await Promise.all([
     db.from("memory").select("id, fact").order("id"),
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(60),
     db.from("projects").select("id, name").order("sort_order"),
-    db.from("settings").select("last_shared_text, last_shared_at").limit(1).maybeSingle(),
+    db.from("settings").select("last_shared_text, last_shared_at, pending_note, pending_note_at").limit(1).maybeSingle(),
   ]);
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
@@ -56,6 +64,7 @@ async function loadContext() {
     projects: projects.data as ProjectRef[],
     reminders: (reminders.data ?? []) as ReminderFact[],
     shared: recentShare(settings.data as { last_shared_text: string | null; last_shared_at: string | null } | null),
+    waiting: recentNote(settings.data as { pending_note: string | null; pending_note_at: string | null } | null),
   };
 }
 
@@ -76,11 +85,14 @@ export async function respond(text: string, channel: Channel = "telegram", now =
 export async function think(
   text: string,
   options: { channel?: Channel; now?: Date; context?: string } = {},
-): Promise<{ reply: string; tools: string[]; titles: string[] }> {
+): Promise<{ reply: string; tools: string[]; titles: string[]; planId?: number; choices?: { question: string; options: string[] } }> {
   const { channel = "telegram", now = new Date(), context: note } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
   const titles: string[] = [];
+  // A plan to show with Apply/Adjust, or a question to show with buttons.
+  let planId: number | undefined;
+  let choices: { question: string; options: string[] } | undefined;
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
@@ -116,6 +128,8 @@ export async function think(
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
+          if (call.function.name === "plan") planId = Number((outcome as { plan_id?: unknown }).plan_id);
+          if (call.function.name === "ask") choices = outcome as unknown as { question: string; options: string[] };
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
           if (typeof args.reply === "string" && args.reply.trim()) prepared = args.reply;
@@ -131,6 +145,15 @@ export async function think(
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
+    // A plan or a question is shown by the app or bot itself; nothing more for the model to say.
+    if (planId !== undefined) {
+      reply = "Here is what I propose, sir.";
+      break;
+    }
+    if (choices) {
+      reply = tidyReply(choices.question, [...taskIds]) || choices.question;
+      break;
+    }
     // Done in one model call: no second round just to say "Noted, sir".
     if (allSucceeded && prepared) {
       reply = tidyReply(prepared, [...taskIds]);
@@ -140,5 +163,5 @@ export async function think(
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles };
+  return { reply, tools, titles, planId, choices };
 }

@@ -4,6 +4,7 @@ import type { Bot } from "grammy";
 export const COMMANDS = [
   { command: "today", description: "What is due today" },
   { command: "tomorrow", description: "Tomorrow's plan" },
+  { command: "plan", description: "Let Tony plan the day (or: /plan week)" },
   { command: "inbox", description: "Tasks without a date" },
   { command: "app", description: "Open the app, or get a key for it" },
   { command: "help", description: "What Tony can do" },
@@ -20,7 +21,9 @@ export const HELP = [
   "Reply to one of my reminders and I know which task you mean.",
   "Forward me a post or send a photo and I shall read it and offer to make it a task.",
   "",
-  "/today  /tomorrow  /inbox  /app  /help  /ping",
+  "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
+  "",
+  "/today  /tomorrow  /plan  /inbox  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */

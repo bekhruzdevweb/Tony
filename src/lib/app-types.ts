@@ -24,12 +24,26 @@ export type AppStatus = {
   botUsername: string | null;
 };
 
+/** A schedule Tony proposed, with his reasons. */
+export type AppPlan = {
+  id: number;
+  scope: "day" | "week";
+  day: string;
+  items: { task_id: number; title: string; at: string; why: string }[];
+  left_out: { task_id: number; title: string; why: string }[];
+  why: string;
+  planned_by: "model" | "rules";
+  status: "proposed" | "applied" | "dismissed";
+  created_at: string;
+};
+
 export type AppState = {
   now: string;
   tasks: Task[];
   projects: AppProject[];
   memory: AppMemory[];
   messages: AppMessage[];
+  plans: AppPlan[];
   settings: AppSettings;
   status: AppStatus;
 };

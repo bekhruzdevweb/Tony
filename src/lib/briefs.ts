@@ -220,7 +220,8 @@ async function eveningReview(bot: Bot, chatId: number, settings: Settings, now: 
 
   await retire({ kinds: ["brief:evening"] }, now);
   const reviewId = await send(bot, chatId, parts.join("\n\n"), {
-    keyboard: left.length > 0 && !usePoll ? reviewKeyboard() : undefined,
+    // With several candidates the poll asks which; either way Tony can plan tomorrow himself.
+    keyboard: left.length > 0 && !usePoll ? reviewKeyboard().row().text("🧭 Plan tomorrow for me", "pl:new:tomorrow") : candidates.length > 0 ? new InlineKeyboard().text("🧭 Plan tomorrow for me", "pl:new:tomorrow") : undefined,
     silent: left.length === 0,
     kind: "brief:evening",
   });
