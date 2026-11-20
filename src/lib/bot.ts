@@ -2,7 +2,6 @@ import "server-only";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { MessageOrigin } from "grammy/types";
 import { runAction } from "./actions";
-import { think } from "./brain";
 import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
@@ -31,12 +30,13 @@ import { parseAction } from "./reminder-messages";
 import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
-import { addInboxTask, looksLikeTask, OPEN_STATUSES, type Task } from "./tasks";
+import { OPEN_STATUSES, type Task } from "./tasks";
 import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
-import { asksToClean, claimsSent } from "./brain/checks";
+import { claimsSent } from "./brain/checks";
+import { CLEANED, handleMessage, type Thought } from "./brain/handle";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
-import { addMinutes, formatTime, toWholeMinute } from "./time";
+import { addMinutes, formatDue, formatTime, localDate, parseLocalDateTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
@@ -493,6 +493,18 @@ export function getBot(): Bot | undefined {
       return;
     }
 
+    // [🧭 Find a time] under new inbox tasks: free slots on the day he named, shown with Looks good / Change. Plain code.
+    const slot = /^slot:(\d{4}-\d{2}-\d{2}):([\d,]+)$/.exec(payload);
+    if (slot) {
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      const day = parseLocalDateTime(`${slot[1]}T12:00`)!;
+      const result = await buildPlan({ scope: "day", day, now: new Date(), taskIds: slot[2].split(",").map(Number) });
+      if ("plan" in result && ctx.chat) await showPlan(ctx.chat.id, result.plan.id);
+      else await say(ctx, "No free time that day, sir; they stay in the inbox.", { kind: "error", deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+      return;
+    }
+
     // "Keep both" under a clash warning: nothing changes; the buttons go.
     if (payload === "clash:keep") {
       await ctx.answerCallbackQuery({ text: "Both stay, sir." }).catch(() => undefined);
@@ -642,15 +654,9 @@ export function getBot(): Bot | undefined {
 
   const MUTATING = ["add_task", "update_task", "complete_task", "set_reminder", "remember", "forget"];
 
-  // One path for typed and spoken messages: the brain, with a safe fallback.
-  // Returns what Tony said and whether it was a confirmation of something done.
+  // One path for typed and spoken messages: his message, request by request, each confirmed on its own.
+  // Returns what Tony said and whether something was confirmed done.
   const answer = async (ctx: Context, text: string, options: { note?: string; keepHours?: number; link?: string } = {}): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
-    // "Clean the chat": the same sweep as /clean, in plain code.
-    if (asksToClean(text) && ctx.chat && ctx.message) {
-      await cleanFromCommand(bot, ctx.chat.id, ctx.message.message_id);
-      return { reply: "Chat cleaned, sir.", confirmed: false, completed: false };
-    }
-    // Replying to one of Tony's messages says which task is meant, and keeps that message.
     let context = options.note;
     const repliedTo = ctx.message?.reply_to_message?.message_id;
     if (repliedTo !== undefined) {
@@ -665,8 +671,37 @@ export function getBot(): Bot | undefined {
     // "typing…" lasts about five seconds in Telegram; renew it for as long
     // as Tony is thinking, which includes waiting out a rate limit.
     const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
-    try {
-      const thought = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+    // A link to sum up, a forwarded post or a tapped answer is one request; typed or spoken words may hold several.
+    const split = !options.link && !options.note?.startsWith("He tapped") && !text.startsWith("[");
+    const handled = await handleMessage(text, { channel: "telegram", context, split }).finally(() => clearInterval(typing));
+    const replies: string[] = [];
+    let confirmed = false;
+    let completed = false;
+    for (const item of handled) {
+      if (item.kind === "clean") {
+        // "Clean the chat": the same sweep as /clean, in plain code.
+        if (ctx.chat && ctx.message) await cleanFromCommand(bot, ctx.chat.id, ctx.message.message_id);
+        replies.push(CLEANED);
+        continue;
+      }
+      if (item.kind === "failed") {
+        // Nothing was saved: his words are never turned into a task on the model's absence.
+        const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
+        await say(ctx, item.reply, { kind: "error", deleteAfter });
+        replies.push(item.reply);
+        continue;
+      }
+      const result = await present(ctx, item.text, item.thought, options);
+      replies.push(result.reply);
+      confirmed ||= result.confirmed;
+      completed ||= result.completed;
+    }
+    return { reply: replies.join("\n\n"), confirmed, completed };
+  };
+
+  /** Shows what the brain did for one request: the reply, its buttons, a plan or a question. */
+  const present = async (ctx: Context, text: string, thought: Thought, options: { keepHours?: number; link?: string }): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
+    {
       const { tools, titles, planId, choices, mediaIds, offerIds, fetched, clash } = thought;
       let reply = thought.reply;
       // Whatever he was asked before has now been answered or overtaken.
@@ -709,6 +744,13 @@ export function getBot(): Bot | undefined {
       let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
       // Every part ticked: [✓ Mark done] [Not yet], never done without asking.
       if (thought.askComplete) keyboard = completeKeyboard(thought.askComplete.taskId);
+      // New inbox tasks for a day he named: [🧭 Find a time] offers slots; nothing moves without his tap.
+      if (thought.slotOffer && !clash) {
+        keyboard ??= new InlineKeyboard();
+        const label = thought.slotOffer.day === localDate(addMinutes(new Date(), 24 * 60)) ? "tomorrow" : thought.slotOffer.day === localDate(new Date()) ? "today" : formatDue(parseLocalDateTime(`${thought.slotOffer.day}T12:00`)!).replace(/\s*\d{2}:\d{2}$/, "");
+        const data = `slot:${thought.slotOffer.day}:${thought.slotOffer.taskIds.join(",")}`;
+        if (data.length <= 64) keyboard.text(`🧭 Find a time ${label}`, data);
+      }
       // A clash the change created: move it to the next free hour, or keep both. Plain code.
       if (clash) {
         keyboard ??= new InlineKeyboard();
@@ -734,25 +776,6 @@ export function getBot(): Bot | undefined {
           : undefined;
       if (reaction) await ctx.react(reaction).catch(() => undefined);
       return { reply, confirmed, completed: tools.includes("complete_task") };
-    } catch (error) {
-      // Capture must never fail: if the model is down, keep his words safe. But a question or a
-      // bit of conversation is not a task, so it is not saved; he is asked to try again instead.
-      console.error("Brain failed:", error);
-      if (!looksLikeTask(text)) {
-        const reply = "My thinking is briefly unavailable, sir. Ask me again in a minute.";
-        const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
-        await say(ctx, reply, { kind: "error", deleteAfter });
-        if (ctx.message && !ctx.message.voice) await track(ctx.message.message_id, "error", { incoming: true, deleteAfter });
-        return { reply, confirmed: false, completed: false };
-      }
-      const task = await addInboxTask(text);
-      const reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
-      await logMessage("tony", reply);
-      // His words are safe in the inbox, so the apology (and, unless spoken, his message) go after ten minutes.
-      const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
-      await say(ctx, `My thinking is briefly unavailable, sir, so I saved ${b(task.title)} to the inbox as it stands.`, { kind: "error", deleteAfter });
-      if (ctx.message && !ctx.message.voice) await track(ctx.message.message_id, "error", { incoming: true, deleteAfter });
-      return { reply, confirmed: false, completed: false };
     }
   };
 

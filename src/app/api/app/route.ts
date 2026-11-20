@@ -4,16 +4,14 @@ import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
 import { env } from "@/lib/env";
 import { refreshBoard } from "@/lib/today-board";
-import { think } from "@/lib/brain";
+import { handleMessage } from "@/lib/brain/handle";
 import { runTool } from "@/lib/brain/tools";
 import { rescheduleOverdue } from "@/lib/reschedule";
 import { addSubtasks, allDone, removeSubtask, setSubtaskDone } from "@/lib/subtasks";
 import { requireDb } from "@/lib/db";
-import { logMessage } from "@/lib/messages";
 import { applyPlan, buildPlan, dismissPlan } from "@/lib/planner";
 import { hasSession } from "@/lib/session";
 import { updateSettings } from "@/lib/settings";
-import { addInboxTask, looksLikeTask } from "@/lib/tasks";
 
 // Chat goes through the AI model, which can take a few seconds.
 export const maxDuration = 60;
@@ -71,24 +69,21 @@ export async function POST(request: Request) {
           problem = "Nothing to send";
           break;
         }
-        try {
-          const thought = await think(text, { channel: "app" });
-          // The app's chat shows plain text: the rich markdown is flattened (lists stay one per line).
-          reply = markdownToPlain(thought.reply);
-          // The app has no buttons in Chat: a plan waits under Plans, and options are listed.
-          if (thought.planId !== undefined) reply = "I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.";
-          else if (thought.choices) reply = `${thought.choices.question} (${thought.choices.options.join(" / ")})`;
-        } catch (error) {
-          console.error("Brain failed:", error);
-          // A question or chat is not a task: only something to do is kept safe in the inbox.
-          if (looksLikeTask(text)) {
-            const task = await addInboxTask(text);
-            reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
-          } else {
-            reply = "My thinking is briefly unavailable, sir. Ask me again in a minute.";
+        // Request by request, as in Telegram; if the model fails twice, nothing is saved.
+        const replies: string[] = [];
+        for (const item of await handleMessage(text, { channel: "app" })) {
+          if (item.kind === "clean") replies.push("The chat in Telegram is cleaned with /clean, sir.");
+          else if (item.kind === "failed") replies.push(item.reply);
+          else {
+            const thought = item.thought;
+            // The app has no buttons in Chat: a plan waits under Plans, and options are listed.
+            if (thought.planId !== undefined) replies.push("I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.");
+            else if (thought.choices) replies.push(`${thought.choices.question} (${thought.choices.options.join(" / ")})`);
+            // The app's chat shows plain text: the rich markdown is flattened (lists stay one per line).
+            else replies.push(markdownToPlain(thought.reply));
           }
-          await logMessage("tony", reply, "app");
         }
+        reply = replies.join("\n\n");
         break;
       }
 

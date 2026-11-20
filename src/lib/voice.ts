@@ -1,6 +1,7 @@
 import "server-only";
 import type { Bot } from "grammy";
 import { env } from "./env";
+import { allowedLanguage, bestTranscript, type Transcript } from "./brain/reliability";
 
 /** Telegram lets a bot download files up to 20 MB; a voice note is far smaller. */
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -23,21 +24,21 @@ export async function downloadTelegramFile(bot: Bot, fileId: string): Promise<{ 
   return { bytes, name: file.file_path.split("/").pop() || "voice.oga" };
 }
 
-/**
- * Audio to text, through an OpenAI-compatible transcription API. The
- * language is left for the model to detect, so Uzbek and Russian notes are
- * understood as well as English ones.
- */
-export async function transcribeAudio(bytes: ArrayBuffer, name: string, type: string): Promise<string> {
+/** The languages he speaks to Tony in. Whisper may hear anything else in a short note (22:57: "Hungarian"). */
+const SPOKEN = ["en", "uz", "ru"] as const;
+
+type Reading = { text: string; language?: string; logprob: number };
+
+/** One pass of the transcription API; `language` forces the language instead of letting it guess. */
+async function transcribeOnce(bytes: ArrayBuffer, name: string, type: string, language?: string): Promise<Reading> {
   const apiKey = env.sttApiKey;
   if (!apiKey) throw new VoiceError("No speech-to-text key is set");
-  if (bytes.byteLength > MAX_BYTES) throw new VoiceError("File too large");
-
   const form = new FormData();
   form.append("file", new Blob([bytes], { type }), name);
   form.append("model", env.sttModel);
-  form.append("response_format", "json");
+  form.append("response_format", "verbose_json");
   form.append("temperature", "0");
+  if (language) form.append("language", language);
 
   let response: Response;
   try {
@@ -54,8 +55,32 @@ export async function transcribeAudio(bytes: ArrayBuffer, name: string, type: st
     const detail = (await response.text().catch(() => "")).slice(0, 300);
     throw new VoiceError(`Speech-to-text answered ${response.status}: ${detail}`);
   }
-  const body = (await response.json()) as { text?: string };
-  return (body.text ?? "").trim();
+  const body = (await response.json()) as { text?: string; language?: string; segments?: { avg_logprob?: number }[] };
+  const scores = (body.segments ?? []).map((segment) => segment.avg_logprob).filter((score): score is number => typeof score === "number");
+  return { text: (body.text ?? "").trim(), language: body.language ?? language, logprob: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : -1 };
+}
+
+/**
+ * Audio to text, through an OpenAI-compatible transcription API, in English,
+ * Uzbek or Russian only. The language is detected first; if the guess is any
+ * other language, the note is read again as each of the three and the most
+ * confident reading wins.
+ */
+export async function transcribeAudio(bytes: ArrayBuffer, name: string, type: string): Promise<string> {
+  if (bytes.byteLength > MAX_BYTES) throw new VoiceError("File too large");
+  const first = await transcribeOnce(bytes, name, type);
+  // No language reported (another provider): nothing to check.
+  if (!first.language || allowedLanguage(first.language)) return first.text;
+  console.warn(`Voice note heard as "${first.language}"; reading it again as English, Uzbek and Russian.`);
+  const readings = await Promise.all(
+    SPOKEN.map((language) =>
+      transcribeOnce(bytes, name, type, language).then(
+        (reading): Transcript => ({ language, text: reading.text, logprob: reading.logprob }),
+        () => undefined,
+      ),
+    ),
+  );
+  return bestTranscript(readings.filter((reading): reading is Transcript => reading !== undefined))?.text ?? first.text;
 }
 
 /** A Telegram voice note to text. */

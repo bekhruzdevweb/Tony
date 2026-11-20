@@ -12,6 +12,7 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
+import { heldToGivenTime } from "./reliability";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
 const TIME = "YYYY-MM-DDTHH:MM";
@@ -135,6 +136,20 @@ export const TOOLS: ToolDefinition[] = [
   ),
 ];
 
+/** Whether his words name this task (a shared word of five letters or more, by its first five). */
+const mentions = (said: string, title: string) => {
+  const stems = (text: string) => new Set((text.toLowerCase().match(/\p{L}{4,}/gu) ?? []).map((word) => word.slice(0, 5)));
+  const his = stems(said);
+  return [...stems(title)].some((stem) => his.has(stem));
+};
+
+/** The fields a write meant to store, as they should read back. */
+const written = (patch: Partial<Task>): Record<string, unknown> => {
+  const keep: Record<string, unknown> = {};
+  for (const field of ["title", "notes", "due_at", "status", "priority", "project_id", "duration_minutes"] as const) if (field in patch) keep[field] = patch[field];
+  return keep;
+};
+
 const normaliseTitle = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 type Args = Record<string, unknown>;
@@ -161,7 +176,7 @@ async function loadTask(id: unknown): Promise<Task | undefined> {
 }
 
 /** Reads the fields shared by add_task and update_task into a row patch. */
-async function readFields(args: Args, now: Date): Promise<{ patch: Partial<Task>; dueAt?: Date } | { error: string }> {
+async function readFields(args: Args, now: Date, said?: string): Promise<{ patch: Partial<Task>; dueAt?: Date } | { error: string }> {
   const patch: Partial<Task> = {};
   let dueAt: Date | undefined;
 
@@ -206,6 +221,8 @@ async function readFields(args: Args, now: Date): Promise<{ patch: Partial<Task>
     const parsed = parseLocalDateTime(args.due_at);
     if (!parsed) return { error: `could not read due_at "${args.due_at}"; use YYYY-MM-DDTHH:MM` };
     dueAt = toWholeMinute(parsed);
+    // The time he named is final: if the model picked another, his stands.
+    if (said) dueAt = heldToGivenTime(dueAt, said, now) ?? dueAt;
     if (dueAt.getTime() < now.getTime() - 60_000) {
       return { error: `${formatDue(dueAt, now)} has already passed (now is ${formatDue(now, now)}). Ask him which time he means.` };
     }
@@ -232,7 +249,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
   const db = requireDb();
   switch (name) {
     case "add_task": {
-      const fields = await readFields(args, now);
+      const fields = await readFields(args, now, said);
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
       // A saved link or note gets no date unless his own words gave one: it goes to the inbox.
@@ -265,13 +282,15 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const parts = Array.isArray(args.subtasks) ? args.subtasks.map(String).filter((t) => t.trim()) : [];
       if (parts.length) await addSubtasks(task.id, parts);
       const attached = await attachShared(args, task.id);
-      return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), ...(attached ? { attached } : {}) };
+      // What was meant to be written, so it is read back before Tony confirms it.
+      return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), wrote: written(fields.patch), ...(attached ? { attached } : {}) };
     }
 
     case "update_task": {
       const task = await loadTask(args.id);
       if (!task) return fail(`no task #${args.id}`);
-      const fields = await readFields(args, now);
+      // His time holds for the task his words are about ("move IELTS prep to 10:00"), not for another one he moved alongside.
+      const fields = await readFields(args, now, said && mentions(said, task.title) ? said : undefined);
       if ("error" in fields) return fail(fields.error);
       const patch = fields.patch;
 
@@ -304,7 +323,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (!OPEN_STATUSES.includes(updated.status) || args.clear_due === true) await settleReminders(task.id);
       else if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
       const attached = await attachShared(args, task.id);
-      return { ok: true, task_id: task.id, task: taskLine(updated, await loadProjects(), now), status: updated.status, ...(attached ? { attached } : {}) };
+      return { ok: true, task_id: task.id, task: taskLine(updated, await loadProjects(), now), status: updated.status, wrote: written(patch), ...(attached ? { attached } : {}) };
     }
 
     case "complete_task": {
@@ -364,7 +383,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         const moved = await db.from("tasks").update({ due_at: at.toISOString(), status: task.status === "inbox" ? "todo" : task.status }).eq("id", task.id);
         check("set_reminder", moved.error);
         await scheduleReminder(task.id, at);
-        return { ok: true, task_id: task.id, task: task.title, moved_to: formatDue(at, now) };
+        return { ok: true, task_id: task.id, task: task.title, moved_to: formatDue(at, now), wrote: { due_at: at.toISOString() } };
       }
       if (decision === "same") return { ok: true, task_id: task.id, task: task.title, note: "it is already set for that time" };
       // A heads-up before the task's time, unless one is already waiting at that minute.
@@ -447,7 +466,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const { data, error } = await db.from("memory").delete().eq("id", id).select("fact");
       check("forget", error);
       const removed = data as { fact: string }[];
-      return removed.length ? { ok: true, forgot: removed[0].fact } : fail(`no memory note [${id}]`);
+      return removed.length ? { ok: true, id, forgot: removed[0].fact } : fail(`no memory note [${id}]`);
     }
 
     case "plan": {

@@ -1,5 +1,4 @@
 import "server-only";
-import { buildPlan } from "../planner";
 import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
 import { clashSentence, clashesWith, confirmationFor, freeOptions, isLinkTask, latestMessage, needsDeepModel, nextFreeSlot, recentReminderNote, type DoneAction } from "./checks";
@@ -12,6 +11,7 @@ import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
+import { asksForTime, claimsAction, isCapture, notesToKeep, oneQuestion, unsaved, withoutClaims } from "./reliability";
 import { runTool, TOOLS } from "./tools";
 
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
@@ -102,7 +102,15 @@ export async function respond(text: string, channel: Channel = "telegram", now =
  */
 export async function think(
   text: string,
-  options: { channel?: Channel; now?: Date; context?: string } = {},
+  options: {
+    channel?: Channel;
+    now?: Date;
+    context?: string;
+    /** One of several requests in his message: `text` is this request, `full` the whole message. */
+    part?: { index: number; total: number; full: string };
+    /** His message is already in the log (an earlier request from it, or a retry). */
+    logged?: boolean;
+  } = {},
 ): Promise<{
   reply: string;
   tools: string[];
@@ -118,8 +126,10 @@ export async function think(
   clash?: Clash;
   /** Every part of this task was just ticked: ask before completing it. */
   askComplete?: { taskId: number; title: string };
+  /** New inbox tasks for a day he named: offered a [Find a time] button, never placed without his tap. */
+  slotOffer?: { day: string; taskIds: number[] };
 }> {
-  const { channel = "telegram", now = new Date(), context: note } = options;
+  const { channel = "telegram", now = new Date(), context: note, part } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
   const titles: string[] = [];
@@ -133,12 +143,16 @@ export async function think(
   const sources = new Map<string, string>();
   const fetched: { url: string; title: string }[] = [];
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
-  await logMessage("user", text, channel);
+  // His message is logged once, whole, even when it is handled request by request.
+  if (!options.logged) await logMessage("user", part?.full ?? text, channel);
 
   const system = buildSystemPrompt({ now, ...context, message: text });
   // "This one" with nothing replied to: the reminder sent in the last 15 minutes.
   const recent = await recentReminders(now);
-  const notes = [note, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
+  const partNote = part
+    ? `His message held ${part.total} requests: "${part.full}". This is request ${part.index + 1}: handle only this one now; each of the others is handled on its own.`
+    : undefined;
+  const notes = [partNote, note, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
   const messages: ChatMessage[] = [
     ...history.map(
       (m): ChatMessage => (m.role === "user" ? { role: "user", content: clip(m.text) } : { role: "assistant", content: clip(m.text) }),
@@ -152,8 +166,13 @@ export async function think(
   // Every task number the model has seen, so none of them can leak into a reply.
   const taskIds = new Set(context.tasks.map((task) => task.id));
   // What really changed, by task, in order: the reply is built from these, read back from the database.
-  const changes = new Map<number, { tool: DoneAction["tool"]; reminder_at?: string }>();
+  const changes = new Map<number, { tool: DoneAction["tool"]; reminder_at?: string; wrote?: Record<string, unknown> }>();
   const saved: string[] = [];
+  // Memory notes written or removed this turn, each read back before it is confirmed.
+  const remembered: { id: number; fact: string }[] = [];
+  const forgotten: { id: number; fact: string }[] = [];
+  // Asked once to save instead of asking for a time he never offered.
+  let nudged = false;
   let failed = false;
   let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
@@ -162,7 +181,15 @@ export async function think(
     for (const source of answer.sources ?? []) if (!sources.has(source.url)) sources.set(source.url, source.title);
     for (const page of answer.fetched ?? []) if (!fetched.some((known) => known.url === page.url)) fetched.push(page);
     if (!answer.tool_calls) {
-      reply = tidyReply(answer.content ?? "", [...taskIds]);
+      const content = answer.content ?? "";
+      // Act first: a task with no time goes to the inbox; asking for a time he did not offer is not allowed.
+      if (!nudged && changes.size === 0 && isCapture(text) && asksForTime(content) && round < MAX_ROUNDS - 1) {
+        nudged = true;
+        messages.push({ role: "assistant", content });
+        messages.push({ role: "user", content: "[Do not ask for a time: he gave none, so save it now with add_task and no due_at; it goes to his inbox. Then stop.]" });
+        continue;
+      }
+      reply = tidyReply(content, [...taskIds]);
       break;
     }
     // Anything the model says while calling a tool is dropped: it has not seen
@@ -193,19 +220,31 @@ export async function think(
           }
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
+          if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) remembered.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { fact?: unknown }).fact ?? "") });
+          if (call.function.name === "forget" && Number.isFinite(Number((outcome as { id?: unknown }).id))) forgotten.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { forgot?: unknown }).forgot ?? "") });
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
             const reminderAt = (outcome as { reminder_at?: unknown }).reminder_at;
             const tool = call.function.name as DoneAction["tool"];
+            const wrote = (outcome as { wrote?: unknown }).wrote as Record<string, unknown> | undefined;
             // A task added with its parts in the same turn stays an "add".
-            if (!(tool === "subtask" && changes.has(touchedId))) changes.set(touchedId, { tool, ...(typeof reminderAt === "string" ? { reminder_at: reminderAt } : {}) });
+            if (!(tool === "subtask" && changes.has(touchedId))) {
+              const before = changes.get(touchedId);
+              changes.set(touchedId, {
+                tool: before?.tool === "add_task" ? "add_task" : tool,
+                ...(typeof reminderAt === "string" ? { reminder_at: reminderAt } : before?.reminder_at ? { reminder_at: before.reminder_at } : {}),
+                ...(wrote || before?.wrote ? { wrote: { ...before?.wrote, ...wrote } } : {}),
+              });
+            }
             // Every part ticked: ask before marking the task itself done.
             if (call.function.name === "subtask" && (outcome as { all_done?: unknown }).all_done === true) askComplete = { taskId: touchedId, title: String((outcome as { task?: unknown }).task ?? "") };
           }
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
-          if (typeof args.reply === "string" && args.reply.trim()) prepared = args.reply;
-          else if (!TASK_TOOLS.has(call.function.name) && call.function.name !== "save_link") allSucceeded = false; // a lookup: the model must speak next
+          // The model's own words count only where nothing was written; writes are confirmed from the database.
+          if (typeof args.reply === "string" && args.reply.trim() && !WRITES.has(call.function.name)) prepared = args.reply;
+          else if (call.function.name === "remember" && typeof args.reply === "string") prepared = withoutClaims(args.reply) || prepared;
+          else if (!WRITES.has(call.function.name)) allSucceeded = false; // a lookup: the model must speak next
         } else {
           allSucceeded = false;
           failed = true;
@@ -229,40 +268,55 @@ export async function think(
       break;
     }
     // Done in one model call: the confirmation is built below from the database.
-    if (allSucceeded && (changes.size > 0 || saved.length > 0 || prepared)) {
-      if (changes.size === 0 && saved.length === 0) reply = tidyReply(prepared!, [...taskIds]);
+    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || prepared)) {
+      if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
     }
   }
 
-  // The confirmation: what is really stored now, one line per change.
+  // The confirmation: what is really stored now, one line per change, read back after every write.
   let clash: Clash | undefined;
+  let slotOffer: { day: string; taskIds: number[] } | undefined;
+  const problems: string[] = [];
   if (changes.size > 0) {
-    const { data } = await requireDb().from("tasks").select().in("id", [...changes.keys()]);
+    const db = requireDb();
+    // Nothing he said is lost: links and details missing from the new tasks go into their notes.
+    const added = [...changes].filter(([, change]) => change.tool === "add_task").map(([id]) => id);
+    if (added.length > 0) {
+      const rows = ((await db.from("tasks").select().in("id", added)).data ?? []) as Task[];
+      const partsOf = await subtasksFor(added);
+      const keep = notesToKeep(text, rows.map((row) => ({ title: row.title, notes: row.notes, parts: (partsOf.get(row.id) ?? []).map((p) => p.title) })));
+      if (keep) {
+        for (const row of rows) {
+          const notes = [row.notes, keep].filter(Boolean).join("\n");
+          await db.from("tasks").update({ notes }).eq("id", row.id);
+          const change = changes.get(row.id)!;
+          change.wrote = { ...change.wrote, notes: keep };
+        }
+      }
+    }
+    const { data } = await db.from("tasks").select().in("id", [...changes.keys()]);
     const stored = new Map(((data ?? []) as Task[]).map((task) => [task.id, task]));
-    // Several new tasks without times: a free slot proposed for each, on one line, with Looks good / Change.
+    const FIELD: Record<string, string> = { due_at: "time", notes: "notes", title: "title", status: "status", duration_minutes: "length", project_id: "project", priority: "priority" };
+    for (const [id, change] of changes) {
+      const task = stored.get(id);
+      const missing = change.wrote ? unsaved(task as unknown as Record<string, unknown> | undefined, change.wrote) : task ? [] : ["the task"];
+      if (missing.length) problems.push(`⚠️ ${task ? `**${task.title}**: the ${missing.map((field) => FIELD[field] ?? field).join(" and ")} did not save` : "One change did not save"}, sir.`);
+      // A heads-up is confirmed only if it is really waiting to go out.
+      if (change.reminder_at && task) {
+        const waiting = await db.from("reminders").select("id").eq("task_id", id).eq("state", "scheduled").eq("fire_at", change.reminder_at).limit(1);
+        if ((waiting.data ?? []).length === 0) {
+          problems.push(`⚠️ The reminder for **${task.title}** did not save, sir.`);
+          delete change.reminder_at;
+        }
+      }
+    }
+    // New tasks with no time stay in the inbox. If he named a day, a [Find a time] button offers slots; nothing moves without his tap.
     const undated = [...changes]
       .filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !isLinkTask(stored.get(id)!.title, stored.get(id)!.notes))
       .map(([id]) => id);
-    if (undated.length >= 1 && planId === undefined) {
-      // He named a day: the tasks are drafts until he confirms the proposed times ("nothing is saved").
-      // He named none: they stay in the inbox, with one suggestion.
-      const day = dayFromText(text, now);
-      if (day) await requireDb().from("tasks").update({ status: "draft" }).in("id", undated);
-      const proposal = await buildPlan({ scope: "day", now, taskIds: undated, ...(day ? { day } : { lead: "Saved to your inbox, sir. A suggestion:" }) }).catch(
-        (error) => (console.error("Slot proposal failed:", error), undefined),
-      );
-      if (!proposal || !("plan" in proposal)) {
-        // No room anywhere: the tasks are kept in the inbox rather than lost.
-        if (day) await requireDb().from("tasks").update({ status: "inbox" }).in("id", undated).eq("status", "draft");
-      }
-      if (proposal && "plan" in proposal) {
-        planId = proposal.plan.id;
-        reply = "Here is what I propose, sir.";
-        await logMessage("tony", reply, channel);
-        return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched };
-      }
-    }
+    const day = undated.length > 0 && planId === undefined ? (dayFromText(text, now) ?? (part ? dayFromText(part.full, now) : undefined)) : undefined;
+    if (day) slotOffer = { day: localDate(day), taskIds: undated };
     const parts = await subtasksFor([...changes.keys()]);
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
@@ -270,25 +324,46 @@ export async function think(
       return task ? [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...(list?.length ? { parts: progress(list) } : {}) }] : [];
     });
     const confirmation = done.length ? confirmationFor(done, now) : "";
-    // If something failed, the model's own words explain it; the confirmation shows what did happen.
-    reply = [failed && reply ? reply : undefined, confirmation].filter(Boolean).join("\n\n");
+    // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
+    reply = [failed && reply ? withoutClaims(reply) : undefined, confirmation, ...problems].filter(Boolean).join("\n\n");
     clash = await findClash([...stored.values()], now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
     if (clash) reply = `${reply}\n\n⚠️ Sir, ${clash.sentence}${clash.suggestAt ? ": move one?" : "."}`;
   }
   if (saved.length > 0) {
-    const lines = saved.map((title) => `💾 Saved: **${title}**`).join("\n");
+    // Read back: a bookmark is confirmed only once it is in memory.
+    const { data } = await requireDb().from("memory").select("fact").like("fact", "Saved link:%");
+    const kept = ((data ?? []) as { fact: string }[]).map((row) => row.fact);
+    const lines = saved.map((title) => (kept.some((fact) => fact.includes(title)) ? `💾 Saved: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
     reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time, sir.`;
   }
+  if (remembered.length > 0 || forgotten.length > 0) {
+    const ids = [...remembered, ...forgotten].map((note) => note.id);
+    const { data } = await requireDb().from("memory").select("id").in("id", ids);
+    const present = new Set(((data ?? []) as { id: number }[]).map((row) => Number(row.id)));
+    const lines = [
+      ...remembered.map((note) => (present.has(note.id) ? `📝 Remembered: ${note.fact}` : `⚠️ I could not keep that note, sir.`)),
+      ...forgotten.map((note) => (present.has(note.id) ? `⚠️ I could not forget that note, sir.` : `🗑 Forgotten: ${note.fact}`)),
+    ].join("\n");
+    reply = reply ? `${withoutClaims(reply) || ""}\n${lines}`.trim() : lines;
+  }
+  // Nothing was written, yet the words say it was: those words go.
+  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || tools.includes("media") || tools.includes("offer_task");
+  if (!wroteSomething && reply && claimsAction(reply)) reply = withoutClaims(reply) || "Nothing has been changed yet, sir. Could you say that once more?";
+  // One question at most.
+  if (reply) reply = oneQuestion(reply);
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
   // Cited web pages, as links under the answer (a page he sent himself is not listed back to him).
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slotOffer };
 }
+
+/** Tools that write: their success is read back from the database before it is confirmed. */
+const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link"]);
 
 const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask"]);
 

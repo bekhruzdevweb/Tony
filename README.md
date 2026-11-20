@@ -16,6 +16,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 6 | The app (PWA): Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings | Passed |
 | 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Built, awaiting your check |
 | 8 | Live week | Not started |
+| R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Built, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -480,6 +481,38 @@ detail you gave in the first message without adding any of his own. Say
   menu).
 - Lists already written in a task's notes were moved into subtasks once,
   on the first tick after this change.
+
+## Reliability
+
+Built from an audit of his first 218 messages. Each rule is checked in code,
+not left to the model, and each has an eval case made from the real message
+that broke it.
+
+1. **Verified replies.** After every write, the task, reminder, note or
+   bookmark is read back from the database, and the reply is built from what
+   is stored. A field that did not save is reported ("⚠️ the notes did not
+   save"). If nothing was written, any sentence claiming otherwise ("Noted,
+   sir. Reminder set…") is removed.
+2. **Several requests in one message** ("…? And also…", ". Also…", "clean the
+   chat and send me…") are split, handled one by one, and each gets its own
+   confirmation. "Clean the chat" runs in plain code. A request that is not
+   clearly separate stays whole.
+3. **When the AI fails**, Tony tries once more. If it fails again he says so
+   and saves nothing; your words never become a task.
+4. **Nothing from your first message is lost.** Any link, and your own words
+   when details were dropped from the title, go into the new task's notes.
+5. **Voice notes are read as English, Uzbek or Russian.** If Whisper guesses
+   another language, the note is read again as each of the three, and the
+   most confident reading wins.
+6. **Act first.** A task with no time goes to the Inbox, and Tony does not ask
+   for one. If you named a day, a 🧭 Find a time button offers slots; nothing
+   is placed without your tap. The times you give are final: if the model
+   writes another, yours is put back. At most one question per reply.
+7. **Eval suite** (`evals/`, `npm run eval`). Real messages are replayed
+   through the whole brain against an in-memory copy of the database schema
+   (read from the migrations). The model is scripted to repeat its real
+   mistakes. `npm run build` runs every test first (`prebuild`), so a failing
+   case stops the deploy.
 
 ## Tony's brain
 
