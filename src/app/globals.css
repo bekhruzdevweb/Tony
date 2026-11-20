@@ -1,40 +1,65 @@
 @import "tailwindcss";
 
-/* Design tokens from the product spec. */
+/* Design tokens: Tony's blue on a clean, Todoist-like white. */
 :root {
   --primary: #5b8bff;
   --accent: #7a5cff;
-  --ink: #0f172a;
+  --ink: #202020;
   --background: #ffffff;
-  --surface: #f6f7fb;
-  --secondary: #64748b;
-  --overdue: #ff5a5f;
+  --surface: #f5f6f8;
+  --sidebar: #f8f9fb;
+  --secondary: #737373;
+  --overdue: #d1453b;
   --done: #34c759;
-  --hairline: rgb(15 23 42 / 0.08);
+  --hairline: rgb(0 0 0 / 0.08);
+  /* Dates and priorities, as in Todoist (with Tony's blue for P3). */
+  --today: #058527;
+  --tomorrow: #ad6200;
+  --week: #692ec2;
+  --p1: #d1453b;
+  --p2: #eb8909;
+  --p3: #5b8bff;
+  --p4: #a3a3a3;
   --tony-gradient: linear-gradient(135deg, var(--primary), var(--accent));
 }
 
-/* Dark: follows the system unless Settings pins a theme (data-theme on <html>). */
+/* Dark: follows the system (or Telegram) unless Settings pins a theme (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ink: #f1f5f9;
-    --background: #0f172a;
-    --surface: #1e2638;
-    --secondary: #94a3b8;
-    --overdue: #ff6b6f;
+    --ink: #ececec;
+    --background: #1e1e1e;
+    --surface: #2a2a2a;
+    --sidebar: #262626;
+    --secondary: #a0a0a0;
+    --overdue: #ff7066;
     --done: #30d158;
-    --hairline: rgb(241 245 249 / 0.1);
+    --hairline: rgb(255 255 255 / 0.09);
+    --today: #25b84c;
+    --tomorrow: #ff9a14;
+    --week: #a970ff;
+    --p1: #ff7066;
+    --p2: #ff9a14;
+    --p3: #7ea2ff;
+    --p4: #8a8a8a;
   }
 }
 
 :root[data-theme="dark"] {
-  --ink: #f1f5f9;
-  --background: #0f172a;
-  --surface: #1e2638;
-  --secondary: #94a3b8;
-  --overdue: #ff6b6f;
+  --ink: #ececec;
+  --background: #1e1e1e;
+  --surface: #2a2a2a;
+  --sidebar: #262626;
+  --secondary: #a0a0a0;
+  --overdue: #ff7066;
   --done: #30d158;
-  --hairline: rgb(241 245 249 / 0.1);
+  --hairline: rgb(255 255 255 / 0.09);
+  --today: #25b84c;
+  --tomorrow: #ff9a14;
+  --week: #a970ff;
+  --p1: #ff7066;
+  --p2: #ff9a14;
+  --p3: #7ea2ff;
+  --p4: #8a8a8a;
 }
 
 @theme inline {
@@ -47,8 +72,16 @@
   --color-overdue: var(--overdue);
   --color-done: var(--done);
   --color-hairline: var(--hairline);
+  --color-sidebar: var(--sidebar);
+  --color-today: var(--today);
+  --color-tomorrow: var(--tomorrow);
+  --color-week: var(--week);
+  --color-p1: var(--p1);
+  --color-p2: var(--p2);
+  --color-p3: var(--p3);
+  --color-p4: var(--p4);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
-  --text-title: 34px;
+  --text-title: 26px;
   --text-section: 22px;
   --text-body: 17px;
   --text-sub: 15px;

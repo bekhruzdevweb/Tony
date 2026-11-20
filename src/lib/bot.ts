@@ -31,7 +31,7 @@ import { parseAction } from "./reminder-messages";
 import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
-import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
+import { addInboxTask, looksLikeTask, OPEN_STATUSES, type Task } from "./tasks";
 import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
@@ -609,8 +609,16 @@ export function getBot(): Bot | undefined {
       if (reaction) await ctx.react(reaction).catch(() => undefined);
       return { reply, confirmed, completed: tools.includes("complete_task") };
     } catch (error) {
-      // Capture must never fail: if the model is down, keep his words safe.
-      console.error("Brain failed, saving to inbox instead:", error);
+      // Capture must never fail: if the model is down, keep his words safe. But a question or a
+      // bit of conversation is not a task, so it is not saved; he is asked to try again instead.
+      console.error("Brain failed:", error);
+      if (!looksLikeTask(text)) {
+        const reply = "My thinking is briefly unavailable, sir. Ask me again in a minute.";
+        const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
+        await say(ctx, reply, { kind: "error", deleteAfter });
+        if (ctx.message && !ctx.message.voice) await track(ctx.message.message_id, "error", { incoming: true, deleteAfter });
+        return { reply, confirmed: false, completed: false };
+      }
       const task = await addInboxTask(text);
       const reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
       await logMessage("tony", reply);

@@ -6,7 +6,7 @@ import type { Task } from "@/lib/tasks";
 import { formatTime, localDate } from "@/lib/time";
 import { Icon, isOpen } from "./ui";
 
-export type SheetTarget = { task?: Task; day?: string };
+export type SheetTarget = { task?: Task; day?: string; projectId?: number; focus?: "notes" };
 
 const field = "w-full rounded-card bg-surface px-3.5 py-3 text-body outline-none placeholder:text-secondary focus:ring-2 focus:ring-primary/40";
 const label = "mb-1.5 block px-1 text-caption font-medium text-secondary";
@@ -30,7 +30,8 @@ export function TaskSheet(props: {
   const [date, setDate] = useState(due ? localDate(due) : (target.day ?? ""));
   const [time, setTime] = useState(due ? formatTime(due) : "");
   const [priority, setPriority] = useState(task?.priority ?? 4);
-  const [project, setProject] = useState(projects.find((p) => p.id === task?.project_id)?.name ?? "none");
+  const [project, setProject] = useState(projects.find((p) => p.id === (task?.project_id ?? target.projectId))?.name ?? "none");
+  const [duration, setDuration] = useState(task?.duration_minutes ? String(task.duration_minutes) : "");
   const [repeat, setRepeat] = useState<string>(task?.repeat_rule ?? "none");
   const [persistent, setPersistent] = useState(task?.persistent ?? false);
   const [saving, setSaving] = useState(false);
@@ -38,7 +39,7 @@ export function TaskSheet(props: {
   const save = async () => {
     if (!title.trim() || saving) return;
     setSaving(true);
-    const payload: Record<string, unknown> = { title: title.trim(), notes, priority, project, repeat, persistent };
+    const payload: Record<string, unknown> = { title: title.trim(), notes, priority, project, repeat, persistent, duration: duration ? Number(duration) : task?.duration_minutes ? 0 : undefined };
     // Times are Tashkent time. A date with no time means 09:00 that day.
     const dueText = date ? `${date}T${time || "09:00"}` : "";
     const before = due ? `${localDate(due)}T${formatTime(due)}` : "";
@@ -51,13 +52,13 @@ export function TaskSheet(props: {
   };
 
   return (
-    <div className="fade-in fixed inset-0 z-40 flex items-end justify-center bg-black/40" onClick={onClose}>
+    <div className="fade-in fixed inset-0 z-40 flex items-end justify-center bg-black/40 md:items-center md:p-6" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label={task ? "Edit task" : "New task"}
         onClick={(event) => event.stopPropagation()}
-        className="sheet-up safe-bottom max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-sheet bg-background shadow-2xl"
+        className="sheet-up safe-bottom max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-sheet bg-background shadow-2xl md:max-w-xl md:rounded-xl"
       >
         <div className="sticky top-0 z-10 flex items-center justify-between bg-background/95 px-4 pt-3 pb-2 backdrop-blur">
           <button type="button" onClick={onClose} aria-label="Close" className="grid size-11 place-items-center rounded-full text-secondary">
@@ -84,7 +85,7 @@ export function TaskSheet(props: {
               onChange={(event) => setTitle(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && save()}
             />
-            <textarea className={field} rows={2} placeholder="Notes" value={notes ?? ""} onChange={(event) => setNotes(event.target.value)} />
+            <textarea className={field} rows={2} placeholder="Description" autoFocus={target.focus === "notes"} value={notes ?? ""} onChange={(event) => setNotes(event.target.value)} />
           </div>
 
           {media.length > 0 && (
@@ -145,6 +146,11 @@ export function TaskSheet(props: {
               ))}
             </div>
           </div>
+
+          <label className="block">
+            <span className={label}>Duration (minutes)</span>
+            <input type="number" inputMode="numeric" min={1} max={1440} placeholder="How long it takes" className={field} value={duration} onChange={(event) => setDuration(event.target.value.replace(/\D/g, ""))} />
+          </label>
 
           <div className="grid grid-cols-2 gap-2">
             <label>

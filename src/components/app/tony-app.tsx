@@ -6,13 +6,15 @@ import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Menu, type Theme } from "./menu";
-import { ChatScreen, InboxScreen, TodayScreen, UpcomingScreen } from "./screens";
+import { ChatScreen, FiltersScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
-import { Icon, isOpen } from "./ui";
+import { Icon, RowActionsContext, isOpen, type RowActions } from "./ui";
+import { splitToday } from "@/lib/today";
+import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "upcoming" | "chat";
+type Tab = "today" | "inbox" | "upcoming" | "chat" | "search" | "filters" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
@@ -105,22 +107,113 @@ export function TonyApp({ initial }: { initial: AppState }) {
     }
   };
 
-  const screen = { state, now, onOpen: (task: Task) => setSheet({ task }), onToggle: toggle };
+  // Row actions (hover on a wide screen, long-press on a phone): plain updates, no AI.
+  const [rowMenu, setRowMenu] = useState<Task | null>(null);
+  useEffect(() => (rowMenu ? pushBack(() => setRowMenu(null)) : undefined), [rowMenu]);
+  const redate = useCallback(
+    (task: Task, choice: "today" | "tomorrow" | "next-week" | "none") => {
+      if (choice === "none") return void act("update_task", { id: task.id, clear_due: true });
+      const base = new Date(state.now);
+      const offset = choice === "today" ? 0 : choice === "tomorrow" ? 1 : (8 - ((new Date(base.getTime() + 5 * 3_600_000).getUTCDay() + 6) % 7)) % 7 || 7;
+      const day = localDate(addMinutes(base, offset * 24 * 60));
+      const time = task.due_at ? formatTime(new Date(task.due_at)) : "09:00";
+      // A time already gone today moves to the next hour instead.
+      let due_at = `${day}T${time}`;
+      if (choice === "today" && Date.parse(`${due_at}:00+05:00`) <= base.getTime()) {
+        const next = addMinutes(base, 60 - (base.getMinutes() % 60));
+        due_at = `${localDate(next)}T${formatTime(next)}`;
+      }
+      void act("update_task", { id: task.id, due_at });
+    },
+    [act, state.now],
+  );
+  const actions: RowActions = {
+    edit: (task, focus) => setSheet({ task, focus }),
+    date: redate,
+    priority: (task, priority) => void act("update_task", { id: task.id, priority }, patch(task.id, { priority })),
+    remove: (task) => void act("update_task", { id: task.id, status: "dropped" }, (s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== task.id) })),
+    menu: (task) => {
+      haptic("tap");
+      setRowMenu(task);
+    },
+  };
+
+  const reschedule = async (to: "today" | "tomorrow") => {
+    const result = await act("reschedule_overdue", { to });
+    if (result.ok && result.reply) say(result.reply);
+  };
+
+  const screen = { state, now, onOpen: (task: Task) => setSheet({ task }), onToggle: toggle, onAdd: (target?: { day?: string; projectId?: number }) => setSheet(target ?? {}) };
+  const open = state.tasks.filter(isOpen);
+  const todayCount = (() => {
+    const split = splitToday(state.tasks, now);
+    return split.carried.length + split.timed.length;
+  })();
+  const projectId = tab.startsWith("project:") ? Number(tab.slice(8)) : undefined;
 
   return (
-    <div className="safe-top mx-auto flex h-dvh max-w-md flex-col bg-background">
-      <div className="flex h-12 shrink-0 items-center px-3">
+    <RowActionsContext.Provider value={actions}>
+    <div className="flex h-dvh bg-background">
+      {/* Wide screens (Telegram fullscreen, desktop): a sidebar, as in Todoist. */}
+      <aside className="safe-top hidden w-[280px] shrink-0 flex-col border-r border-hairline bg-sidebar md:flex">
+        <div className="flex h-14 items-center gap-2.5 px-4">
+          <button type="button" onClick={() => setMenu(true)} aria-label="Tony: settings" className="flex items-center gap-2.5 rounded-md py-1 pr-2 hover:bg-hairline">
+            <Image src="/brand/avatar.png" alt="" width={28} height={28} priority className="size-7 rounded-full" />
+            <span className="text-[14px] font-semibold">Tony</span>
+          </button>
+        </div>
+        <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 pb-4 text-[14px]">
+          <button type="button" onClick={() => setSheet({})} className="mb-1 flex h-9 w-full items-center gap-2.5 rounded-md px-2 font-semibold text-primary hover:bg-hairline">
+            <span className="grid size-6 place-items-center rounded-full bg-primary text-white">
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round"><path d="M12 6v12M6 12h12" /></svg>
+            </span>
+            Add task
+          </button>
+          <SideItem icon={Icon.search} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
+          <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox").length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
+          <SideItem icon={Icon.today} label="Today" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
+          <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
+          <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
+          <SideItem icon={Icon.chat} label="Chat with Tony" active={tab === "chat"} onClick={() => setTab("chat")} />
+          <p className="mt-5 mb-1 px-2 text-[13px] font-semibold text-secondary">My Projects</p>
+          {state.projects.map((project) => (
+            <SideItem
+              key={project.id}
+              icon={<span style={{ color: project.color }}>{Icon.hash}</span>}
+              label={project.name}
+              count={open.filter((t) => t.project_id === project.id).length}
+              active={tab === `project:${project.id}`}
+              onClick={() => setTab(`project:${project.id}`)}
+            />
+          ))}
+        </nav>
+        <div className="safe-bottom border-t border-hairline px-2 py-2 text-[14px]">
+          <SideItem icon={Icon.plan} label="Tony's plans" onClick={() => setMenu(true)} />
+          <SideItem icon={Icon.settings} label="Settings" onClick={() => setMenu(true)} />
+        </div>
+      </aside>
+
+      <div className="safe-top flex min-w-0 flex-1 flex-col">
+      {/* Phones: the avatar opens projects and settings. */}
+      <div className="flex h-12 shrink-0 items-center px-3 md:hidden">
         <button type="button" aria-label="Projects and settings" onClick={() => setMenu(true)} className="grid size-11 place-items-center">
           <Image src="/brand/avatar.png" alt="" width={36} height={36} priority className="size-9 rounded-full shadow-md shadow-accent/25" />
         </button>
+        <span className="flex-1" />
+        <button type="button" aria-label="Search" onClick={() => setTab("search")} className="grid size-11 place-items-center text-secondary">
+          {Icon.search}
+        </button>
       </div>
 
-      {tab === "today" && <TodayScreen {...screen} onQuickAdd={tell} />}
+      {tab === "today" && <TodayScreen {...screen} onQuickAdd={tell} onReschedule={reschedule} />}
       {tab === "inbox" && <InboxScreen {...screen} />}
       {tab === "upcoming" && <UpcomingScreen {...screen} onMove={move} onAddTo={(day) => setSheet({ day })} />}
+      {tab === "search" && <SearchScreen {...screen} />}
+      {tab === "filters" && <FiltersScreen {...screen} onProject={(id) => setTab(`project:${id}`)} />}
+      {projectId !== undefined && <ProjectScreen {...screen} projectId={projectId} />}
       {tab === "chat" && <ChatScreen state={state} onSend={tell} onVoice={voice} />}
 
-      <nav aria-label="Main" className="safe-bottom shrink-0 border-t border-hairline bg-background">
+      <nav aria-label="Main" className="safe-bottom shrink-0 border-t border-hairline bg-background md:hidden">
         <div className="relative grid h-14 grid-cols-5">
           {TABS.slice(0, 2).map((item) => (
             <TabButton key={item.id} item={item} active={tab === item.id} onSelect={setTab} />
@@ -145,6 +238,20 @@ export function TonyApp({ initial }: { initial: AppState }) {
         </div>
       </nav>
 
+      </div>
+
+      {rowMenu && (
+        <RowMenu
+          task={rowMenu}
+          onClose={() => setRowMenu(null)}
+          onEdit={() => (setRowMenu(null), setSheet({ task: rowMenu }))}
+          onComment={() => (setRowMenu(null), setSheet({ task: rowMenu, focus: "notes" }))}
+          onDate={(choice) => (setRowMenu(null), redate(rowMenu, choice))}
+          onPriority={(p) => (setRowMenu(null), actions.priority(rowMenu, p))}
+          onDelete={() => (setRowMenu(null), actions.remove(rowMenu))}
+        />
+      )}
+
       {menu && (
         <Menu
           tony={tony}
@@ -159,7 +266,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
 
       {sheet && (
         <TaskSheet
-          key={sheet.task?.id ?? `new-${sheet.day ?? ""}`}
+          key={sheet.task?.id ?? `new-${sheet.day ?? ""}-${sheet.projectId ?? ""}`}
           target={sheet}
           projects={state.projects}
           media={sheet.task ? state.media.filter((item) => item.task_id === sheet.task!.id) : []}
@@ -181,6 +288,69 @@ export function TonyApp({ initial }: { initial: AppState }) {
           <p className={`max-w-sm rounded-2xl px-4 py-3 text-sub shadow-xl ${toast.tone === "error" ? "bg-overdue text-white" : "bg-ink text-background"}`}>{toast.text}</p>
         </div>
       )}
+    </div>
+    </RowActionsContext.Provider>
+  );
+}
+
+function SideItem({ icon, label, count, active, onClick }: { icon: React.ReactNode; label: string; count?: number; active?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+      className={`flex h-9 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors ${active ? "bg-primary/12 font-medium text-primary" : "hover:bg-hairline"}`}
+    >
+      <span className={`grid size-6 place-items-center [&_svg]:size-[18px] ${active ? "" : "text-secondary"}`}>{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count !== undefined && count > 0 && <span className="text-[12px] text-secondary">{count}</span>}
+    </button>
+  );
+}
+
+/** Long-press on a phone (and "More" on a wide screen): what can be done to one task. */
+function RowMenu(props: {
+  task: Task;
+  onClose: () => void;
+  onEdit: () => void;
+  onComment: () => void;
+  onDate: (choice: "today" | "tomorrow" | "next-week" | "none") => void;
+  onPriority: (priority: number) => void;
+  onDelete: () => void;
+}) {
+  const { task, onClose, onEdit, onComment, onDate, onPriority, onDelete } = props;
+  const item = "flex h-11 w-full items-center gap-3 px-4 text-left text-[15px] hover:bg-surface";
+  return (
+    <div className="fade-in fixed inset-0 z-40 flex items-end justify-center bg-black/40 md:items-center" onClick={onClose}>
+      <div role="dialog" aria-label={task.title} onClick={(event) => event.stopPropagation()} className="sheet-up safe-bottom w-full max-w-md overflow-hidden rounded-t-sheet bg-background pb-2 shadow-2xl md:rounded-xl">
+        <p className="truncate border-b border-hairline px-4 py-3 text-[14px] font-semibold">{task.title}</p>
+        <button type="button" className={item} onClick={onEdit}>
+          <span className="text-secondary">{Icon.pencil}</span>Edit
+        </button>
+        <button type="button" className={item} onClick={onComment}>
+          <span className="text-secondary">{Icon.comment}</span>Comment
+        </button>
+        <div className="border-t border-hairline px-4 pt-3 pb-1 text-[12px] font-semibold text-secondary">Date</div>
+        <div className="grid grid-cols-4 gap-1 px-3 pb-2">
+          {([["Today", "today", "var(--today)"], ["Tomorrow", "tomorrow", "var(--tomorrow)"], ["Next week", "next-week", "var(--week)"], ["No date", "none", "var(--secondary)"]] as const).map(([label, choice, color]) => (
+            <button key={choice} type="button" onClick={() => onDate(choice)} className="flex flex-col items-center gap-1 rounded-lg py-2 text-[12px] hover:bg-surface">
+              <span style={{ color }} className="[&_svg]:size-5">{Icon.calendar}</span>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="border-t border-hairline px-4 pt-3 pb-1 text-[12px] font-semibold text-secondary">Priority</div>
+        <div className="grid grid-cols-4 gap-1 px-3 pb-2">
+          {[1, 2, 3, 4].map((p) => (
+            <button key={p} type="button" onClick={() => onPriority(p)} aria-pressed={task.priority === p} className={`flex h-10 items-center justify-center gap-1.5 rounded-lg text-[13px] ${task.priority === p ? "bg-surface font-semibold" : "hover:bg-surface"}`}>
+              <span className="size-3 rounded-full" style={{ background: `var(--p${p})` }} />P{p}
+            </button>
+          ))}
+        </div>
+        <button type="button" className={`${item} border-t border-hairline text-overdue`} onClick={onDelete}>
+          Delete task
+        </button>
+      </div>
     </div>
   );
 }

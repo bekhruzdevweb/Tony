@@ -15,6 +15,8 @@ export type Task = {
   repeat_rule: "daily" | "weekdays" | "weekly" | null;
   persistent: boolean;
   persistent_schedule: number[] | null;
+  /** Minutes it takes, when known. */
+  duration_minutes?: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -22,6 +24,19 @@ export type Task = {
 
 export const OPEN_STATUSES: TaskStatus[] = ["inbox", "todo", "in_progress"];
 export const MAX_TITLE_LENGTH = 500;
+
+/**
+ * Whether words that could not be read by the brain are worth keeping as a
+ * task. Questions ("can you…?", "what is…") and chat ("thank you", "hey
+ * Tony") are not; short to-dos ("buy a notebook", "call the bank") are.
+ */
+export function looksLikeTask(text: string): boolean {
+  const words = text.trim().toLowerCase();
+  if (!words || words.length > 120) return false;
+  if (/\?\s*$/.test(words)) return false;
+  if (/^(hey|hi|hello|ok|okay|thanks|thank you|yes|no|well|so|what|why|how|when|where|who|which|can|could|would|should|will|do|does|did|is|are|am|was|were|have|has|tell|show|explain|please send|send me)\b/.test(words)) return false;
+  return true;
+}
 
 /** A task with no date: it waits in the Inbox. */
 export async function addInboxTask(title: string): Promise<Task> {

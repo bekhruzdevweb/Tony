@@ -18,13 +18,14 @@ const id = { type: "integer" };
 const attach = { type: "boolean", description: "Attach the last photo/file he shared." };
 
 const taskFields = {
-  title: { type: "string", description: "Short, without the time." },
+  title: { type: "string", description: "Short: 2-6 words, without the time, never a link or a question." },
   due_at: { type: "string", description: TIME },
   project: { type: "string" },
   priority: { type: "integer", description: "1 urgent to 4 normal" },
   persistent: { type: "boolean" },
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
-  notes: { type: "string" },
+  notes: { type: "string", description: "Description: links, details, anything that would make the title long." },
+  duration: { type: "integer", description: "Minutes it takes, only if he says (\"takes 45 min\")" },
 };
 
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
@@ -133,14 +134,31 @@ async function readFields(args: Args, now: Date): Promise<{ patch: Partial<Task>
   const patch: Partial<Task> = {};
   let dueAt: Date | undefined;
 
-  if (typeof args.title === "string" && args.title.trim()) patch.title = args.title.trim().slice(0, MAX_TITLE_LENGTH);
   if (typeof args.notes === "string") patch.notes = args.notes.trim() || null;
+  if (typeof args.title === "string" && args.title.trim()) {
+    // Links belong in the description, never in the title.
+    const links = args.title.match(/https?:\/\/\S+|\b[\w-]+(\.[\w-]+)+\.(app|com|org|net|io|uz|ru|dev|me)(\/\S*)?/gi) ?? [];
+    let title = args.title;
+    for (const link of links) title = title.replace(link, " ");
+    title = title.replace(/\s+(at|on|from|via|:)\s*$/i, "").replace(/\s{2,}/g, " ").trim();
+    if (links.length) {
+      const urls = links.map((link) => (/^https?:/i.test(link) ? link : `https://${link}`));
+      patch.notes = [patch.notes, ...urls.filter((url) => !patch.notes?.includes(url))].filter(Boolean).join("\n");
+    }
+    patch.title = (title || args.title.trim()).slice(0, MAX_TITLE_LENGTH);
+  }
   if (args.priority !== undefined) {
     const priority = Number(args.priority);
     if (![1, 2, 3, 4].includes(priority)) return { error: "priority must be 1, 2, 3 or 4" };
     patch.priority = priority;
   }
   if (typeof args.persistent === "boolean") patch.persistent = args.persistent;
+  if (args.duration === null || args.duration === 0) patch.duration_minutes = null;
+  else if (args.duration !== undefined) {
+    const minutes = Math.round(Number(args.duration));
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440) return { error: "duration must be minutes, 1 to 1440" };
+    patch.duration_minutes = minutes;
+  }
   if (typeof args.repeat === "string") {
     if (!["daily", "weekdays", "weekly", "none"].includes(args.repeat)) return { error: "repeat must be daily, weekdays, weekly or none" };
     patch.repeat_rule = args.repeat === "none" ? null : (args.repeat as Task["repeat_rule"]);

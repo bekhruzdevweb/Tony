@@ -55,6 +55,9 @@ export function applyTelegramTheme(): () => void {
     set("--surface", theme.secondary_bg_color);
     set("--ink", theme.text_color);
     set("--secondary", theme.hint_color);
+    // The sidebar sits on Telegram's secondary background, the list on its main one.
+    set("--sidebar", theme.secondary_bg_color);
+    set("--hairline", theme.section_separator_color);
     if (theme.bg_color) {
       app.setHeaderColor?.(theme.bg_color);
       app.setBackgroundColor?.(theme.bg_color);

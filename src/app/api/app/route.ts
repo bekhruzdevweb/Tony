@@ -6,12 +6,13 @@ import { env } from "@/lib/env";
 import { refreshBoard } from "@/lib/today-board";
 import { think } from "@/lib/brain";
 import { runTool } from "@/lib/brain/tools";
+import { rescheduleOverdue } from "@/lib/reschedule";
 import { requireDb } from "@/lib/db";
 import { logMessage } from "@/lib/messages";
 import { applyPlan, buildPlan, dismissPlan } from "@/lib/planner";
 import { hasSession } from "@/lib/session";
 import { updateSettings } from "@/lib/settings";
-import { addInboxTask } from "@/lib/tasks";
+import { addInboxTask, looksLikeTask } from "@/lib/tasks";
 
 // Chat goes through the AI model, which can take a few seconds.
 export const maxDuration = 60;
@@ -56,6 +57,13 @@ export async function POST(request: Request) {
       }
 
       // Quick add and Chat: Tony reads it, exactly as he reads a Telegram message.
+      // "Reschedule" on Overdue: every overdue task to today or tomorrow, at its own time.
+      case "reschedule_overdue": {
+        const moved = await rescheduleOverdue(body.to === "tomorrow" ? "tomorrow" : "today");
+        reply = moved ? `Moved ${moved} ${moved === 1 ? "task" : "tasks"} to ${body.to === "tomorrow" ? "tomorrow" : "today"}, sir.` : "Nothing overdue, sir.";
+        break;
+      }
+
       case "say": {
         const text = typeof body.text === "string" ? body.text.trim().slice(0, 2000) : "";
         if (!text) {
@@ -70,9 +78,14 @@ export async function POST(request: Request) {
           if (thought.planId !== undefined) reply = "I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.";
           else if (thought.choices) reply = `${thought.choices.question} (${thought.choices.options.join(" / ")})`;
         } catch (error) {
-          console.error("Brain failed, saving to inbox instead:", error);
-          const task = await addInboxTask(text);
-          reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
+          console.error("Brain failed:", error);
+          // A question or chat is not a task: only something to do is kept safe in the inbox.
+          if (looksLikeTask(text)) {
+            const task = await addInboxTask(text);
+            reply = `My thinking is briefly unavailable, sir, so I saved "${task.title}" to the inbox as it stands.`;
+          } else {
+            reply = "My thinking is briefly unavailable, sir. Ask me again in a minute.";
+          }
           await logMessage("tony", reply, "app");
         }
         break;

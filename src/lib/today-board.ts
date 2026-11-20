@@ -4,7 +4,8 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { retire, sendHtml } from "./chat-log";
 import type { RichMessage } from "./rich";
 import { requireDb } from "./db";
-import { esc } from "./html";
+import { esc, i } from "./html";
+import { splitToday } from "./today";
 import { finishTask } from "./recurrence";
 import { scheduleReminder } from "./reminders";
 import { getSettings, updateSettings } from "./settings";
@@ -106,12 +107,8 @@ export async function boardView(day: Date): Promise<Board> {
   ]);
   if (openRows.error || finishedRows.error) throw new Error(`boardView: ${(openRows.error ?? finishedRows.error)!.message}`);
 
-  const open = openRows.data as Task[];
-  // Carried over from earlier days first, then today's in time order, then what is done.
-  const carried = open.filter((task) => new Date(task.due_at!).getTime() < start.getTime());
-  const timed = open.filter((task) => new Date(task.due_at!).getTime() >= start.getTime());
-  const done = (finishedRows.data as Task[]).filter((task) => task.status === "done" || (task.due_at !== null && new Date(task.due_at).getTime() >= end.getTime()));
-  const total = carried.length + timed.length + done.length;
+  // The same split the app's Today view uses, so the counts always agree.
+  const { carried, timed, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
 
   const bell = (task: Task) => (task.persistent ? " 🔔" : "");
   // A done task keeps its own time; a repeating one has already rolled to its next date, so it shows when it was done.
@@ -129,7 +126,8 @@ export async function boardView(day: Date): Promise<Board> {
     ...timed.map((task) => `☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${bell(task)}`),
     ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>`),
   ];
-  const html = [`<b>📋 Today · ${esc(shortDay(day))}</b>   ${done.length}/${total}`, "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
+  // The first line is what the pinned banner shows, so it is the short one.
+  const html = [`<b>📋 Today · ${done.length}/${total} done</b>`, i(shortDay(day)), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
 
   // Two short buttons a row, in the same order as the list.
   const buttons = [
@@ -184,8 +182,9 @@ export async function boardView(day: Date): Promise<Board> {
   rows.push({ type: "buttons", buttons: lastRow });
   const rich: RichMessage = {
     blocks: [
-      { type: "heading", size: 2, text: `Today · ${shortDay(day)}` },
-      { type: "paragraph", text: { type: "italic", text: `${done.length}/${total} done` } },
+      // The pinned banner shows the first line: keep it short ("Today · 2/11 done").
+      { type: "heading", size: 2, text: `Today · ${done.length}/${total} done` },
+      { type: "paragraph", text: { type: "italic", text: shortDay(day) } },
       total === 0 ? { type: "paragraph", text: "Nothing is due today, sir." } : { type: "list", items },
       ...rows,
     ],
