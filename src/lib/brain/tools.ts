@@ -14,7 +14,7 @@ import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
 import { givenTimes, heldToGivenTime, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
-import { getRoutine, recordMove, setRoutineField } from "../routine";
+import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
@@ -106,8 +106,12 @@ export const TOOLS: ToolDefinition[] = [
   ),
   tool(
     "routine",
-    "Save part of his routine when he tells it: his hours for teaching, content, coding or workouts (\"Mon-Fri 14:00-18:00\", \"10:00-12:00\"), when he wakes or sleeps (\"07:00\"), his free days (\"Sun\"). Every scheduling decision uses it. Never guess it.",
-    { field: { type: "string", enum: [...ROUTINE_FIELDS] }, value: { type: "string", description: "As he said it, e.g. \"Mon-Fri 14:00-18:00\", \"none\" to clear" } },
+    "Save part of his routine when he tells it: his hours for teaching, content, coding or workouts (\"Mon-Fri 14:00-18:00\", \"10:00-12:00\"), when he wakes or sleeps (\"07:00\"), his free days (\"Sun\"). Every scheduling decision uses it. Never guess it. Field \"decide\": only when he explicitly says \"decide yourself for <kind>\" (on) or \"ask me again for <kind>\" (on false); value is the kind in his words (\"podcasts and videos\").",
+    {
+      field: { type: "string", enum: [...ROUTINE_FIELDS, "decide"] },
+      value: { type: "string", description: "As he said it, e.g. \"Mon-Fri 14:00-18:00\", \"none\" to clear; for decide, the kind of task in his words" },
+      on: { type: "boolean", description: "decide only: true for \"decide yourself\", false for \"ask me again\"" },
+    },
     ["field", "value"],
   ),
   // Instead of a question he may not follow: say what will happen; he taps ✓ (done in code) or ✏️.
@@ -364,6 +368,8 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       check("add_task", error);
       const task = data as Task;
       if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
+      // A time of his own for this kind of task: Tony learns where it belongs.
+      if (fields.dueAt && said !== undefined && givenTimes(said, now).length > 0) await recordSample(task, fields.dueAt);
       // Its parts, as subtasks (never as a list in the notes).
       const parts = Array.isArray(args.subtasks) ? args.subtasks.map(String).filter((t) => t.trim()) : [];
       if (parts.length) await addSubtasks(task.id, parts);
@@ -434,7 +440,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (!OPEN_STATUSES.includes(updated.status) || args.clear_due === true) await settleReminders(task.id);
       else if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
       // He moved it to a time of his own: Tony learns where this kind of task belongs.
-      if (fields.dueAt && (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(fields.dueAt))) await recordMove(updated, fields.dueAt);
+      if (fields.dueAt && (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(fields.dueAt))) await recordSample(updated, fields.dueAt);
       const attached = await attachShared(args, task.id);
       const checkIn = OPEN_STATUSES.includes(updated.status) ? await addCheckIn(task.id, args, said, now) : undefined;
       return {
@@ -513,7 +519,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         const moved = await db.from("tasks").update({ due_at: at.toISOString(), status: task.status === "inbox" ? "todo" : task.status }).eq("id", task.id);
         check("set_reminder", moved.error);
         await scheduleReminder(task.id, at);
-        if (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(at)) await recordMove(task, at);
+        if (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(at)) await recordSample(task, at);
         return { ok: true, task_id: task.id, task: task.title, moved_to: formatDue(at, now), wrote: { due_at: at.toISOString() } };
       }
       if (decision === "same") return { ok: true, task_id: task.id, task: task.title, note: "it is already set for that time" };
@@ -583,6 +589,10 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
     }
 
     case "routine": {
+      if (args.field === "decide") {
+        const result = await setAutoKinds(String(args.value ?? ""), args.on !== false);
+        return result.ok ? { ok: true, routine: { field: "decide", value: result.label, on: result.on } } : fail(result.error);
+      }
       const result = await setRoutineField(String(args.field ?? ""), String(args.value ?? ""));
       return result.ok ? { ok: true, routine: { field: result.field, value: result.value } } : fail(result.error);
     }

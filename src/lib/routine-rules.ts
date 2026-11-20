@@ -4,10 +4,12 @@
  *
  * - He gave a time: it is used exactly (see heldToGivenTime).
  * - No time and no day: the inbox. No time is proposed unless he asks.
- * - A day but no time: if his routine clearly fits (he named a part of the
- *   day, he usually does this kind of task at a certain hour, or it has its
- *   own hours in his routine), ONE slot is proposed. Otherwise he is asked
- *   once, with two or three real free slots that fit his routine.
+ * - A day but no time: he is ALWAYS asked, once, with two or three real free
+ *   slots, best first with its reason (the part of the day he named, the
+ *   time he usually does this kind of task, its own hours in his routine).
+ *   Tony picks a slot himself only for the kinds he said "decide yourself"
+ *   for (routine.auto_kinds), and says why.
+ * - A long task with no gap for it is offered in two halves; split only on his tap.
  * - Nothing is ever put where something else already is: every task blocks
  *   its whole duration, prayers ±15 minutes, his teaching hours, his sleep.
  */
@@ -27,18 +29,22 @@ export type Routine = {
   coding: string | null;
   workout: string | null;
   free_days: string | null;
-  /** Per kind of task: the minutes after midnight he moved such tasks to, newest last. */
+  /** Per kind of task: the minutes after midnight he scheduled or did such tasks at, newest last. */
   learned: Record<string, number[]>;
+  /** The kinds he lets Tony pick a time for himself ("decide yourself for podcasts"). */
+  auto_kinds?: string[];
 };
-export const DEFAULT_ROUTINE: Routine = { wake: "07:00", sleep: "23:00", teaching: null, content: null, coding: null, workout: null, free_days: null, learned: {} };
+export const DEFAULT_ROUTINE: Routine = { wake: "07:00", sleep: "23:00", teaching: null, content: null, coding: null, workout: null, free_days: null, learned: {}, auto_kinds: [] };
 export const ROUTINE_FIELDS = ["wake", "sleep", "teaching", "content", "coding", "workout", "free_days"] as const;
 export type RoutineField = (typeof ROUTINE_FIELDS)[number];
 
 /** A stretch of the day on some weekdays: minutes after midnight; days 0 = Sunday. */
 export type Window = { days: number[]; start: number; end: number };
-/** A stretch of real time, in milliseconds. */
-export type Interval = { start: number; end: number };
-export type Kind = "teaching" | "prep" | "content" | "coding" | "workout" | "learn" | "errand" | "other";
+/** A stretch of real time, in milliseconds; a task's title when it is one. */
+export type Interval = { start: number; end: number; title?: string };
+/** His kinds of task: podcasts and videos (watch), study, content, coding, workouts, errands, and his teaching. */
+export type Kind = "teaching" | "prep" | "content" | "coding" | "workout" | "watch" | "study" | "errand" | "other";
+export const KINDS: Kind[] = ["watch", "study", "content", "coding", "workout", "errand", "prep", "teaching", "other"];
 
 const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
@@ -193,11 +199,13 @@ export function normalizeField(field: RoutineField, value: string): string | nul
 export function kindOf(title: string, project?: string | null): Kind {
   const t = title.toLowerCase();
   if (/^(call|phone|ring|buy|pay|message|text|email|e-mail|reply|send|book|order|pick up|collect|visit|return)\b/.test(t)) return "errand";
-  // Watching or reading something is learning, whatever it is about ("Watch: Instagram Masterclass").
-  if (/^(watch|read|listen|study|learn|review)\b/.test(t)) return "learn";
+  // Watching something is watching, whatever it is about ("Watch: Instagram Masterclass"); reading and study are study.
+  if (/^(watch|listen)\b/.test(t)) return "watch";
+  if (/^(read|study|learn|review|practi[cs]e|revise)\b/.test(t)) return "study";
+  if (/\b(youtube|podcast|masterclass|audiobook|webinar recording|documentary)\b/.test(t) || /^check\b.*\b(video|reel)\b/.test(t)) return "watch";
   if (/\b(post|posting|story|stories|reels?|shoot|shooting|film|filming|record|recording|vlog|caption|thumbnail|tiktok|instagram|content|tutorial|edit (the |a )?video)\b/.test(t)) return "content";
   if (/\b(code|coding|program|develop|deploy|debug|bug|api|website|web ?site|app|bot|agent|chatbot|features?|github|refactor|database|server)\b/.test(t)) return "coding";
-  if (/^(watch|read|listen|study|learn|review)\b|\b(podcast|masterclass|audiobook|article|book)\b/.test(t)) return "learn";
+  if (/\b(article|book|ielts reading|vocabulary|exam practice)\b/.test(t)) return "study";
   if (/\b(prepare|preparation|presentation|slides|lesson plan|worksheet|homework|quiz|syllabus|materials|curriculum|course)\b/.test(t)) return "prep";
   if (/\b(lesson|class|classes|teach|teaching|tutoring|students?|speaking club|webinar|seminar)\b/.test(t)) return "teaching";
   if (/\b(workout|work out|gym|run|running|jog|exercise|training|pull-?ups?|push-?ups?|stretch|yoga|swim|cardio)\b/.test(t) && !/\bplan\b/.test(t)) return "workout";
@@ -218,17 +226,36 @@ const KIND_HABIT: Record<Kind, string> = {
   content: "make content",
   coding: "code",
   workout: "work out",
-  learn: "watch and read",
+  watch: "watch videos",
+  study: "study",
   errand: "run errands",
   other: "do these",
 };
+/** Each kind as he would name it ("Tony picks the time for: videos and podcasts"). */
+export const KIND_LABEL: Record<Kind, string> = {
+  watch: "videos and podcasts",
+  study: "study",
+  content: "content",
+  coding: "coding",
+  workout: "workouts",
+  errand: "errands",
+  prep: "lesson prep",
+  teaching: "classes",
+  other: "other tasks",
+};
+
+/** The times he scheduled or did this kind of task at. Moves from before the kinds were split ("learn") count as watching. */
+export function learnedFor(routine: Routine, kind: Kind): number[] | undefined {
+  const learned = routine.learned ?? {};
+  return learned[kind] ?? (kind === "watch" ? learned.learn : undefined);
+}
 
 /** Where a kind of task belongs on a day: around his learned time, then in its own hours (in milliseconds). */
 export function preferredRanges(routine: Routine, kind: Kind, day: Date): Interval[] {
   const midnight = localMidnight(day);
   const weekday = weekdayOf(new Date(midnight + 12 * 60 * MINUTE));
   const ranges: Interval[] = [];
-  const learned = learnedMinute(routine.learned?.[kind]);
+  const learned = learnedMinute(learnedFor(routine, kind));
   if (learned !== undefined) ranges.push({ start: midnight + (learned - 30) * MINUTE, end: midnight + (learned + 120) * MINUTE });
   const field = KIND_FIELD[kind];
   if (field && !(field === "teaching" && isFreeDay(routine, weekday))) {
@@ -351,62 +378,186 @@ export function spreadSlots(starts: number[], midnight: number, count = 3): numb
   return chosen.sort((a, b) => a - b).slice(0, count);
 }
 
-/** Two or three real free slots on that day, for him to choose from. */
-export function slotChoices(input: SlotInput): Date[] {
-  return spreadSlots(freeStarts(input), localMidnight(input.day)).map((start) => new Date(start));
-}
+/** One time to offer, and why it suits him ("you usually watch videos around 20:30"). */
+export type SlotOption = { at: Date; why?: string };
 
-export type Decision = { decision: "propose"; at: Date; why: string } | { decision: "ask"; options: Date[] } | { decision: "none" };
+/**
+ * A day he named without a time. He is asked, with two or three real free
+ * slots, best first (`ask`); Tony picks the best himself only for a kind he
+ * said "decide yourself" for (`auto`); a long task with no gap for it is
+ * offered in two halves (`split`); a full day is `none`.
+ */
+export type Decision =
+  | { decision: "ask"; options: SlotOption[]; taken?: string }
+  | { decision: "auto"; at: Date; why: string; options: SlotOption[]; taken?: string }
+  | { decision: "split"; parts: Date[]; minutes: number }
+  | { decision: "none" };
 
 const closest = (starts: number[], target: number) => starts.reduce((best, start) => (Math.abs(start - target) < Math.abs(best - target) ? start : best));
 
+/** Minutes kept between the times offered, so the choice is a real one. */
+const APART = 90;
+/** A long task is offered in halves when no gap fits it whole. */
+const SPLIT_FROM = 120;
+
+/** The one long thing that shapes the day, so he sees why the options are where they are: "10:00–14:00 is taken by **X**". */
+function takenNote(input: SlotInput): string | undefined {
+  const midnight = localMidnight(input.day);
+  const { wake, sleep } = minutesOf(input.routine);
+  const from = midnight + wake * MINUTE;
+  const to = midnight + sleep * MINUTE;
+  const long = input.busy
+    .filter((busy) => busy.title && busy.end - busy.start >= 90 * MINUTE && busy.end > from && busy.start < to)
+    .sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start)[0];
+  if (!long) return undefined;
+  const clock = (time: number) => clockText(Math.round((time - midnight) / MINUTE) % DAY_MINUTES);
+  return `${clock(long.start)}–${clock(long.end)} is taken by **${long.title}**`;
+}
+
 /**
- * A day he named without a time: one slot when his routine clearly fits,
- * otherwise two or three real free slots to choose from, or none if the day
- * is full.
+ * The free times worth offering on that day, best first, each with its reason:
+ * inside the part of the day he named; else near the time he usually does this
+ * kind of task; else in its own hours in his routine; else the first free time.
+ * The others are spread over the day, at least 90 minutes apart.
  */
-export function decideSlot(input: SlotInput): Decision {
-  const starts = freeStarts(input);
-  if (starts.length === 0) return { decision: "none" };
+export function rankSlots(input: SlotInput, starts = freeStarts(input)): SlotOption[] {
+  if (starts.length === 0) return [];
   const midnight = localMidnight(input.day);
   const minuteOf = (start: number) => Math.round((start - midnight) / MINUTE);
-  const learned = learnedMinute(input.routine.learned[input.kind]);
-
-  // He named a part of the day: that is clear enough. His usual time inside it, else its first free start.
-  if (input.parts?.length) {
-    const inside = starts.filter((start) => input.parts!.some((part) => minuteOf(start) >= part.start && minuteOf(start) < part.end));
-    if (inside.length > 0) {
-      const pick = learned !== undefined ? closest(inside, midnight + learned * MINUTE) : inside[0];
-      const part = input.parts.find((p) => minuteOf(pick) >= p.start && minuteOf(pick) < p.end)!;
-      return { decision: "propose", at: new Date(pick), why: `${part.label}, as you said` };
-    }
-    // That part of the day is full: the nearest free times, to choose from.
-    const target = midnight + input.parts[0].start * MINUTE;
-    const near = [...starts].sort((a, b) => Math.abs(a - target) - Math.abs(b - target));
-    const options = spreadSlots(near.slice(0, 12).sort((a, b) => a - b), midnight);
-    return options.length === 1 ? { decision: "propose", at: new Date(options[0]), why: "the nearest free time" } : { decision: "ask", options: options.map((start) => new Date(start)) };
-  }
-
-  // He keeps moving this kind of task to one time: that time, or the nearest free start within 90 minutes.
-  if (learned !== undefined) {
-    const target = midnight + learned * MINUTE;
-    const near = starts.filter((start) => Math.abs(start - target) <= 90 * MINUTE);
-    if (near.length > 0) return { decision: "propose", at: new Date(closest(near, target)), why: `you usually ${KIND_HABIT[input.kind]} around ${clockText(learned)}` };
-  }
-
-  // It has its own hours in his routine.
+  const learned = learnedMinute(learnedFor(input.routine, input.kind));
   const field = KIND_FIELD[input.kind];
-  if (field) {
-    const weekday = weekdayOf(new Date(midnight + 12 * 60 * MINUTE));
-    const windows = field === "teaching" && isFreeDay(input.routine, weekday) ? [] : windowsOn(input.routine[field], weekday);
-    const inside = starts.filter((start) => windows.some((window) => minuteOf(start) >= window.start && minuteOf(start) + input.minutes <= window.end));
-    if (inside.length > 0) return { decision: "propose", at: new Date(inside[0]), why: KIND_WHY[input.kind]! };
+  const weekday = weekdayOf(new Date(midnight + 12 * 60 * MINUTE));
+  const windows = field && !(field === "teaching" && isFreeDay(input.routine, weekday)) ? windowsOn(input.routine[field], weekday) : [];
+  const inPart = (start: number) => input.parts?.find((part) => minuteOf(start) >= part.start && minuteOf(start) < part.end);
+  const nearLearned = (start: number) => learned !== undefined && Math.abs(start - (midnight + learned * MINUTE)) <= 90 * MINUTE;
+  const inWindow = (start: number) => windows.some((window) => minuteOf(start) >= window.start && minuteOf(start) + input.minutes <= window.end);
+  const afterTask = (start: number) => input.busy.find((busy) => busy.title && start - busy.end >= GAP * MINUTE && start - busy.end <= 25 * MINUTE);
+  const why = (start: number): string | undefined => {
+    const part = inPart(start);
+    if (part) return `${part.label}, as you said`;
+    if (nearLearned(start)) return `you usually ${KIND_HABIT[input.kind]} around ${clockText(learned!)}`;
+    if (inWindow(start)) return KIND_WHY[input.kind];
+    const before = afterTask(start);
+    if (before) return `right after **${before.title}** ends`;
+    return undefined;
+  };
+
+  let best: number;
+  let fallback: string | undefined;
+  const inside = input.parts?.length ? starts.filter((start) => inPart(start)) : [];
+  if (inside.length) best = learned !== undefined ? closest(inside, midnight + learned * MINUTE) : inside[0];
+  else if (starts.some(nearLearned)) best = closest(starts.filter(nearLearned), midnight + learned! * MINUTE);
+  else if (starts.some(inWindow)) best = starts.find(inWindow)!;
+  else if (input.parts?.length) {
+    // The part of the day he named is full: the free time nearest to it.
+    best = closest(starts, midnight + input.parts[0].start * MINUTE);
+    fallback = "the nearest free time";
+  } else {
+    best = starts[0];
+    fallback = "the first free time";
   }
 
-  // Not sure: two or three real free slots to choose from.
-  const options = spreadSlots(starts, midnight);
-  if (options.length === 1) return { decision: "propose", at: new Date(options[0]), why: "the only free time that day" };
-  return { decision: "ask", options: options.map((start) => new Date(start)) };
+  const chosen = [best];
+  for (const start of [...spreadSlots(starts, midnight, 6), ...starts]) {
+    if (chosen.length >= 3) break;
+    if (chosen.every((other) => Math.abs(other - start) >= APART * MINUTE)) chosen.push(start);
+  }
+  return chosen.map((start, index) => {
+    const reason = why(start) ?? (index === 0 ? fallback : undefined);
+    return reason ? { at: new Date(start), why: reason } : { at: new Date(start) };
+  });
+}
+
+/** Two halves of a long task, each in a real free gap of that day, if there are two. */
+function splitInTwo(input: SlotInput): Date[] | undefined {
+  if (input.minutes < SPLIT_FROM) return undefined;
+  const half = Math.ceil(input.minutes / 2 / STEP) * STEP;
+  const halfInput = { ...input, minutes: half };
+  const ranked = rankSlots(halfInput);
+  if (ranked.length === 0) return undefined;
+  const first = ranked[0].at.getTime();
+  const apart = (start: number) => start >= first + (half + GAP) * MINUTE || start + (half + GAP) * MINUTE <= first;
+  const rest = freeStarts(halfInput).filter(apart);
+  if (rest.length === 0) return undefined;
+  const second = rankSlots(halfInput, rest)[0].at.getTime();
+  return [first, second].sort((a, b) => a - b).map((start) => new Date(start));
+}
+
+/** A day he named without a time: asked (best first), Tony's own pick for an "auto" kind, two halves, or none. */
+export function decideSlot(input: SlotInput): Decision {
+  const options = rankSlots(input);
+  if (options.length === 0) {
+    const parts = splitInTwo(input);
+    return parts ? { decision: "split", parts, minutes: Math.ceil(input.minutes / 2 / STEP) * STEP } : { decision: "none" };
+  }
+  const taken = takenNote(input);
+  if ((input.routine.auto_kinds ?? []).includes(input.kind)) {
+    const [best] = options;
+    return { decision: "auto", at: best.at, why: best.why ?? "the first free time", options, ...(taken ? { taken } : {}) };
+  }
+  return { decision: "ask", options, ...(taken ? { taken } : {}) };
+}
+
+/** Two or three real free slots on that day, best first, for him to choose from. */
+export function slotChoices(input: SlotInput): SlotOption[] {
+  return rankSlots(input);
+}
+
+// ── "Decide yourself for <kind>", and a time he types ───────────────────
+
+/** The kinds in his words: "videos and podcasts" → watch; "coding and workouts" → coding, workout; "everything" → all. */
+export function kindsFromWords(text: string): Kind[] {
+  const t = text.toLowerCase();
+  if (/\b(everything|all (of )?(them|my tasks|tasks|kinds)|any(thing| task)|every task)\b/.test(t)) return [...KINDS];
+  const found: Kind[] = [];
+  const add = (kind: Kind, pattern: RegExp) => {
+    if (pattern.test(t) && !found.includes(kind)) found.push(kind);
+  };
+  add("watch", /\b(videos?|podcasts?|youtube|watch(ing)?|masterclass(es)?|listening)\b/);
+  add("study", /\b(study(ing)?|ielts|reading|read|learning|books?)\b/);
+  add("content", /\b(content|posts?|posting|stories|story|reels?|filming|shooting|instagram)\b/);
+  add("coding", /\b(cod(e|ing)|programming|apps?|website|bot|features?)\b/);
+  add("workout", /\b(work ?outs?|gym|exercise|training|sports?)\b/);
+  add("errand", /\b(errands?|calls?|shopping|buying|bills?|payments?)\b/);
+  add("prep", /\b(lesson prep|preparation|prepar(e|ing) (my )?lessons?|slides|presentations?)\b/);
+  add("teaching", /\b(classes|lessons|teaching)\b/);
+  return KINDS.filter((kind) => found.includes(kind));
+}
+
+/**
+ * A time he typed after [✏️ Other time] ("20:30", "8 pm", "at 21.15") on that
+ * day. "8:30" can be morning or evening: his usual time for this kind decides,
+ * and with no habit it is left to the brain (undefined). A sentence, or a time
+ * already past, is not a typed time.
+ */
+export function typedTime(text: string, input: { day: Date; now: Date; routine: Routine; kind: Kind }): Date | undefined {
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "")
+    .replace(/^(ok(ay)?|then|let'?s say|make it|at|around|about|by)\s+/, "")
+    .replace(/^(at|around|about|by)\s+/, "")
+    .trim();
+  if (!t || t.split(/\s+/).length > 2) return undefined;
+  const minutes = parseClockText(t);
+  if (minutes === undefined || minutes >= DAY_MINUTES) return undefined;
+  const explicit = /[ap]\.?\s?m/.test(t) || /^0\d/.test(t) || minutes >= 13 * 60 || minutes < 60;
+  const midnight = localMidnight(input.day);
+  const { wake, sleep } = minutesOf(input.routine);
+  const candidates = (explicit ? [minutes] : [minutes, minutes + 12 * 60])
+    .filter((minute) => minute < DAY_MINUTES)
+    .map((minute) => midnight + minute * MINUTE)
+    .filter((time) => time > input.now.getTime() + 60_000);
+  const awake = candidates.filter((time) => {
+    const minute = (time - midnight) / MINUTE;
+    return minute >= wake && minute < sleep;
+  });
+  if (explicit) return candidates.length ? new Date(candidates[0]) : undefined;
+  if (awake.length === 1) return new Date(awake[0]);
+  if (awake.length === 0) return undefined;
+  const preferred = preferredRanges(input.routine, input.kind, input.day);
+  const fits = awake.filter((time) => preferred.some((range) => time >= range.start && time < range.end));
+  return fits.length === 1 ? new Date(fits[0]) : undefined;
 }
 
 /** The free start nearest to `at` (same day, at or after it first), for a time that is taken. */
@@ -463,9 +614,11 @@ export function routineLines(routine: Routine): string[] {
   const learned = Object.entries(routine.learned ?? {})
     .map(([kind, samples]) => {
       const minute = learnedMinute(samples);
-      return minute === undefined ? undefined : `${kind} around ${clockText(minute)} (from ${samples.length} moves)`;
+      const name = KIND_LABEL[(kind === "learn" ? "watch" : kind) as Kind] ?? kind;
+      return minute === undefined ? undefined : `${name} around ${clockText(minute)} (from ${samples.length} times)`;
     })
     .filter(Boolean);
+  const auto = KINDS.filter((kind) => (routine.auto_kinds ?? []).includes(kind)).map((kind) => KIND_LABEL[kind]);
   return [
     `Awake: ${routine.wake}–${routine.sleep}`,
     `Teaching: ${routine.teaching ?? "not set"}`,
@@ -474,5 +627,6 @@ export function routineLines(routine: Routine): string[] {
     `Workout: ${routine.workout ?? "not set"}`,
     `Free days: ${routine.free_days ?? "not set"}`,
     ...(learned.length ? [`Learned: ${learned.join("; ")}`] : []),
+    ...(auto.length ? [`Tony picks the time for: ${auto.join(", ")}`] : []),
   ];
 }

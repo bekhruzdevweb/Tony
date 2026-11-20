@@ -1,7 +1,7 @@
 import "server-only";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { MessageOrigin } from "grammy/types";
-import { runAction } from "./actions";
+import { keyboardOf, runAction } from "./actions";
 import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
@@ -29,7 +29,7 @@ import { applyPlan, buildPlan, dismissPlan, loadPlan, notePlanMessage, planView,
 import { parseAction } from "./reminder-messages";
 import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
 import { createLoginCode } from "./session";
-import { getSettings, updateSettings } from "./settings";
+import { getSettings, setPendingSlot, updateSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { boldTimes, editRich, markdownToHtml, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
@@ -37,13 +37,14 @@ import { claimsSent, givesTime } from "./brain/checks";
 import { CLEANED, handleMessage, type Thought } from "./brain/handle";
 import { choicesFor, getRoutine } from "./routine";
 import { routineLines } from "./routine-rules";
-import { placeTask, runProposal } from "./slots";
+import { placeTask, runProposal, splitTask } from "./slots";
+import { dayLabel, slotButtons, slotQuestion } from "./slot-text";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
-import { recentChanges, undoChange } from "./history";
+import { HistoryOff, recentChanges, undoChange } from "./history";
 import { forgetFact, memoryList } from "./memory";
 import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
-import { addMinutes, formatTime, parseLocalDateTime, toWholeMinute } from "./time";
+import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
@@ -322,7 +323,8 @@ export function getBot(): Bot | undefined {
   tasks.command("tomorrow", async (ctx) => {
     await retire({ kinds: ["plan"] });
     const now = new Date();
-    const view = await dayView(addMinutes(now, 24 * 60), now);
+    // After midnight, "tomorrow" is the day just begun (the day after he sleeps).
+    const view = await dayView(hisTomorrow(now), now);
     await say(ctx, view.html, { keyboard: view.keyboard, kind: "plan" });
   });
 
@@ -447,7 +449,7 @@ export function getBot(): Bot | undefined {
       try {
         if (action === "new") {
           const now = new Date();
-          const result = await buildPlan({ scope: "day", day: a === "tomorrow" ? addMinutes(now, 24 * 60) : now, now });
+          const result = await buildPlan({ scope: "day", day: a === "tomorrow" ? hisTomorrow(now) : now, now });
           if ("nothing" in result) toast = result.nothing;
           else if (chatId !== undefined) await showPlan(chatId, result.plan.id);
           return;
@@ -548,35 +550,46 @@ export function getBot(): Bot | undefined {
     if (payload.startsWith("sl:")) {
       const [, action, id, value] = payload.split(":");
       const taskId = Number(id);
-      await ctx.answerCallbackQuery().catch(() => undefined);
+      // [✏️ Other time] answers with a small note on the screen, not a message.
+      await ctx.answerCallbackQuery(action === "other" ? { text: "Type the time" } : undefined).catch(() => undefined);
       const showOutcome = async (text: string, keyboard?: InlineKeyboard) => {
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
         if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
-        // His ✓ on Tony's slot is a yes; a slot he picked himself also teaches Tony his preferred time.
-        const result = await placeTask(taskId, new Date(Number(value) * 60_000), { learn: action === "at" });
+        // A slot he tapped is his choice: placed, and it teaches Tony when he likes this kind of task.
+        const result = await placeTask(taskId, new Date(Number(value) * 60_000), { learn: true });
+        await showOutcome(result.text);
+        return;
+      }
+      if (action === "split") {
+        // [✂️ Split …]: the two halves, only on his tap.
+        const [, , , first, second] = payload.split(":");
+        const result = await splitTask(taskId, [new Date(Number(first) * 60_000), new Date(Number(second) * 60_000)]);
         await showOutcome(result.text);
         return;
       }
       if (action === "edit") {
+        // [✏️ Change] under Tony's own pick: the free times that day, best first, and Other.
         const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
         const task = found.data as Task | null;
         if (!task) return showOutcome("That task no longer exists, sir.");
-        const options = await choicesFor(task, parseLocalDateTime(`${value}T12:00`)!, new Date());
-        const keyboard = new InlineKeyboard();
-        for (const option of options) keyboard.text(formatTime(option), `sl:at:${taskId}:${Math.round(option.getTime() / 60_000)}`);
-        keyboard.row().text("✏️ Other time", `sl:other:${taskId}:${value}`);
-        await showOutcome(options.length ? `**${task.title}**: these are free that day, sir.` : `**${task.title}**: nothing else is free that day, sir.`, keyboard);
+        const options = (await choicesFor({ ...task, due_at: null } as Task, parseLocalDateTime(`${value}T12:00`)!, new Date())).filter((option) => !task.due_at || option.at.getTime() !== new Date(task.due_at).getTime());
+        if (options.length === 0) return showOutcome(`**${task.title}**: nothing else is free that day, sir.`, keyboardOf([[{ text: "✏️ Other time", data: `sl:other:${taskId}:${value}` }]]));
+        const text = slotQuestion({ title: task.title, marks: "", when: dayLabel(value, new Date()).when, options });
+        await showOutcome(text, keyboardOf(slotButtons({ kind: "ask", taskId, day: value, options })));
         return;
       }
       if (action === "other") {
+        // No new message: the question shows it is waiting, and the next time he types is placed in code.
         const found = await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle();
         const title = (found.data as { title?: string } | null)?.title ?? "the task";
+        await setPendingSlot({ task_id: taskId, day: value });
         await updateSettings({ pending_note: `He is choosing a time for task #${taskId} "${title}" on ${value}. His next message gives it: set it with update_task.`, pending_note_at: new Date().toISOString() });
-        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-        await say(ctx, `What time for ${b(title)}, sir?`, { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        const waiting = `✏️ **${title}**, ${dayLabel(value, new Date()).plain.replace(/,$/, "")}: type the time.`;
+        const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(waiting)) : false;
+        if (!edited) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
         return;
       }
       return;
@@ -645,8 +658,9 @@ export function getBot(): Bot | undefined {
       if (!pending) return;
       const pick = payload.slice(3);
       if (pick === "other") {
+        // No extra "tell me in your own words" message: the question itself shows it waits for his words.
         await updateSettings({ pending_note: `You asked him: "${pending.question}". He chose to answer in his own words; his next message is that answer.`, pending_note_at: new Date().toISOString() });
-        await say(ctx, "Tell me in your own words, sir.");
+        if (chatId !== undefined && tapped) await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(`${pending.question}\n✏️ _Type your answer._`)));
         return;
       }
       const chosen = pending.options[Number(pick)];
@@ -667,7 +681,9 @@ export function getBot(): Bot | undefined {
       const task = found.data as Task | null;
       if (!task) return;
       await updateSettings({ pending_note: `You asked him when he would do task #${task.id} "${task.title}". His next message is probably the answer: set that time with update_task.`, pending_note_at: new Date().toISOString() });
-      await say(ctx, `When would suit for ${b(task.title)}, sir?`);
+      // The time he types next is placed in code; no extra message, the suggestion shows it is waiting.
+      await setPendingSlot({ task_id: task.id, day: localDate(new Date()) });
+      if (base !== undefined && chatId !== undefined && tapped) await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}✏️ Type the time.`);
       return;
     }
 
@@ -812,6 +828,16 @@ export function getBot(): Bot | undefined {
         replies.push("(the last changes, to undo)");
         continue;
       }
+      if (item.kind === "placed") {
+        // The time he typed after [✏️ Other time], placed in plain code.
+        if (ctx.chat) {
+          const sent = await sendMarkdown(bot, ctx.chat.id, boldTimes(item.reply));
+          await track(sent, "confirmation", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        }
+        replies.push(item.reply);
+        confirmed = true;
+        continue;
+      }
       if (item.kind === "failed") {
         // Nothing was saved: his words are never turned into a task on the model's absence.
         const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
@@ -851,7 +877,14 @@ export function getBot(): Bot | undefined {
 
   /** /undo: the last ten changes to his tasks, each with ↩ to put it back. Plain code. */
   const undoView = async (lead?: string): Promise<{ text: string; keyboard?: InlineKeyboard }> => {
-    const changes = await recentChanges(10);
+    let changes;
+    try {
+      changes = await recentChanges(10);
+    } catch (error) {
+      // Before the history table exists (migration 0022), /undo says so instead of failing.
+      if (error instanceof HistoryOff) return { text: "Undo starts once the database update is in, sir: changes are recorded from then on." };
+      throw error;
+    }
     if (changes.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}Nothing left to undo, sir.` };
     const keyboard = new InlineKeyboard();
     changes.forEach((change, index) => {
@@ -926,17 +959,10 @@ export function getBot(): Bot | undefined {
       let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
       // Every part ticked: [✓ Mark done] [Not yet], never done without asking.
       if (thought.askComplete) keyboard = completeKeyboard(thought.askComplete.taskId);
-      // A day he named without a time: [✓ 10:00] [✏️ Change] for the one slot Tony proposes, or the free slots to choose from.
+      // A day he named without a time: the free slots, best first (⭐), and [✏️ Other time];
+      // [✏️ Change] under Tony's own pick; [✂️ Split …] for a long task with no gap for it.
       const slot = thought.slot;
-      if (slot?.kind === "propose") {
-        keyboard = new InlineKeyboard()
-          .text(`✓ ${formatTime(slot.at)}`, `sl:ok:${slot.taskId}:${Math.round(slot.at.getTime() / 60_000)}`)
-          .text("✏️ Change", `sl:edit:${slot.taskId}:${slot.day}`);
-      } else if (slot?.kind === "ask") {
-        keyboard = new InlineKeyboard();
-        for (const option of slot.options) keyboard.text(formatTime(option), `sl:at:${slot.taskId}:${Math.round(option.getTime() / 60_000)}`);
-        keyboard.row().text("✏️ Other time", `sl:other:${slot.taskId}:${slot.day}`);
-      }
+      if (slot) keyboard = keyboardOf(slotButtons(slot));
       // "I'll remove Buy notebook": [✓] does it in plain code, [✏️] lets him say otherwise.
       if (thought.proposal) keyboard = new InlineKeyboard().text("✓ Do it", `pa:ok:${thought.proposal.offerId}`).text("✏️ Change", `pa:edit:${thought.proposal.offerId}`);
       // A clash the change created: move it to the next free hour, or keep both. Plain code.

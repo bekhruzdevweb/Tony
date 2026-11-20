@@ -2,19 +2,25 @@ import "server-only";
 import { requireDb } from "./db";
 import {
   DEFAULT_ROUTINE,
+  KINDS,
+  KIND_LABEL,
   ROUTINE_FIELDS,
   decideSlot,
   kindOf,
+  kindsFromWords,
   localMidnight,
   nearestFree,
   normalizeField,
+  parseClockText,
   slotChoices,
   withSample,
   type Decision,
   type Interval,
+  type Kind,
   type Part,
   type Routine,
   type RoutineField,
+  type SlotOption,
 } from "./routine-rules";
 import { busyIntervals, estimateMinutes } from "./schedule";
 import { OPEN_STATUSES, type Task } from "./tasks";
@@ -41,7 +47,27 @@ export async function getRoutine(): Promise<Routine> {
     return DEFAULT_ROUTINE;
   }
   const row = data as Partial<Routine>;
-  return { ...DEFAULT_ROUTINE, ...row, learned: (row.learned as Routine["learned"]) ?? {} };
+  // Before migration 0023 the row has no auto_kinds: nothing is picked without asking.
+  return { ...DEFAULT_ROUTINE, ...row, learned: (row.learned as Routine["learned"]) ?? {}, auto_kinds: Array.isArray(row.auto_kinds) ? row.auto_kinds : [] };
+}
+
+/**
+ * "Decide yourself for podcasts" (on) or "ask me again for podcasts" (off):
+ * the kinds Tony may pick a time for himself, read back. Plain words in, the
+ * kinds he named out.
+ */
+export async function setAutoKinds(words: string, on: boolean): Promise<{ ok: true; kinds: Kind[]; label: string; on: boolean; all: Kind[] } | { ok: false; error: string }> {
+  const kinds = kindsFromWords(words);
+  if (kinds.length === 0) return { ok: false, error: `could not tell which kind of task "${words}" means: videos and podcasts, study, content, coding, workouts, errands, lesson prep or classes` };
+  const routine = await getRoutine();
+  const before = routine.auto_kinds ?? [];
+  const next = on ? KINDS.filter((kind) => before.includes(kind) || kinds.includes(kind)) : before.filter((kind) => !kinds.includes(kind as Kind));
+  const { error } = await requireDb().from("routine").update({ auto_kinds: next, updated_at: new Date().toISOString() }).eq("id", true);
+  if (error) return { ok: false, error: "that setting could not be kept" };
+  const stored = (await getRoutine()).auto_kinds ?? [];
+  const kept = kinds.every((kind) => stored.includes(kind) === on);
+  if (!kept) return { ok: false, error: "that setting could not be kept" };
+  return { ok: true, kinds, label: kinds.map((kind) => KIND_LABEL[kind]).join(", "), on, all: stored as Kind[] };
 }
 
 /** One field of his routine, from his words, checked and read back. */
@@ -69,10 +95,11 @@ async function projectName(projectId: number | null | undefined): Promise<string
 }
 
 /**
- * He moved a task to a new time himself (in words, with a button, or in the
- * app): Tony learns that this kind of task belongs around that time.
+ * He scheduled a task at a time of his own (typed it, tapped a slot, moved
+ * it), or did it then: Tony learns that this kind of task belongs around that
+ * time. Never fails the action it comes with.
  */
-export async function recordMove(task: Pick<Task, "title"> & Partial<Pick<Task, "project_id" | "kind">>, at: Date): Promise<void> {
+export async function recordSample(task: Pick<Task, "title"> & Partial<Pick<Task, "project_id" | "kind">>, at: Date): Promise<void> {
   if (task.kind === "prayer") return;
   try {
     const kind = kindOf(task.title, await projectName(task.project_id));
@@ -82,8 +109,24 @@ export async function recordMove(task: Pick<Task, "title"> & Partial<Pick<Task, 
       .update({ learned: withSample(routine.learned, kind, minuteOfDay(at)), updated_at: new Date().toISOString() })
       .eq("id", true);
   } catch (error) {
-    console.error("recordMove failed:", error);
+    console.error("recordSample failed:", error);
   }
+}
+
+/**
+ * He finished a task: when he really did it (its start: the moment he ticked
+ * it, less its length), learned like a time he chose. Only inside his waking
+ * day; a tick at night says nothing about when he likes to do things.
+ */
+export async function recordDone(task: Pick<Task, "title"> & Partial<Pick<Task, "project_id" | "kind" | "duration_minutes">>, doneAt: Date): Promise<void> {
+  if (task.kind === "prayer") return;
+  const routine = await getRoutine();
+  const started = new Date(doneAt.getTime() - (task.duration_minutes || 0) * 60_000);
+  const minute = minuteOfDay(started);
+  const wake = parseClockText(routine.wake) ?? 7 * 60;
+  const sleep = parseClockText(routine.sleep) ?? 23 * 60;
+  if (minute < wake || minute >= sleep) return;
+  await recordSample(task, started);
 }
 
 /** What is already on the list around that day: every open timed task for its length, prayers ±15 minutes. */
@@ -107,14 +150,19 @@ async function slotInput(task: Placeable, day: Date, now: Date, parts?: Part[]) 
   return { minutes: task.duration_minutes || estimateMinutes(task.title), kind: kindOf(task.title, project), day, now, routine, busy, parts };
 }
 
-/** A day he named without a time: one slot, or two or three to choose from, or none. */
+/** A day he named without a time: asked (best first), Tony's own pick for a kind he let him decide, two halves, or none. */
 export async function decideFor(task: Placeable, day: Date, now = new Date(), parts?: Part[]): Promise<Decision> {
   return decideSlot(await slotInput(task, day, now, parts));
 }
 
-/** Two or three real free slots on that day that fit his routine. */
-export async function choicesFor(task: Placeable, day: Date, now = new Date()): Promise<Date[]> {
+/** Two or three real free slots on that day, best first, each with its reason. */
+export async function choicesFor(task: Placeable, day: Date, now = new Date()): Promise<SlotOption[]> {
   return slotChoices(await slotInput(task, day, now));
+}
+
+/** The kind of task this is, for learning and for the time he types. */
+export async function kindFor(task: Placeable): Promise<Kind> {
+  return kindOf(task.title, await projectName(task.project_id));
 }
 
 /** The free time nearest `at` for this task (its own time if that is free). */
@@ -122,16 +170,15 @@ export async function nearestFreeFor(task: Placeable, at: Date, now = new Date()
   return nearestFree({ ...(await slotInput(task, at, now)), at });
 }
 
-/** The time a button puts a task on that day: its own time of day if free, else what his routine says. */
-export async function timeOnDay(task: Placeable & { due_at?: string | null }, day: Date, now = new Date()): Promise<{ at: Date; why?: string } | undefined> {
-  if (task.due_at) {
-    const minute = minuteOfDay(new Date(task.due_at));
-    const same = new Date(localMidnight(day) + minute * 60_000);
-    const free = await nearestFreeFor(task, same, now);
-    return free ? { at: free } : undefined;
-  }
-  const decision = await decideFor(task, day, now);
-  if (decision.decision === "propose") return { at: decision.at, why: decision.why };
-  if (decision.decision === "ask") return { at: decision.options[0] };
-  return undefined;
+/**
+ * The time a button puts a task with its own time on another day: the same
+ * time of day if free, else the nearest free time. An undated task has no time
+ * of its own: undefined, and he is asked instead (Change 1).
+ */
+export async function timeOnDay(task: Placeable & { due_at?: string | null }, day: Date, now = new Date()): Promise<{ at: Date } | undefined> {
+  if (!task.due_at) return undefined;
+  const minute = minuteOfDay(new Date(task.due_at));
+  const same = new Date(localMidnight(day) + minute * 60_000);
+  const free = await nearestFreeFor(task, same, now);
+  return free ? { at: free } : undefined;
 }

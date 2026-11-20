@@ -17,8 +17,8 @@ const DEFAULT_MINUTES = 30;
 /** Light tasks look for room from 13:00 first. */
 const AFTERNOON_HOUR = 13;
 
-export type Interval = { start: number; end: number };
-export type Busy = { due_at: string | null; duration_minutes?: number | null; kind?: string | null; status?: string };
+export type Interval = { start: number; end: number; title?: string };
+export type Busy = { due_at: string | null; duration_minutes?: number | null; kind?: string | null; status?: string; title?: string };
 export type ToPlace = {
   id: number;
   title: string;
@@ -55,7 +55,8 @@ export function busyIntervals(tasks: Busy[]): Interval[] {
     .filter((task) => task.due_at && open.has(task.status))
     .map((task) => {
       const at = new Date(task.due_at!).getTime();
-      return task.kind === "prayer" ? { start: at - PRAYER_MARGIN, end: at + PRAYER_MARGIN } : { start: at, end: at + (task.duration_minutes || DEFAULT_MINUTES) * MINUTE };
+      if (task.kind === "prayer") return { start: at - PRAYER_MARGIN, end: at + PRAYER_MARGIN };
+      return { start: at, end: at + (task.duration_minutes || DEFAULT_MINUTES) * MINUTE, ...(task.title ? { title: task.title } : {}) };
     });
 }
 

@@ -56,8 +56,13 @@ describe("Kinds of task (his real titles)", () => {
     expect(kindOf("Shoot app tutorial on Zoom")).toBe("content");
     expect(kindOf("Update fitness app")).toBe("coding");
     expect(kindOf("Plan new chatbot agent features")).toBe("coding");
-    expect(kindOf("Watch: Instagram Masterclass (Brock Johnson)")).toBe("learn");
-    expect(kindOf("Watch podcast and take notes")).toBe("learn");
+    // His list of kinds: podcasts/videos (watch), study, content, coding, workouts, errands.
+    expect(kindOf("Watch: Instagram Masterclass (Brock Johnson)")).toBe("watch");
+    expect(kindOf("Watch podcast and take notes")).toBe("watch");
+    expect(kindOf("Watch reel: humor plus education")).toBe("watch");
+    expect(kindOf("Check YouTube video, start doing it")).toBe("watch");
+    expect(kindOf("Study IELTS reading")).toBe("study");
+    expect(kindOf("Read the grammar book")).toBe("study");
     expect(kindOf("Make English File presentation")).toBe("prep");
     expect(kindOf("Launch beginner and elementary course")).toBe("prep");
     expect(kindOf("Conduct the lesson")).toBe("teaching");
@@ -87,30 +92,73 @@ describe("Parts of the day he names", () => {
   });
 });
 
-describe("Day but no time: propose one slot, or ask with real free ones", () => {
+describe("Day but no time: ALWAYS asked, 2–3 real free slots, best first with a reason", () => {
   const monday = at("2026-11-23T12:00");
-  it("content with content hours: ONE slot in them", () => {
-    const decision = decideSlot({ minutes: 15, kind: "content", day: monday, now: NOW, routine: routine({ content: "10:00-12:00" }), busy: [] });
-    expect(decision).toMatchObject({ decision: "propose", why: "your content time" });
-    expect(hhmm((decision as { at: Date }).at)).toBe("10:00");
-  });
-  it("his learned time beats the routine's hours", () => {
-    const decision = decideSlot({ minutes: 30, kind: "learn", day: monday, now: NOW, routine: routine({ learned: { learn: [1260, 1275, 1260] } }), busy: [] });
-    expect(decision).toMatchObject({ decision: "propose", why: "you usually watch and read around 21:00" });
-  });
-  it("a part of the day he named is clear enough (Sunday afternoon or noon)", () => {
-    const decision = decideSlot({ minutes: 90, kind: "coding", day: at("2026-11-22T12:00"), now: NOW, routine: routine(), busy: [], parts: partsOfDay("Sunday afternoon or noon") });
-    expect(decision).toMatchObject({ decision: "propose", why: "around noon, as you said" });
-    expect(hhmm((decision as { at: Date }).at)).toBe("12:00");
-  });
-  it("not sure (watching a video, no habit): asks once, with 2–3 real free slots", () => {
-    const busy = [block("2026-11-23T10:00", 240)]; // the 4-hour Instagram masterclass
-    const decision = decideSlot({ minutes: 30, kind: "learn", day: monday, now: NOW, routine: routine({ workout: "18:00-20:00" }), busy });
+  type Asked = { decision: "ask"; options: { at: Date; why?: string }[]; taken?: string };
+  const asked = (decision: ReturnType<typeof decideSlot>) => {
     expect(decision.decision).toBe("ask");
-    const options = (decision as { options: Date[] }).options;
-    expect(options.length).toBeGreaterThanOrEqual(2);
-    expect(options.length).toBeLessThanOrEqual(3);
-    for (const option of options) expect(option.getTime() + 30 * 60_000 + 10 * 60_000 <= busy[0].start || option.getTime() >= busy[0].end + 10 * 60_000).toBe(true);
+    return decision as Asked;
+  };
+  it("content with content hours: asked, never picked; the first option is in them, 'your content time'", () => {
+    const decision = asked(decideSlot({ minutes: 15, kind: "content", day: monday, now: NOW, routine: routine({ content: "10:00-12:00" }), busy: [] }));
+    expect(hhmm(decision.options[0].at)).toBe("10:00");
+    expect(decision.options[0].why).toBe("your content time");
+    expect(decision.options.length).toBeGreaterThanOrEqual(2);
+    expect(decision.options.length).toBeLessThanOrEqual(3);
+  });
+  it("his usual time comes first, with that reason ('you usually watch videos around 21:00')", () => {
+    const decision = asked(decideSlot({ minutes: 30, kind: "watch", day: monday, now: NOW, routine: routine({ learned: { watch: [1260, 1275, 1260] } }), busy: [] }));
+    expect(hhmm(decision.options[0].at)).toBe("21:00");
+    expect(decision.options[0].why).toBe("you usually watch videos around 21:00");
+  });
+  it("an old 'learn' habit counts as watching", () => {
+    const decision = asked(decideSlot({ minutes: 30, kind: "watch", day: monday, now: NOW, routine: routine({ learned: { learn: [1230, 1230] } }), busy: [] }));
+    expect(hhmm(decision.options[0].at)).toBe("20:30");
+  });
+  it("a part of the day he named comes first (Sunday afternoon or noon), still asked", () => {
+    const decision = asked(decideSlot({ minutes: 90, kind: "coding", day: at("2026-11-22T12:00"), now: NOW, routine: routine(), busy: [], parts: partsOfDay("Sunday afternoon or noon") }));
+    expect(hhmm(decision.options[0].at)).toBe("12:00");
+    expect(decision.options[0].why).toBe("around noon, as you said");
+  });
+  it("not sure (a video, no habit): 2–3 real free slots, clear of the masterclass, which is named as taken", () => {
+    const busy = [{ ...block("2026-11-23T10:00", 240), title: "Watch: Instagram Masterclass" }];
+    const decision = asked(decideSlot({ minutes: 30, kind: "watch", day: monday, now: NOW, routine: routine({ workout: "18:00-20:00" }), busy }));
+    expect(decision.options.length).toBeGreaterThanOrEqual(2);
+    expect(decision.options.length).toBeLessThanOrEqual(3);
+    for (const { at: option } of decision.options) expect(option.getTime() + 30 * 60_000 + 10 * 60_000 <= busy[0].start || option.getTime() >= busy[0].end + 10 * 60_000).toBe(true);
+    expect(decision.taken).toBe("10:00–14:00 is taken by **Watch: Instagram Masterclass**");
+    // Every option has a reason he can read; the first is the best.
+    expect(decision.options[0].why).toBeTruthy();
+  });
+  it("options are at least 90 minutes apart, inside his waking day, and never in the past", () => {
+    const tonight = at("2026-11-20T19:00");
+    const decision = asked(decideSlot({ minutes: 30, kind: "other", day: tonight, now: tonight, routine: routine(), busy: [] }));
+    const times = decision.options.map((option) => option.at.getTime()).sort((a, b) => a - b);
+    for (let i = 1; i < times.length; i++) expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(90 * 60_000);
+    for (const time of times) {
+      expect(time).toBeGreaterThanOrEqual(tonight.getTime() + 15 * 60_000);
+      expect(time + 30 * 60_000).toBeLessThanOrEqual(at("2026-11-20T23:00").getTime());
+    }
+  });
+  it("'decide yourself for videos': Tony picks the best slot himself, and says why", () => {
+    const decision = decideSlot({ minutes: 30, kind: "watch", day: monday, now: NOW, routine: routine({ auto_kinds: ["watch"], learned: { watch: [1230, 1230] } }), busy: [] });
+    expect(decision).toMatchObject({ decision: "auto", why: "you usually watch videos around 20:30" });
+    expect(hhmm((decision as { at: Date }).at)).toBe("20:30");
+    // Other kinds are still asked.
+    expect(decideSlot({ minutes: 30, kind: "coding", day: monday, now: NOW, routine: routine({ auto_kinds: ["watch"] }), busy: [] }).decision).toBe("ask");
+  });
+  it("a 4-hour video with no 4-hour gap: offered in two halves, each in a real free gap", () => {
+    const busy = [block("2026-11-23T08:00", 120), block("2026-11-23T12:30", 90), block("2026-11-23T16:30", 90), block("2026-11-23T20:30", 90)];
+    const decision = decideSlot({ minutes: 240, kind: "watch", day: monday, now: NOW, routine: routine(), busy });
+    expect(decision.decision).toBe("split");
+    const { parts, minutes } = decision as { parts: Date[]; minutes: number };
+    expect(minutes).toBe(120);
+    expect(parts).toHaveLength(2);
+    for (const part of parts) {
+      const free = freeStarts({ minutes: 120, kind: "watch", day: monday, now: NOW, routine: routine(), busy });
+      expect(free).toContain(part.getTime());
+    }
+    expect(Math.abs(parts[1].getTime() - parts[0].getTime())).toBeGreaterThanOrEqual(130 * 60_000);
   });
   it("never two things in one slot: a 90-minute task blocks 90 minutes", () => {
     const busy = [block("2026-11-23T10:00", 90)];

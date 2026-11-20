@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { retire, sendHtml, track } from "./chat-log";
 import { requireDb } from "./db";
 import { env } from "./env";
-import { b, esc, plain } from "./html";
+import { b, plain } from "./html";
 import { logMessage } from "./messages";
 import { timeOnDay } from "./routine";
 import { data } from "./reminder-messages";
@@ -68,7 +68,7 @@ export async function runSuggestions(bot: Bot, chatId: number, settings: Setting
   if (!slot || slot.at.getTime() <= now.getTime()) return 0;
 
   const time = formatTime(slot.at, settings.timezone);
-  const html = `💡 Sir, ${b(task.title)} is still open. I'll put it at ${b(time)}${slot.why ? `, ${esc(slot.why)}` : ""}.`;
+  const html = `💡 Sir, ${b(task.title)} is still open. I'll put it at ${b(time)}.`;
   // ✓ takes it; the others are the ways out.
   const keyboard = new InlineKeyboard()
     .text(`✓ ${time}`, data("move", task.id, Math.round(slot.at.getTime() / MINUTE)))

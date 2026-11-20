@@ -12,6 +12,9 @@ import { formatTime } from "./time";
 
 export type Change = { id: number; taskId: number; at: string; text: string };
 
+/** The history table is not there yet (migration 0022 not applied): /undo says so instead of failing. */
+export class HistoryOff extends Error {}
+
 /** The last changes that can still be undone, newest first, in his words. */
 export async function recentChanges(limit = 10, now = new Date()): Promise<Change[]> {
   const { data, error } = await requireDb()
@@ -21,7 +24,10 @@ export async function recentChanges(limit = 10, now = new Date()): Promise<Chang
     .neq("action", "delete")
     .order("id", { ascending: false })
     .limit(limit * 3);
-  if (error) throw new Error(`recentChanges: ${error.message}`);
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205" || /does not exist|could not find the table/i.test(error.message)) throw new HistoryOff(error.message);
+    throw new Error(`recentChanges: ${error.message}`);
+  }
   const entries = (data ?? []) as HistoryEntry[];
   // Saves made while creating a task (its notes, its parts) are part of "added": one action, one line.
   const created = new Map(entries.filter((entry) => entry.action === "insert").map((entry) => [entry.task_id, new Date(entry.created_at).getTime()]));

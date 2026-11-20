@@ -126,6 +126,11 @@ export function hisDate(now: Date, timeZone = TIMEZONE): string {
   return localDate(isNight(now, timeZone) ? addMinutes(now, -24 * 60) : now, timeZone);
 }
 
+/** A moment on his "tomorrow": after midnight (before 05:00) the day just begun, otherwise the next one. */
+export function hisTomorrow(now: Date, timeZone = TIMEZONE): Date {
+  return isNight(now, timeZone) ? now : addMinutes(now, 24 * 60);
+}
+
 /** "Sat 21 Nov" (with the year only when it is not this one). */
 export function formatDay(at: Date, now = new Date(), timeZone = TIMEZONE): string {
   const year = localDate(at, timeZone).slice(0, 4) === localDate(now, timeZone).slice(0, 4) ? undefined : "numeric";

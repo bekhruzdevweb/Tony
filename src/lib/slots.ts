@@ -4,8 +4,25 @@ import { unsaved } from "./brain/reliability";
 import { runTool } from "./brain/tools";
 import { requireDb } from "./db";
 import { scheduleReminder } from "./reminders";
-import { recordMove } from "./routine";
+import { getRoutine, kindFor, recordSample } from "./routine";
+import { typedTime } from "./routine-rules";
 import { OPEN_STATUSES, type Task } from "./tasks";
+import { parseLocalDateTime } from "./time";
+
+/**
+ * After [✏️ Other time]: the time he typed ("20:30", "8 pm"), placed on that
+ * day in plain code, no model call, and learned. Undefined when his words are
+ * not just a clear time; then the brain reads them.
+ */
+export async function placeTypedTime(text: string, slot: { task_id: number; day: string }, now = new Date()): Promise<{ text: string } | undefined> {
+  const task = (await requireDb().from("tasks").select().eq("id", slot.task_id).maybeSingle()).data as Task | null;
+  const day = parseLocalDateTime(`${slot.day}T12:00`);
+  if (!task || !day || !OPEN_STATUSES.includes(task.status)) return undefined;
+  const at = typedTime(text, { day, now, routine: await getRoutine(), kind: await kindFor(task) });
+  if (!at) return undefined;
+  const placed = await placeTask(task.id, at, { learn: true });
+  return { text: placed.text };
+}
 
 /**
  * What his taps on Tony's proposals do, in plain code (no AI): put a task at
@@ -27,10 +44,42 @@ export async function placeTask(taskId: number, at: Date, options: { learn?: boo
   const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo" }).eq("id", taskId);
   if (error) throw new Error(`placeTask: ${error.message}`);
   await scheduleReminder(taskId, at);
-  if (options.learn) await recordMove(task, at);
+  if (options.learn) await recordSample(task, at);
   const back = (await db.from("tasks").select().eq("id", taskId).maybeSingle()).data as Task | null;
   if (!back?.due_at || new Date(back.due_at).getTime() !== at.getTime()) return { text: `⚠️ **${task.title}**: the time did not save, sir.` };
   return { text: confirmationFor([{ tool: "update_task", title: back.title, status: back.status, due_at: back.due_at }], new Date()), task: back };
+}
+
+/**
+ * His tap on [✂️ Split …]: a long task with no gap for it becomes two halves,
+ * "(1/2)" at the first time and "(2/2)" at the second, each with half the
+ * length and the same notes and attachments' task kept on the first. Read back.
+ */
+export async function splitTask(taskId: number, parts: Date[]): Promise<{ text: string }> {
+  const db = requireDb();
+  const found = await db.from("tasks").select().eq("id", taskId).maybeSingle();
+  const task = found.data as Task | null;
+  if (!task) return { text: "That task no longer exists, sir." };
+  if (!OPEN_STATUSES.includes(task.status)) return { text: `**${task.title}** is already settled, sir.` };
+  if (parts.length !== 2 || parts.some((at) => at.getTime() <= Date.now() - 60_000)) return { text: "Those times have already passed, sir." };
+  const half = Math.ceil((task.duration_minutes || 60) / 2);
+  const base = task.title.replace(/\s*\(\d\/2\)$/, "");
+  const first = { title: `${base} (1/2)`, due_at: parts[0].toISOString(), status: "todo", duration_minutes: half };
+  const { error } = await db.from("tasks").update(first).eq("id", taskId);
+  if (error) throw new Error(`splitTask: ${error.message}`);
+  await scheduleReminder(taskId, parts[0]);
+  const second = await db
+    .from("tasks")
+    .insert({ title: `${base} (2/2)`, due_at: parts[1].toISOString(), status: "todo", duration_minutes: half, notes: task.notes, priority: task.priority, project_id: task.project_id, persistent: task.persistent })
+    .select()
+    .single();
+  if (second.error) throw new Error(`splitTask: ${second.error.message}`);
+  const other = second.data as Task;
+  await scheduleReminder(other.id, parts[1]);
+  const rows = ((await db.from("tasks").select().in("id", [taskId, other.id])).data ?? []) as Task[];
+  const ok = rows.length === 2 && rows.every((row) => row.due_at && parts.some((at) => new Date(row.due_at!).getTime() === at.getTime()));
+  if (!ok) return { text: `⚠️ **${base}**: the split did not save, sir.` };
+  return { text: confirmationFor(rows.sort((a, b) => a.due_at!.localeCompare(b.due_at!)).map((row) => ({ tool: "update_task" as const, title: row.title, status: row.status, due_at: row.due_at })), new Date()) };
 }
 
 type ActionOffer = {

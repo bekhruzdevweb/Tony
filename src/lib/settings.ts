@@ -25,7 +25,35 @@ export type Settings = {
   pending_choices: { question: string; options: string[] } | null;
   pending_note: string | null;
   pending_note_at: string | null;
+  /** After [✏️ Other time]: the task waiting for the time he types next (migration 0023). */
+  pending_slot?: { task_id: number; day: string } | null;
+  pending_slot_at?: string | null;
 };
+
+/** How long a tapped [✏️ Other time] waits for the time he types. */
+const SLOT_MINUTES = 30;
+
+/**
+ * Keeps (or clears) the task waiting for a typed time. Before migration 0023
+ * the columns are missing: nothing is kept, and Tony's note to the brain does
+ * the job instead. Never fails the tap.
+ */
+export async function setPendingSlot(slot: { task_id: number; day: string } | null, now = new Date()): Promise<void> {
+  const { error } = await requireDb()
+    .from("settings")
+    .update({ pending_slot: slot, pending_slot_at: slot ? now.toISOString() : null })
+    .eq("id", true);
+  if (error) console.warn(`setPendingSlot: ${error.message}`);
+}
+
+/** The task waiting for a typed time, if he tapped [✏️ Other time] in the last half hour. */
+export async function waitingSlot(now = new Date()): Promise<{ task_id: number; day: string } | undefined> {
+  const settings = await getSettings().catch(() => undefined);
+  const slot = settings?.pending_slot;
+  if (!slot || !settings?.pending_slot_at || !Number.isFinite(Number(slot.task_id)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(slot.day))) return undefined;
+  if (now.getTime() - new Date(settings.pending_slot_at).getTime() > SLOT_MINUTES * 60_000) return undefined;
+  return { task_id: Number(slot.task_id), day: String(slot.day) };
+}
 
 export async function getSettings(): Promise<Settings> {
   const { data, error } = await requireDb().from("settings").select().limit(1).single();

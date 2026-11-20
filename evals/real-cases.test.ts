@@ -58,7 +58,7 @@ const tasks = () => state.db.rows("tasks") as Record<string, unknown>[];
 const byTitle = (title: string) => tasks().find((row) => row.title === title)!;
 const replies = (handled: Awaited<ReturnType<typeof handleMessage>>) =>
   handled.map((item) =>
-    item.kind === "thought" ? item.thought.reply : item.kind === "failed" || item.kind === "link" ? item.reply : item.kind === "media" ? `[media ${item.ids.join(",")}]` : `[${item.kind}]`,
+    item.kind === "thought" ? item.thought.reply : item.kind === "failed" || item.kind === "link" || item.kind === "placed" ? item.reply : item.kind === "media" ? `[media ${item.ids.join(",")}]` : `[${item.kind}]`,
   );
 
 async function run(message: string, now: string, script: Step[]) {
@@ -336,69 +336,198 @@ const said = (role: "user" | "tony", text: string, when: string) => state.db.ins
 const routineRow = (patch: Record<string, unknown>) => state.db.insert("routine", { id: true, ...patch });
 const linkOffer = (url: string, title: string, when: string) => state.db.insert("offers", { kind: "link", payload: { url, title, summary: "" }, created_at: at(when).toISOString() });
 
-describe("Decide vs ask: a day without a time", () => {
-  it("content tomorrow, with content hours: ONE slot proposed in them, [✓] places it", async () => {
+// ── Change 1 (21 Nov): a day without a time is ALWAYS asked, best first, with a reason ──
+type AskSlot = { kind: "ask"; taskId: number; day: string; options: { at: Date; why?: string }[]; taken?: string };
+const askOf = (result: Awaited<ReturnType<typeof run>>, index = 0) => {
+  const slot = thoughtOf(result, index)?.slot;
+  expect(slot?.kind).toBe("ask");
+  return slot as AskSlot;
+};
+const timesOf = (slot: AskSlot) => slot.options.map((option) => hhmm(option.at.toISOString()));
+
+describe("Change 1 · a day without a time: always asked, never picked", () => {
+  it("content tomorrow, with content hours: asked; the first option is in them ('your content time'); nothing placed until his tap", async () => {
     routineRow({ content: "10:00–12:00" });
     const result = await run("I need to post stories tomorrow", "2026-11-20T21:00", [tools(["add_task", { title: "Post stories", day: "2026-11-21" }])]);
-    const thought = thoughtOf(result)!;
-    expect(thought.slot).toMatchObject({ kind: "propose", why: "your content time" });
-    expect(result.replies[0]).toMatch(/^I'll put \*\*Post stories\*\* tomorrow, Sat 21 Nov, at \*\*10:00\*\*, your content time\.$/);
-    expect(result.replies[0]).not.toMatch(/inbox/);
-    // Nothing is placed until he taps ✓.
+    const slot = askOf(result);
+    expect(timesOf(slot)[0]).toBe("10:00");
+    expect(slot.options[0].why).toBe("your content time");
+    expect(slot.options.length).toBeGreaterThanOrEqual(2);
+    expect(result.replies[0]).toMatch(/When tomorrow, Sat 21 Nov\? Best: \*\*10:00\*\*, your content time\./);
+    expect(result.replies[0]).not.toMatch(/inbox|I'll put/);
+    expect(result.replies[0].match(/\?/g)).toHaveLength(1);
+    // Nothing is placed until he taps one.
     expect(byTitle("Post stories").due_at).toBeNull();
-    const tapped = await placeTask(thought.slot!.taskId, (thought.slot as { at: Date }).at);
+    const tapped = await placeTask(slot.taskId, slot.options[0].at, { learn: true });
     expect(hhmm(byTitle("Post stories").due_at)).toBe("10:00");
     expect(tapped.text).toMatch(/Post stories.*10:00/);
   });
 
-  it("23:20 'schedule it for upcoming Sunday afternoon or noon': the model's 13:00 is not his; noon is proposed", async () => {
+  it("23:20 'schedule it for upcoming Sunday afternoon or noon': the model's 13:00 is not his; asked, noon first", async () => {
     const result = await run(
       "Also, can you plan adding new features to my Telegram chatbox agent? Like features like tracking habits and new organization methods. And we can schedule it for upcoming Sunday afternoon or noon.",
       "2026-11-20T23:20",
       [tools(["add_task", { title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00", notes: "Tracking habits and new organization methods" }])],
     );
     expect(byTitle("Plan new chatbot agent features").due_at).toBeNull();
-    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", day: "2026-11-22", why: "around noon, as you said" });
-    expect(hhmm((thoughtOf(result)!.slot as { at: Date }).at.toISOString())).toBe("12:00");
+    const slot = askOf(result);
+    expect(slot.day).toBe("2026-11-22");
+    expect(timesOf(slot)[0]).toBe("12:00");
+    expect(slot.options[0].why).toBe("around noon, as you said");
   });
 
-  it("23:20 'launch a course … upcoming Sunday. Maybe Sunday evening.': an evening slot, his words kept", async () => {
+  it("23:20 'launch a course … upcoming Sunday. Maybe Sunday evening.': asked, an evening slot first, his words kept", async () => {
     const result = await run(
       "Also remind me to launch a course for level beginner students and elementary level students upcoming Sunday. Maybe Sunday evening.",
       "2026-11-20T23:20",
       [tools(["add_task", { title: "Launch beginner and elementary course", due_at: "2026-11-22T18:00" }])],
     );
-    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", day: "2026-11-22", why: "in the evening, as you said" });
+    const slot = askOf(result);
+    expect(slot.day).toBe("2026-11-22");
+    expect(slot.options[0].why).toBe("in the evening, as you said");
+    const first = Number(timesOf(slot)[0]!.slice(0, 2));
+    expect(first).toBeGreaterThanOrEqual(17);
+    expect(first).toBeLessThan(21);
     expect(result.replies[0]).not.toMatch(/inbox/);
   });
 
-  it("23:38 'save it as a task for me to watch in the Monday': no invented 15:00; his usual time for watching, with the link", async () => {
-    routineRow({ learned: { learn: [1260, 1260, 1275] } });
+  it("#284 23:38 'save it as a task for me to watch in the Monday': no 15:00; ONE question, his video time first, the masterclass named as taken", async () => {
+    routineRow({ learned: { watch: [1230, 1230, 1245] } });
+    task({ title: "Watch: Instagram Masterclass", due_at: "2026-11-23T10:00", duration_minutes: 240 });
     said("user", "https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU", "2026-11-20T23:38");
     linkOffer("https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU", "Head of Instagram Reveals How the Top 1% Actually Work With AI", "2026-11-20T23:38");
     said("tony", "This is a YouTube video titled \"Head of Instagram Reveals How the Top 1% Actually Work With AI\", sir.", "2026-11-20T23:38");
     const result = await run("I want you to save it as a task for me to watch in the Monday.", "2026-11-20T23:38", [
       tools(["add_task", { title: "Watch: Mosseri AI setup", due_at: "2026-11-23T15:00" }]),
     ]);
-    const task = byTitle("Watch: Mosseri AI setup");
-    expect(task.due_at).toBeNull();
-    expect(task.notes).toContain("https://youtu.be/CN8c1edTCew");
-    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", why: "you usually watch and read around 21:00" });
+    const mosseri = byTitle("Watch: Mosseri AI setup");
+    expect(mosseri.due_at).toBeNull();
+    expect(mosseri.notes).toContain("https://youtu.be/CN8c1edTCew");
+    const slot = askOf(result);
+    expect(timesOf(slot)[0]).toBe("20:30");
+    expect(slot.options[0].why).toBe("you usually watch videos around 20:30");
+    // Never inside the masterclass (10:00–14:00, with its gap).
+    for (const option of slot.options) expect(option.at.getTime() + 30 * 60_000 <= at("2026-11-23T09:50").getTime() || option.at.getTime() >= at("2026-11-23T14:10").getTime()).toBe(true);
     expect(result.replies[0]).toContain("🔗 link");
-    expect(result.replies[0]).not.toMatch(/15:00/);
+    expect(result.replies[0]).toContain("10:00–14:00 is taken by **Watch: Instagram Masterclass**");
+    expect(result.replies[0]).not.toMatch(/→/);
+  });
+
+  it("#284 again, when the link's [Task] button made the task first: update_task with the model's 15:00 is asked about too", async () => {
+    const made = task({ title: "Read: YouTube video", notes: "https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU" });
+    said("user", "https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU", "2026-11-20T23:38");
+    said("tony", "This is a YouTube video titled \"Head of Instagram Reveals How the Top 1% Actually Work With AI\", sir. Use Save or Task below.", "2026-11-20T23:38");
+    // The screenshot he shared at 23:25 carries numbers ("23:22", "4 HOURS"); they are not his time.
+    state.db.rows("settings")[0].last_shared_text = "THE Instagram Masterclass: How To Grow in 2027\n4 HOURS\n\n23:22";
+    state.db.rows("settings")[0].last_shared_at = at("2026-11-20T23:25").toISOString();
+    const result = await run("I want you to save it as a task for me to watch in the Monday.", "2026-11-20T23:38", [
+      tools(["update_task", { id: made.id, title: "Watch: Mosseri AI setup", due_at: "2026-11-23T15:00" }]),
+    ]);
+    expect(byTitle("Watch: Mosseri AI setup").due_at).toBeNull();
+    expect(askOf(result).day).toBe("2026-11-23");
+  });
+
+  it("#293 Sat 00:58 'for tomorrow … my workout app is the main priority': Saturday 21 (the model said Sunday), asked with free coding slots", async () => {
+    const app = task({ title: "Update fitness app", notes: "Add more bodyweight exercises in phase 1.", duration_minutes: 120 });
+    const result = await run("for tomorrow adding a updates for my workout app is the main priority of today", "2026-11-21T00:58", [
+      tools(["update_task", { id: app.id, day: "2026-11-22", priority: 1 }]),
+    ]);
+    const slot = askOf(result);
+    expect(slot.day).toBe("2026-11-21");
+    expect(result.replies[0]).toMatch(/When tomorrow, Sat 21 Nov\?/);
+    for (const option of slot.options) expect(local(option.at.toISOString())!.slice(0, 10)).toBe("2026-11-21");
+    expect(byTitle("Update fitness app").priority).toBe(1);
+    expect(byTitle("Update fitness app").due_at).toBeNull();
+  });
+
+  it("'decide yourself for videos and podcasts': switched on, then the next video is placed with Tony's reason; 'ask me again' switches it off", async () => {
+    routineRow({ learned: { watch: [1230, 1230] } });
+    const on = await run("decide yourself for videos and podcasts, you don't need to ask me", "2026-11-20T21:00", [tools(["routine", { field: "decide", value: "videos and podcasts", on: true }])]);
+    expect(state.db.rows("routine")[0].auto_kinds).toEqual(["watch"]);
+    expect(on.replies[0]).toMatch(/videos and podcasts/);
+    const placed = await run("watch the Mosseri video on Monday", "2026-11-20T21:01", [tools(["add_task", { title: "Watch: Mosseri AI setup", day: "2026-11-23" }])]);
+    expect(thoughtOf(placed)?.slot).toMatchObject({ kind: "auto", why: "you usually watch videos around 20:30" });
+    expect(hhmm(byTitle("Watch: Mosseri AI setup").due_at)).toBe("20:30");
+    expect(placed.replies[0]).toMatch(/✓ \*\*Watch: Mosseri AI setup\*\* → Mon 23 Nov, \*\*20:30\*\*.*my pick: you usually watch videos around 20:30/);
+    await run("ask me again for videos", "2026-11-20T21:02", [tools(["routine", { field: "decide", value: "videos", on: false }])]);
+    expect(state.db.rows("routine")[0].auto_kinds).toEqual([]);
+    const asked = await run("watch the masterclass recap on Tuesday", "2026-11-20T21:03", [tools(["add_task", { title: "Watch: masterclass recap", day: "2026-11-24" }])]);
+    expect(askOf(asked).day).toBe("2026-11-24");
+  });
+
+  it("[✏️ Other time]: he types '20:30' and it is placed in code, no model call, and learned", async () => {
+    const reel = task({ title: "Watch reel: humor plus education" });
+    state.db.rows("settings")[0].pending_slot = { task_id: reel.id, day: "2026-11-24" };
+    state.db.rows("settings")[0].pending_slot_at = at("2026-11-21T01:24").toISOString();
+    const result = await run("20:30", "2026-11-21T01:25", []);
+    expect(state.calls).toHaveLength(0);
+    expect(result.handled[0].kind).toBe("placed");
+    expect(local(byTitle("Watch reel: humor plus education").due_at)).toBe("2026-11-24T20:30");
+    expect(result.replies[0]).toMatch(/Watch reel: humor plus education.*Tue 24 Nov, \*\*20:30\*\*/);
+    expect((state.db.rows("routine")[0].learned as Record<string, number[]>).watch).toContain(1230);
+    expect(state.db.rows("settings")[0].pending_slot).toBeNull();
+  });
+
+  it("[✏️ Other time] then a sentence, not a time: the brain handles it, told which task and day", async () => {
+    const reel = task({ title: "Watch reel: humor plus education" });
+    state.db.rows("settings")[0].pending_slot = { task_id: reel.id, day: "2026-11-24" };
+    state.db.rows("settings")[0].pending_slot_at = at("2026-11-21T01:24").toISOString();
+    await run("after my evening workout", "2026-11-21T01:25", [says("When does your workout end on Tuesday?")]);
+    expect(state.calls).toHaveLength(1);
+    const latest = state.calls[0].messages[state.calls[0].messages.length - 1].content as string;
+    expect(latest).toMatch(/Watch reel: humor plus education/);
+    expect(latest).toMatch(/2026-11-24/);
+  });
+
+  it("a 4-hour masterclass with no 4-hour gap on Monday: offered in two halves; his tap makes two tasks", async () => {
+    for (const [time, minutes] of [["2026-11-23T08:00", 120], ["2026-11-23T12:30", 90], ["2026-11-23T16:30", 90], ["2026-11-23T20:30", 90]] as const) task({ title: `Busy ${time.slice(11)}`, due_at: time, duration_minutes: minutes });
+    const result = await run("watch the Instagram masterclass on Monday, it's 4 hours", "2026-11-20T21:00", [tools(["add_task", { title: "Watch: Instagram Masterclass", day: "2026-11-23", duration: 240 }])]);
+    const slot = thoughtOf(result)?.slot as { kind: string; taskId: number; parts: Date[]; minutes: number };
+    expect(slot.kind).toBe("split");
+    expect(slot.minutes).toBe(120);
+    expect(result.replies[0]).toMatch(/won't fit in one go/);
+    expect(result.replies[0]).toMatch(/2 h each/);
+    const { splitTask } = await import("../src/lib/slots");
+    await splitTask(slot.taskId, slot.parts);
+    const halves = tasks().filter((row) => String(row.title).startsWith("Watch: Instagram Masterclass"));
+    expect(halves.map((row) => row.title).sort()).toEqual(["Watch: Instagram Masterclass (1/2)", "Watch: Instagram Masterclass (2/2)"]);
+    for (const half of halves) {
+      expect(half.duration_minutes).toBe(120);
+      expect(half.due_at).not.toBeNull();
+    }
+  });
+
+  it("learns from what he finishes: two videos done at 21:40 (an hour each, so started 20:40); the next one is offered there first, on the quarter hour", async () => {
+    const one = task({ title: "Watch podcast and take notes", due_at: "2026-11-21T20:00", duration_minutes: 60 });
+    const two = task({ title: "Watch: Mosseri AI setup", due_at: "2026-11-22T20:00", duration_minutes: 60 });
+    await run("done with the podcast", "2026-11-21T21:40", [tools(["complete_task", { id: one.id }])]);
+    await run("watched the Mosseri video", "2026-11-22T21:40", [tools(["complete_task", { id: two.id }])]);
+    expect((state.db.rows("routine")[0].learned as Record<string, number[]>).watch).toEqual([1240, 1240]);
+    const result = await run("watch the reel on Tuesday", "2026-11-22T21:45", [tools(["add_task", { title: "Watch reel: humor plus education", day: "2026-11-24", duration: 30 }])]);
+    const slot = askOf(result);
+    expect(timesOf(slot)[0]).toBe("20:45");
+    expect(slot.options[0].why).toBe("you usually watch videos around 20:40");
+  });
+
+  it("#309 'save this YouTube video and remind me to check it after three days and start doing it': the note keeps the link, never his instruction", async () => {
+    said("user", "https://youtu.be/w0H1-b044KY?si=Ys74ZDWW8vlFUXYf", "2026-11-21T01:31");
+    await run("Hey Tony, save this YouTube video and remind me to check it after three days and start doing it. Remind me about it.", "2026-11-21T01:32", [
+      tools(["add_task", { title: "Check YouTube video, start doing it", day: "2026-11-24", notes: "https://youtu.be/w0H1-b044KY?si=Ys74ZDWW8vlFUXYf — check it and start doing it." }]),
+    ]);
+    const notes = String(byTitle("Check YouTube video, start doing it").notes);
+    expect(notes).toContain("https://youtu.be/w0H1-b044KY");
+    expect(notes).not.toMatch(/From your message|remind me/i);
   });
 
   it("not sure: ONE question with 2–3 real free slots that fit his routine (never in teaching hours, never on top of a task)", async () => {
     routineRow({ teaching: "Mon–Fri 14:00–18:00" });
     task({ title: "Watch: Instagram Masterclass", due_at: "2026-11-23T10:00", duration_minutes: 240 });
     const result = await run("add coding the bot features on Monday", "2026-11-20T23:40", [tools(["add_task", { title: "Code the bot features", day: "2026-11-23", duration: 90 }])]);
-    const slot = thoughtOf(result)?.slot;
-    expect(slot?.kind).toBe("ask");
-    const options = (slot as { options: Date[] }).options;
-    expect(options.length).toBeGreaterThanOrEqual(2);
-    expect(options.length).toBeLessThanOrEqual(3);
-    for (const option of options) {
-      const start = option.getTime();
+    const slot = askOf(result);
+    expect(slot.options.length).toBeGreaterThanOrEqual(2);
+    expect(slot.options.length).toBeLessThanOrEqual(3);
+    for (const option of slot.options) {
+      const start = option.at.getTime();
       const end = start + 90 * 60_000;
       // Clear of the masterclass (10:00–14:00) and of teaching (14:00–18:00), each with its gap.
       expect(end <= at("2026-11-23T09:50").getTime() || start >= at("2026-11-23T18:10").getTime()).toBe(true);
@@ -406,7 +535,7 @@ describe("Decide vs ask: a day without a time", () => {
     expect(result.replies[0].match(/\?/g)).toHaveLength(1);
   });
 
-  it("learns from his moves: two content tasks moved to the morning, the next one is proposed there, in a free slot", async () => {
+  it("learns from his moves: two content tasks moved to the morning, the next one is offered there first, in a free slot", async () => {
     const stories = task({ title: "Posting stories on Instagram", due_at: "2026-11-21T12:00", duration_minutes: 15 });
     const reel = task({ title: "Posting reel on Instagram", due_at: "2026-11-21T15:00", duration_minutes: 60 });
     await run("move posting stories to 10:00", "2026-11-20T21:00", [tools(["update_task", { id: stories.id, due_at: "2026-11-21T10:00" }])]);
@@ -415,11 +544,31 @@ describe("Decide vs ask: a day without a time", () => {
     const result = await run("post a story about the speaking club tomorrow", "2026-11-20T21:02", [
       tools(["add_task", { title: "Post a story about the speaking club", day: "2026-11-21", duration: 15 }]),
     ]);
-    const slot = thoughtOf(result)?.slot as { kind: string; at: Date; why: string };
-    expect(slot.kind).toBe("propose");
-    expect(slot.why).toBe("you usually make content around 10:15");
+    const slot = askOf(result);
+    expect(slot.options[0].why).toBe("you usually make content around 10:15");
     // 10:00–10:15 and 10:30–11:30 are taken: the nearest free start that fits, never on top of them.
-    expect(hhmm(slot.at.toISOString())).toBe("09:30");
+    expect(timesOf(slot)[0]).toBe("09:30");
+  });
+
+  it("[📅 Tomorrow] on an inbox task asks with its free slots (no silent pick); on a timed task it keeps its own time of day", async () => {
+    const { runAction } = await import("../src/lib/actions");
+    const inbox = task({ title: "Call the bank", duration_minutes: 15 });
+    const outcome = await runAction("tomorrow", Number(inbox.id), undefined, at("2026-11-20T21:00"));
+    expect(byTitle("Call the bank").due_at).toBeNull();
+    expect(outcome.text).toMatch(/When tomorrow, Sat 21 Nov\?/);
+    const buttons = JSON.stringify(outcome.keyboard);
+    expect(buttons).toMatch(/sl:at:/);
+    expect(buttons).toMatch(/sl:other:/);
+    const timed = task({ title: "Workout", due_at: "2026-11-20T18:00", duration_minutes: 60 });
+    vi.setSystemTime(at("2026-11-20T21:00"));
+    await runAction("tomorrow", Number(timed.id), undefined, at("2026-11-20T21:00"));
+    expect(local(byTitle("Workout").due_at)).toBe("2026-11-21T18:00");
+  });
+
+  it("never 'inbox' and a time in one message, and the question names the day with its date", async () => {
+    const result = await run("call the bank on Monday", "2026-11-20T21:00", [tools(["add_task", { title: "Call the bank", day: "2026-11-23", duration: 15 }])]);
+    expect(result.replies[0]).toMatch(/When on Mon 23 Nov\?/);
+    expect(result.replies[0]).not.toMatch(/inbox/);
   });
 });
 

@@ -206,7 +206,7 @@ export function linksIn(text: string): string[] {
 
 /** Words that carry no detail of their own: requests, times, filler. */
 const FILLER = new Set(
-  "remind reminder please tony jarvis also maybe upcoming next dont didnt check touch thist task tasks inbox okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please".split(
+  "remind reminder please tony jarvis also maybe upcoming next dont didnt check touch thist task tasks inbox okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please save saved keep hello days week weeks month months three four five seven eight nine twelve twenty thirty".split(
     " ",
   ),
 );
@@ -235,6 +235,10 @@ export function withoutInstructions(message: string): string {
     .replace(/\b(?:and\s+)?(?:please\s+)?remind me if i\b[^.?!]*?\b(?:days?|weeks?)\b/gi, " ")
     .replace(/\b(?:please\s+)?(?:put|add|save|keep|move)\s+(?:this|thist|it|that)?\s*(?:task\s+)?(?:to|in|into|on)\s+(?:the\s+|my\s+)?(?:inbox|list)\b/gi, " ")
     .replace(/\b(?:can|could|would) you\b|\b(?:i want|i need) you to\b|\bremind me (?:to|about|of)\b|\bschedule (?:it|this|that)\b|\bsave (?:it|this|that) as a task\b/gi, " ")
+    .replace(/^\s*(?:hey|hi|hello|ok(?:ay)?)?,?\s*tony\b[,!.]?/i, " ")
+    .replace(/\bsave (?:this|it|that)(?: (?:youtube |instagram )?(?:video|link|reel|post|photo))?\b/gi, " ")
+    .replace(/\b(?:after|in|within|for) (?:a|an|one|two|three|four|five|six|seven|ten|\d{1,2}) (?:days?|weeks?|hours?|minutes?)\b/gi, " ")
+    .replace(/\bremind me(?: about it| of it)?\b[.!]?/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -242,7 +246,8 @@ export function withoutInstructions(message: string): string {
 export function notesToKeep(message: string, saved: { title: string; notes: string | null; parts?: string[] }[]): string | undefined {
   const all = saved.map((task) => [task.title, task.notes ?? "", ...(task.parts ?? [])].join(" "));
   const missingLinks = linksIn(message).filter((url) => !all.some((text) => text.includes(url)));
-  const words = message.replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  // What is quoted is his request without its instructions ("remind me to", "save this"): details, never orders to Tony.
+  const words = withoutInstructions(message.replace(/https?:\/\/\S+/g, "")).replace(/\s+/g, " ").trim();
   const quote = lostDetails(withoutInstructions(message), all).length >= 2 && words.length > 0 ? `From your message: "${words}"` : undefined;
   const lines = [...missingLinks, quote].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;

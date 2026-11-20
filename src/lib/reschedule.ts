@@ -2,7 +2,7 @@ import "server-only";
 import { requireDb } from "./db";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, formatTime, localDate, parseLocalDateTime, toWholeMinute } from "./time";
+import { addMinutes, dayBounds, formatTime, hisTomorrow, localDate, parseLocalDateTime, toWholeMinute } from "./time";
 
 /**
  * "Reschedule" on the Overdue section: every overdue task moves to today or
@@ -13,7 +13,8 @@ export async function rescheduleOverdue(to: "today" | "tomorrow", now = new Date
   const db = requireDb();
   const { data, error } = await db.from("tasks").select().in("status", OPEN_STATUSES).neq("status", "in_progress").lt("due_at", now.toISOString());
   if (error) throw new Error(`rescheduleOverdue: ${error.message}`);
-  const day = localDate(to === "today" ? now : addMinutes(now, 24 * 60));
+  // After midnight, "tomorrow" is the day just begun (the day after he sleeps).
+  const day = localDate(to === "today" ? now : hisTomorrow(now));
   const nextHour = toWholeMinute(addMinutes(now, 60 - (now.getMinutes() % 60)));
   let moved = 0;
   for (const task of (data ?? []) as Task[]) {

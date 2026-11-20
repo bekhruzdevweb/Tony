@@ -3,7 +3,10 @@ import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
 import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction } from "./checks";
 import { env } from "../env";
-import { formatDay, formatTime, localDate, parseLocalDateTime, relativeDay } from "../time";
+import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
+import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
+import { placeTask } from "../slots";
+import type { SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
@@ -193,7 +196,7 @@ export async function think(
   // Tasks for a day he named without a time; check-ins he asked for; routine he told; an action to confirm.
   const dayOnly = new Map<number, string>();
   const checkIns = new Map<number, number>();
-  const routineSet: { field: string; value: string | null }[] = [];
+  const routineSet: { field: string; value: string | null; on?: boolean }[] = [];
   let proposal: { offerId: number; say: string } | undefined;
   let failed = false;
   let askComplete: { taskId: number; title: string } | undefined;
@@ -249,7 +252,7 @@ export async function think(
           if (typeof dayAsked === "string" && Number.isFinite(touchedId)) dayOnly.set(touchedId, dayAsked);
           const checkIn = (outcome as { check_in?: { days?: unknown } }).check_in;
           if (checkIn && Number.isFinite(touchedId)) checkIns.set(touchedId, Number(checkIn.days));
-          const told = (outcome as { routine?: { field: string; value: string | null } }).routine;
+          const told = (outcome as { routine?: { field: string; value: string | null; on?: boolean } }).routine;
           if (call.function.name === "routine" && told) routineSet.push(told);
           if (call.function.name === "propose") proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
@@ -420,8 +423,8 @@ export async function think(
       };
     };
 
-    // A day he named without a time: one slot that fits his routine ([✓] [✏️]), or two or three to choose from.
-    // New tasks with no time and no day stay in the inbox, and no time is proposed.
+    // A day he named without a time: ONE question with two or three free slots, best first with its reason (Change 1).
+    // Tony picks the slot himself only for a kind he said "decide yourself" for. No day: the inbox, no time proposed.
     const named = new Map(dayOnly);
     const undated = [...changes].filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !named.has(id)).map(([id]) => id);
     const spokenDay = undated.length > 0 && planId === undefined ? (dayFromText(text, now) ?? (part ? dayFromText(part.full, now) : undefined)) : undefined;
@@ -446,12 +449,19 @@ export async function think(
       const label = dayLabel(day, now);
       const extra = savedMarks(marks(id));
       decided.add(id);
-      if (decision.decision === "propose") {
-        slot = { kind: "propose", taskId: id, title: task.title, day, at: decision.at, why: decision.why };
-        slotLines.push(`I'll put **${task.title}** ${label.when} at **${formatTime(decision.at)}**, ${decision.why}${extra}.`);
+      if (decision.decision === "auto") {
+        // He let Tony decide for this kind: placed at the best slot, and the receipt says it was Tony's pick and why.
+        const placed = await placeTask(id, decision.at);
+        if (placed.task?.due_at) {
+          slot = { kind: "auto", taskId: id, title: placed.task.title, day, at: decision.at, why: decision.why };
+          slotLines.push(autoReceipt({ title: placed.task.title, marks: extra, when: formatWhen(decision.at, now).replace(/(\d{2}:\d{2})$/, "**$1**"), why: decision.why }));
+        } else problems.push(placed.text);
       } else if (decision.decision === "ask") {
-        slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options };
-        slotLines.push(`**${task.title}**${extra}. When ${label.when.replace(/,$/, "")}, sir?`);
+        slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options, ...(decision.taken ? { taken: decision.taken } : {}) };
+        slotLines.push(slotQuestion({ title: task.title, marks: extra, when: label.when, options: decision.options, taken: decision.taken }));
+      } else if (decision.decision === "split") {
+        slot = { kind: "split", taskId: id, title: task.title, day, parts: decision.parts, minutes: decision.minutes };
+        slotLines.push(splitQuestion({ title: task.title, marks: extra, when: label.when, minutes: decision.minutes, total: task.duration_minutes ?? decision.minutes * 2, parts: decision.parts }));
       } else {
         slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
       }
@@ -473,7 +483,11 @@ export async function think(
   }
   if (routineSet.length > 0) {
     const label: Record<string, string> = { wake: "Wake", sleep: "Sleep", teaching: "Teaching", content: "Content", coding: "Coding", workout: "Workout", free_days: "Free days" };
-    const lines = routineSet.map((item) => `🗓 ${label[item.field] ?? item.field}: ${item.value ?? "not set"}`).join("\n");
+    const lines = routineSet
+      .map((item) =>
+        item.field === "decide" ? (item.on === false ? `🗓 Asking you again for: ${item.value}` : `🗓 Tony picks the time for: ${item.value}`) : `🗓 ${label[item.field] ?? item.field}: ${item.value ?? "not set"}`,
+      )
+      .join("\n");
     reply = reply && changes.size > 0 ? `${reply}\n${lines}` : `${lines}\nNoted in your routine, sir.`;
   }
   if (saved.length > 0) {
@@ -507,24 +521,13 @@ export async function think(
   return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal };
 }
 
-/** A day he named, without a time: Tony proposes one slot, or offers a few. */
+/** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */
 export type Slot =
-  | { kind: "propose"; taskId: number; title: string; day: string; at: Date; why: string }
-  | { kind: "ask"; taskId: number; title: string; day: string; options: Date[] };
+  | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string }
+  | { kind: "auto"; taskId: number; title: string; day: string; at: Date; why: string }
+  | { kind: "split"; taskId: number; title: string; day: string; parts: Date[]; minutes: number };
 
-/**
- * A day in words, always with its weekday and date, "today" and "tomorrow"
- * by the day he is living (after midnight, the coming morning is "tomorrow"):
- * `when` reads "tomorrow, Sat 21 Nov," or "on Mon 23 Nov"; `plain` reads
- * "Tomorrow, Sat 21 Nov," or "Mon 23 Nov".
- */
-export function dayLabel(day: string, now: Date): { when: string; plain: string } {
-  const noon = parseLocalDateTime(`${day}T12:00`)!;
-  const name = formatDay(noon, now);
-  const relative = relativeDay(noon, now);
-  if (!relative) return { when: `on ${name}`, plain: name };
-  return { when: `${relative}, ${name},`, plain: `${relative[0].toUpperCase()}${relative.slice(1)}, ${name},` };
-}
+export { dayLabel };
 
 /** Tools that write: their success is read back from the database before it is confirmed. */
 const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine"]);

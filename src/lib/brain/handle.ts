@@ -7,6 +7,9 @@ import { asksForLink } from "../link-rules";
 import { linkReply } from "../links";
 import { asksForMedia, findMedia } from "../media";
 import { logMessage, type Channel } from "../messages";
+import { setPendingSlot, waitingSlot } from "../settings";
+import { placeTypedTime } from "../slots";
+import { requireDb } from "../db";
 
 export type Thought = Awaited<ReturnType<typeof think>>;
 
@@ -19,6 +22,8 @@ export type Handled =
   | { text: string; kind: "media"; ids: number[] }
   /** "Undo that": the last changes, to undo with a tap. */
   | { text: string; kind: "undo" }
+  /** The time he typed after [✏️ Other time], placed in plain code. */
+  | { text: string; kind: "placed"; reply: string }
   | { text: string; kind: "thought"; thought: Thought }
   | { text: string; kind: "failed"; reply: string };
 
@@ -45,10 +50,10 @@ export async function handleMessage(
   text: string,
   options: { channel?: Channel; context?: string; split?: boolean; now?: () => Date; wait?: (ms: number) => Promise<void> } = {},
 ): Promise<Handled[]> {
-  const { channel = "telegram", context, split = true } = options;
+  const { channel = "telegram", split = true } = options;
+  let context = options.context;
   const clock = options.now ?? (() => new Date());
   const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const parts = split ? splitIntents(text) : [text];
   const handled: Handled[] = [];
   // His message goes into the history once, whole, whichever request handles it first.
   let logged = false;
@@ -57,6 +62,23 @@ export async function handleMessage(
     logged = true;
     await logMessage("user", text, channel).catch(() => undefined);
   };
+
+  // He tapped [✏️ Other time]: a plain time is placed in code, at once; anything else goes to the brain, told what he is answering.
+  const slot = await waitingSlot(clock()).catch(() => undefined);
+  if (slot) {
+    await setPendingSlot(null, clock());
+    const placed = await placeTypedTime(text, slot, clock()).catch((error) => (console.error("Typed time failed:", error), undefined));
+    if (placed) {
+      await logHis();
+      await logMessage("tony", placed.text, channel).catch(() => undefined);
+      return [{ text, kind: "placed", reply: placed.text }];
+    }
+    const found = await requireDb().from("tasks").select("title").eq("id", slot.task_id).maybeSingle();
+    const title = (found.data as { title?: string } | null)?.title;
+    if (title) context = [context, `He tapped "Other time" for task #${slot.task_id} "${title}" on ${slot.day}: this message is the time he wants. Set it with update_task (due_at on ${slot.day}).`].filter(Boolean).join(" ");
+  }
+
+  const parts = split ? splitIntents(text) : [text];
   for (const [index, part] of parts.entries()) {
     if (asksToClean(part) && part.split(/\s+/).length <= 8) {
       await logHis();
