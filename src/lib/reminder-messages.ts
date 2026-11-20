@@ -47,6 +47,8 @@ export function persistentReminder(
   attempt: number,
   now: Date,
   nextAt: Date | undefined,
+  /** Whether a time is free; a "Move to" button is only offered for a free time. */
+  isFree: (at: Date) => boolean = () => true,
 ): { text: string; keyboard?: InlineKeyboard } {
   if (!nextAt) return { text: `I'll leave ${b(task.title)} here for today, sir.` };
 
@@ -58,8 +60,10 @@ export function persistentReminder(
     .text("15 min", data("snooze", task.id, 15))
     .text("Skip today", data("skip", task.id));
   if (attempt === 2) {
-    const later = laterThisEvening(now);
-    keyboard.row().text(`Move to ${formatTime(later)}`, data("move", task.id, Math.round(later.getTime() / 60_000)));
+    // The first free hour from the usual "later this evening" time; no button if none is free.
+    const first = laterThisEvening(now);
+    const later = [0, 1, 2, 3].map((hours) => new Date(first.getTime() + hours * 60 * 60_000)).find((at) => at.getDate() === first.getDate() && isFree(at));
+    if (later) keyboard.row().text(`Move to ${formatTime(later)}`, data("move", task.id, Math.round(later.getTime() / 60_000)));
   }
 
   const text =

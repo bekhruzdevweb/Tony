@@ -2,7 +2,7 @@ import "server-only";
 import { requireDb } from "./db";
 import { dayBounds } from "./time";
 
-export type TaskStatus = "inbox" | "todo" | "in_progress" | "done" | "skipped" | "dropped";
+export type TaskStatus = "inbox" | "todo" | "in_progress" | "done" | "skipped" | "dropped" | "draft";
 
 export type Task = {
   id: number;

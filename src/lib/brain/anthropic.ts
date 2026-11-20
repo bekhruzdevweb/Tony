@@ -65,7 +65,18 @@ function toMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {
   }
   // A conversation must open with the user.
   while (out.length > 0 && out[0].role !== "user") out.shift();
-  return out;
+  // Two turns of the same role in a row (a reminder Tony sent, then his reply) are joined into one.
+  const merged: Anthropic.MessageParam[] = [];
+  for (const message of out) {
+    const last = merged[merged.length - 1];
+    if (!last || last.role !== message.role) {
+      merged.push(message);
+      continue;
+    }
+    const blocks = (content: Anthropic.MessageParam["content"]): Anthropic.ContentBlockParam[] => (typeof content === "string" ? [{ type: "text", text: content }] : content);
+    last.content = [...blocks(last.content), ...blocks(message.content)];
+  }
+  return merged;
 }
 
 const toTools = (tools: ToolDefinition[]): Anthropic.Tool[] =>
@@ -84,7 +95,7 @@ export type WebSource = { url: string; title: string };
  * models). At most three searches and two page reads per reply.
  */
 const WEB_TOOLS: Anthropic.ToolUnion[] = [
-  { type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", city: "Tashkent", country: "UZ", timezone: "Asia/Tashkent" } },
+  { type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", timezone: "Asia/Samarkand" } },
   { type: "web_fetch_20250910", name: "web_fetch", max_uses: 2, citations: { enabled: true }, max_content_tokens: 8000 },
 ];
 /** If the account refuses the web tools (not enabled for it), they are left out for an hour. */
@@ -104,11 +115,12 @@ export async function chatWithClaude(
   tools: ToolDefinition[],
   force?: string,
   web = false,
+  model = env.anthropicModel,
 ): Promise<Answer> {
   const useWeb = web && Date.now() > webOffUntil;
   const request = (conversation: Anthropic.MessageParam[], withWeb: boolean) =>
     client.messages.create({
-      model: env.anthropicModel,
+      model,
       // Thinking counts towards this, so it is generous for replies that are a sentence or two.
       max_tokens: 4000,
       // Routing a request to a tool and wording a short reply is light work; the model still thinks when it needs to.

@@ -29,6 +29,10 @@ export const env = {
   get anthropicModel() {
     return read("ANTHROPIC_MODEL") ?? "claude-haiku-5-5";
   },
+  /** The larger model, for multi-step turns (several requests, moving or planning things). */
+  get anthropicDeepModel() {
+    return read("ANTHROPIC_DEEP_MODEL") ?? "claude-sonnet-5-5";
+  },
   /** How hard Claude thinks before answering: low, medium, high, xhigh or max. */
   get anthropicEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
     const value = read("ANTHROPIC_EFFORT")?.toLowerCase();

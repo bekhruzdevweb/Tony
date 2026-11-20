@@ -75,9 +75,21 @@ export function richFromHtml(html: string): RichMessage {
   const blocks: RichBlock[] = [];
   let headings = 0;
 
-  // Folding quotations first: they may span blank lines.
-  const pieces = html.split(/(<blockquote(?: expandable)?>[^]*?<\/blockquote>)/);
+  // Folding quotations and tables first: they may span lines.
+  const pieces = html.split(/(<blockquote(?: expandable)?>[^]*?<\/blockquote>|<table>[^]*?<\/table>)/);
   for (const piece of pieces) {
+    if (piece.startsWith("<table>")) {
+      const cells = (piece.match(/<tr>[^]*?<\/tr>/g) ?? []).map((row) =>
+        (row.match(/<t[hd]>[^]*?<\/t[hd]>/g) ?? []).map((cell) => ({
+          text: richText(cell.replace(/^<t[hd]>|<\/t[hd]>$/g, "")),
+          ...(cell.startsWith("<th>") ? { is_header: true as const } : {}),
+          align: "left" as const,
+          valign: "middle" as const,
+        })),
+      );
+      blocks.push({ type: "table", cells, is_bordered: true, is_compact: true } as RichBlock);
+      continue;
+    }
     const quote = /^<blockquote( expandable)?>([^]*)<\/blockquote>$/.exec(piece);
     if (quote) {
       blocks.push(quote[1] ? { type: "expandable_blockquote", text: richText(quote[2]) } : { type: "blockquote", blocks: [{ type: "paragraph", text: richText(quote[2]) }] });
@@ -113,6 +125,16 @@ export function richFromHtml(html: string): RichMessage {
   return { blocks: blocks.filter((block) => !(block.type === "list" && block.items.length === 0)), skip_entity_detection: true };
 }
 
+/** Plain Telegram HTML has no tables: each row becomes a line ("13:00 · Presentation · 60 min"). */
+export function tablesAsLines(html: string): string {
+  return html.replace(/<table>([^]*?)<\/table>/g, (_, body: string) =>
+    (body.match(/<tr>[^]*?<\/tr>/g) ?? [])
+      .map((row) => (row.match(/<t[hd]>([^]*?)<\/t[hd]>/g) ?? []).map((cell) => cell.replace(/<\/?t[hd]>/g, "")).filter(Boolean).join(" · "))
+      .map((line, index) => (index === 0 ? `<b>${line}</b>` : line))
+      .join("\n"),
+  );
+}
+
 /** Sends a message in rich form, or as plain HTML if Telegram will not take it. */
 export async function sendRich(bot: Bot, chatId: number, html: string, options: { keyboard?: InlineKeyboard; silent?: boolean } = {}): Promise<number> {
   try {
@@ -120,7 +142,7 @@ export async function sendRich(bot: Bot, chatId: number, html: string, options: 
     return sent.message_id;
   } catch (error) {
     console.error("A rich message was refused; sending it as HTML:", error);
-    return sendHtml(bot, chatId, html, options);
+    return sendHtml(bot, chatId, tablesAsLines(html), options);
   }
 }
 
@@ -131,7 +153,7 @@ export async function editRich(bot: Bot, chatId: number, messageId: number, html
     return true;
   } catch (error) {
     if (/message is not modified/i.test(String((error as { description?: string })?.description ?? error))) return true;
-    return editHtml(bot, chatId, messageId, html, keyboard);
+    return editHtml(bot, chatId, messageId, tablesAsLines(html), keyboard);
   }
 }
 

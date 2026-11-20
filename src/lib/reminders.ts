@@ -6,6 +6,7 @@ import { esc, i, plain } from "./html";
 import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
+import { isFreeAt } from "./brain/checks";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
@@ -243,7 +244,9 @@ export async function runTick(
 
     // A prayer: a calm line and one button, a heads-up 10 minutes before (silent) and one at the time.
     const prayer = isPrayer(task);
-    const message = prayer ? prayerReminder(task, reminder.kind === "extra") : chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
+    // A "Move to" offer is only made for a time that is actually free.
+    const isFree = chained && attempt === 2 ? await freeTimes(task.id) : undefined;
+    const message = prayer ? prayerReminder(task, reminder.kind === "extra") : chained ? persistentReminder(task, attempt, now, nextAt, isFree) : dueReminder(task);
     // Only the first reminder carries the attachment; later nudges are plain text.
     const attached = attempt === 0 ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;
@@ -296,13 +299,20 @@ export async function runTick(
   return finish();
 }
 
+/** A check for free times against the open, timed tasks (other than this one). */
+async function freeTimes(taskId: number): Promise<(at: Date) => boolean> {
+  const { data } = await requireDb().from("tasks").select().in("status", OPEN_STATUSES).not("due_at", "is", null);
+  const tasks = (data ?? []) as Task[];
+  return (at: Date) => isFreeAt(at, tasks, taskId);
+}
+
 /** A prayer's reminder: "🕌 Asr in 10 minutes · 15:20", then "🕌 Asr · 15:20" with [✓ Prayed]. */
 function prayerReminder(task: Task, early: boolean): { text: string; keyboard?: InlineKeyboard } {
   // A time from the fallback (not the official table) says so.
   const at = `${formatTime(new Date(task.due_at!))}${task.notes === "approx." ? " (approx.)" : ""}`;
   return early
     ? { text: `🕌 ${esc(task.title)} in 10 minutes · ${at}` }
-    : { text: `🕌 ${esc(task.title)} · ${at}`, keyboard: new InlineKeyboard().text("✓ Prayed", `done:${task.id}`) };
+    : { text: `🕌 ${esc(task.title)} · ${at}`, keyboard: new InlineKeyboard().text("Prayed ✓", `done:${task.id}`) };
 }
 
 /** The task a reminder message was about, for when he replies to that message. */

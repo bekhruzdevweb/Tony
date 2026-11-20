@@ -11,6 +11,7 @@ import { data } from "./reminder-messages";
 import type { Settings } from "./settings";
 import { postBoard, shortLabel } from "./today-board";
 import { coachForBrief } from "./coach";
+import { allClashes, clashSentence } from "./brain/checks";
 import { sayAloud } from "./speech";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
@@ -124,7 +125,9 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const view = await dayView(now, now, { lead: "Good morning, sir." });
   // The coach: one personal line from the habit log, and each habit's facts.
   const coach = await coachForBrief(now);
-  const html = [view.html, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  // Two things at once today: flagged so they can be sorted before the day starts.
+  const clashLines = allClashes(view.open).map(([a, c]) => `⚠️ ${esc(`Clash: ${clashSentence(a, c)}`)}`);
+  const html = [view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 

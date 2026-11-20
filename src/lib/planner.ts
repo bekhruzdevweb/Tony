@@ -1,3 +1,5 @@
+import { LATE_LEAD, allClashes, clashSentence, planDay } from "./brain/checks";
+import { busyIntervals, dayWindow, estimateMinutes, isDeep, placeAll, type ToPlace } from "./schedule";
 import "server-only";
 import { InlineKeyboard } from "grammy";
 import { chat, type ToolDefinition } from "./brain/model";
@@ -33,6 +35,10 @@ export type Plan = {
   message_id: number | null;
   created_at: string;
   applied_at: string | null;
+  /** A line above the plan ("Today is nearly over, sir — here's tomorrow."). */
+  lead?: string | null;
+  /** A one-line proposal for tasks he just gave without times. */
+  compact?: boolean;
 };
 
 const MINUTE = 60_000;
@@ -51,7 +57,7 @@ const shortDay = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: TIME
 const snap = (at: Date) => new Date(Math.ceil(at.getTime() / (STEP_MINUTES * MINUTE)) * STEP_MINUTES * MINUTE);
 
 /** The hours of a day in which Tony will put things: 08:00 until an hour before quiet hours. */
-function windowOf(day: Date, quietStart: string): Window {
+export function windowOf(day: Date, quietStart: string): Window {
   const { start } = dayBounds(day);
   const quiet = parseClock(quietStart);
   const endMinute = quiet > 12 * 60 ? quiet - 60 : 22 * 60;
@@ -61,7 +67,7 @@ function windowOf(day: Date, quietStart: string): Window {
 const clashes = (at: Date, busy: Busy[]) => busy.some((other) => Math.abs(other.at.getTime() - at.getTime()) < BLOCK_MINUTES * MINUTE);
 
 /** The first free start time at or after `from`, within the given days' windows. */
-function nextFree(from: Date, busy: Busy[], windows: Window[], earliest: Date): Date | undefined {
+export function nextFree(from: Date, busy: Busy[], windows: Window[], earliest: Date): Date | undefined {
   for (const window of windows) {
     if (from.getTime() > window.end.getTime()) continue;
     let at = snap(new Date(Math.max(from.getTime(), window.start.getTime(), earliest.getTime())));
@@ -184,23 +190,67 @@ function rulesProposal(candidates: Task[], memory: string[], days: Date[]): { pr
   return { proposals, leftOut: new Map(), why: "Urgent and overdue tasks first, each in the first free hour, keeping to the habits you have told me." };
 }
 
-export type PlanResult = { plan: Plan } | { nothing: string };
+export type PlanResult = { plan: Plan } | { nothing: string; full?: boolean };
+
+type PlanOptions = {
+  scope: "day" | "week";
+  day?: Date;
+  instructions?: string;
+  now?: Date;
+  /** Plan only these tasks (ones he just gave without times), as a compact proposal. */
+  taskIds?: number[];
+  /** A line to show above the plan. */
+  lead?: string;
+};
 
 /**
- * Proposes a plan for a day (default: today) or the week from that day.
- * Stored as 'proposed'; applyPlan makes it real.
+ * Proposes a plan. Asked for today when today is nearly over (after 20:00,
+ * or under two free hours left), it plans tomorrow and says so; a day with
+ * no free hour rolls on to the next, so the answer is never just "no free
+ * hour left".
  */
-export async function buildPlan(options: { scope: "day" | "week"; day?: Date; instructions?: string; now?: Date }): Promise<PlanResult> {
+export async function buildPlan(options: PlanOptions): Promise<PlanResult> {
+  const now = options.now ?? new Date();
+  let day = options.day ?? now;
+  let lead: string | undefined = options.lead;
+  if (options.scope === "day" && localDate(day) === localDate(now)) {
+    const settings = await getSettings();
+    const window = windowOf(now, settings.quiet_start);
+    const from = Math.max(now.getTime() + 15 * MINUTE, window.start.getTime());
+    const { data } = await requireDb().from("tasks").select("id").in("status", OPEN_STATUSES).gte("due_at", new Date(from).toISOString()).lt("due_at", window.end.toISOString());
+    const freeMinutes = Math.max(0, (window.end.getTime() - from) / MINUTE - (data ?? []).length * BLOCK_MINUTES);
+    if (planDay(now, freeMinutes) === "tomorrow") {
+      day = dayBounds(addMinutes(now, 24 * 60)).start;
+      lead = options.lead ? `${options.lead} ${LATE_LEAD.replace(/^Today is nearly over, sir — /, "today is nearly over, so ")}` : LATE_LEAD;
+    }
+  }
+  for (let attempt = 0; attempt < (options.scope === "day" ? 7 : 1); attempt++) {
+    const result = await planFor({ ...options, day, now }, lead);
+    if ("plan" in result || !result.full) return result;
+    const full = localDate(day) === localDate(now) ? "Today" : weekdayOf(day);
+    day = dayBounds(addMinutes(day, 24 * 60 + 12 * 60)).start;
+    lead = `${full} is full, sir — here's ${weekdayOf(day)}.`;
+  }
+  return { nothing: "There is no free hour in the coming week." };
+}
+
+/**
+ * Proposes a plan for one day (or the week from it). Stored as 'proposed';
+ * applyPlan makes it real.
+ */
+async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult> {
   const db = requireDb();
   const now = options.now ?? new Date();
   const first = options.day ?? now;
   const settings = await getSettings();
   const days = Array.from({ length: options.scope === "week" ? 7 : 1 }, (_, n) => addMinutes(first, n * 24 * 60));
-  const windows = days.map((day) => windowOf(day, settings.quiet_start));
+  // His waking day: from the end of quiet hours to their start (07:00 to 23:00).
+  const windows = days.map((day) => dayWindow(day, settings.quiet_start, settings.quiet_end));
   const earliest = snap(addMinutes(now, 15));
 
   const [taskRows, memoryRows] = await Promise.all([
-    db.from("tasks").select().in("status", OPEN_STATUSES).limit(500),
+    // Drafts (tasks he just gave, not yet confirmed) are included only when planning those.
+    db.from("tasks").select().in("status", options.taskIds ? [...OPEN_STATUSES, "draft"] : OPEN_STATUSES).limit(500),
     db.from("memory").select("fact").order("id"),
   ]);
   if (taskRows.error || memoryRows.error) throw new Error(`buildPlan: ${(taskRows.error ?? memoryRows.error)!.message}`);
@@ -215,14 +265,18 @@ export async function buildPlan(options: { scope: "day" | "week"; day?: Date; in
 
   // To place: overdue tasks and the inbox, most pressing first.
   // (Prayers are fixed times to plan around, never tasks to move.)
+  const only = options.taskIds ? new Set(options.taskIds) : undefined;
   const candidates = tasks
     .filter((task) => task.kind !== "prayer")
-    .filter((task) => task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime()))
+    .filter((task) => (only ? only.has(task.id) : task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime())))
     .sort((x, y) => x.priority - y.priority || Number(!x.due_at) - Number(!y.due_at) || (x.due_at ?? x.created_at).localeCompare(y.due_at ?? y.created_at))
     .slice(0, options.scope === "week" ? 14 : 8);
   if (candidates.length === 0) return { nothing: "Nothing is waiting for a slot: there are no overdue tasks and the inbox is empty." };
-  if (nextFree(earliest, fixed, windows, earliest) === undefined) {
-    return { nothing: `There is no free hour left ${options.scope === "week" ? "this week" : localDate(first) === localDate(now) ? "today" : "that day"}.` };
+  // Busy: every other open timed task for its length, prayers ±15 minutes.
+  const candidateIds = new Set(candidates.map((task) => task.id));
+  const busyTime = busyIntervals(tasks.filter((task) => !candidateIds.has(task.id) && task.status !== "draft"));
+  if (placeAll([{ id: -1, title: "", minutes: 30, priority: 4, deep: true }], busyTime, windows, earliest).left.length > 0) {
+    return { nothing: `There is no free hour left ${options.scope === "week" ? "this week" : localDate(first) === localDate(now) ? "today" : "that day"}.`, full: true };
   }
 
   let proposed: Awaited<ReturnType<typeof modelProposal>>;
@@ -235,52 +289,40 @@ export async function buildPlan(options: { scope: "day" | "week"; day?: Date; in
     plannedBy = "rules";
   }
 
-  // The model proposes; this places. Each time is checked and, if it clashes
-  // or falls outside the day, moved to the next free slot.
-  const busy = [...fixed];
+  // The model proposes; this places. A proposed time is kept only if it is really free;
+  // otherwise each task goes to the first free time that suits it (deep work in the
+  // morning, light tasks later), clear of other tasks, prayers and quiet hours.
   const items: PlanItem[] = [];
   const leftOut: PlanLeftOut[] = [];
-  const perDay = new Map<string, number>();
   const byId = new Map(candidates.map((task) => [task.id, task]));
-  const order = [...proposed.proposals.filter((p) => byId.has(p.id)), ...candidates.filter((task) => !proposed.proposals.some((p) => p.id === task.id)).map((task): Proposal => ({ id: task.id, why: "" }))];
-  const seen = new Set<number>();
-  for (const proposal of order) {
-    if (seen.has(proposal.id)) continue;
-    seen.add(proposal.id);
-    const task = byId.get(proposal.id)!;
+  const reasons = new Map(proposed.proposals.map((proposal) => [proposal.id, proposal]));
+  const toPlace: ToPlace[] = [];
+  for (const task of candidates) {
+    const proposal = reasons.get(task.id);
     const declined = proposed.leftOut.get(task.id);
-    if (declined !== undefined && !proposal.at) {
+    if (declined !== undefined && !proposal?.at) {
       leftOut.push({ task_id: task.id, title: task.title, why: declined || "it did not fit" });
       continue;
     }
-    let from = proposal.at ?? earliest;
-    let at: Date | undefined;
-    // Skip days that are already full.
-    for (let guard = 0; guard < 8; guard++) {
-      at = nextFree(from, busy, windows, earliest);
-      if (!at || (perDay.get(localDate(at)) ?? 0) < MAX_PER_DAY) break;
-      from = dayBounds(addMinutes(at, 24 * 60)).start;
-      at = undefined;
-    }
-    if (!at) {
-      leftOut.push({ task_id: task.id, title: task.title, why: options.scope === "week" ? "no free hour left this week" : "no free hour left in the day" });
-      continue;
-    }
-    const moved = proposal.at && Math.abs(at.getTime() - proposal.at.getTime()) >= STEP_MINUTES * MINUTE;
-    busy.push({ at, title: task.title });
-    perDay.set(localDate(at), (perDay.get(localDate(at)) ?? 0) + 1);
-    items.push({
-      task_id: task.id,
-      title: task.title,
-      at: at.toISOString(),
-      why: moved || !proposal.why ? (proposal.why && !moved ? proposal.why : "the nearest free hour") : proposal.why,
-    });
+    const minutes = task.duration_minutes || estimateMinutes(task.title);
+    toPlace.push({ id: task.id, title: task.title, minutes, priority: task.priority, deep: isDeep(task.title, minutes, task.priority), prefer: proposal?.at });
+  }
+  const placement = placeAll(toPlace, busyTime, windows, earliest);
+  for (const { id, at } of placement.placed) {
+    const task = byId.get(id)!;
+    const proposal = reasons.get(id);
+    const kept = proposal?.at && Math.abs(at.getTime() - proposal.at.getTime()) < STEP_MINUTES * MINUTE;
+    items.push({ task_id: id, title: task.title, at: at.toISOString(), why: kept && proposal?.why ? proposal.why : isDeep(task.title, task.duration_minutes || 30, task.priority) ? "a clear stretch for focused work" : "a free slot later in the day" });
+  }
+  for (const id of placement.left) {
+    const task = byId.get(id)!;
+    leftOut.push({ task_id: id, title: task.title, why: options.scope === "week" ? "no free time left this week" : "no free time left that day" });
   }
   items.sort((x, y) => x.at.localeCompare(y.at));
 
   const { data, error } = await db
     .from("plans")
-    .insert({ scope: options.scope, day: localDate(first), items, left_out: leftOut, why: proposed.why, planned_by: plannedBy })
+    .insert({ scope: options.scope, day: localDate(first), items, left_out: leftOut, why: proposed.why, planned_by: plannedBy, lead: lead ?? null, compact: Boolean(only) })
     .select()
     .single();
   if (error) throw new Error(`buildPlan: ${error.message}`);
@@ -305,6 +347,24 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
   const first = parseLocalDateTime(`${plan.day.slice(0, 10)}T12:00`)!;
   const name = plan.scope === "week" ? "The week" : plan.day === localDate(now) ? "Today" : plan.day === localDate(addMinutes(now, 24 * 60)) ? "Tomorrow" : weekdayOf(first);
   const parts = [`<b>🧭 Plan · ${esc(name)} · ${esc(shortDay(first))}</b>`];
+  if (plan.lead) parts.push(esc(plan.lead));
+
+  // Tasks he just gave without times: one line, "Presentation 13:00 · Zoom tutorial 18:00".
+  if (plan.compact && plan.status === "proposed" && mode === "view" && plan.items.length > 0) {
+    // All of them at once, as a table; nothing is kept until "Looks good".
+    const lengths = await requireDb().from("tasks").select("id, duration_minutes").in("id", plan.items.map((item) => item.task_id));
+    const minutes = new Map(((lengths.data ?? []) as { id: number; duration_minutes: number | null }[]).map((row) => [row.id, row.duration_minutes]));
+    const rows = plan.items
+      .map((item) => {
+        const length = minutes.get(item.task_id);
+        return `<tr><td>${formatTime(new Date(item.at))}</td><td>${esc(item.title)}</td><td>${length ? `${length} min` : ""}</td></tr>`;
+      })
+      .join("");
+    const left = plan.left_out.length ? `\n\nNo room for ${plan.left_out.map((item) => esc(item.title)).join(", ")} that day.` : "";
+    const html = `${plan.lead ? `${esc(plan.lead)}\n\n` : ""}<b>🧭 ${esc(name)} · ${esc(shortDay(first))}</b>\n<table><tr><th>Time</th><th>Task</th><th>Length</th></tr>${rows}</table>${left}`;
+    const keyboard = new InlineKeyboard().text("✓ Looks good", `pl:ap:${plan.id}`).text("✏️ Change", `pl:adj:${plan.id}`);
+    return { html, keyboard };
+  }
 
   // What is already fixed on those days is shown too, so the plan reads as the whole day.
   const lastDay = addMinutes(first, (plan.scope === "week" ? 6 : 0) * 24 * 60);
@@ -337,14 +397,28 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
     parts.push([b("Left for later"), ...plan.left_out.map((item) => `• ${esc(item.title)} ${i(item.why)}`)].join("\n"));
   }
   if (plan.why) parts.push(expandable(`💡 ${b("Why")} ${esc(plan.why)}${plan.planned_by === "rules" ? ` ${i("(planned by rule; my thinking was unavailable)")}` : ""}`));
+  // Two fixed things at once on the planned day(s): flagged, as in the morning brief.
+  for (const [a, c] of allClashes(fixedRows.data as Task[])) parts.push(`⚠️ ${esc(clashSentence(a, c))}`);
   if (plan.status === "applied") parts.push("✓ Applied, sir. Reminders are set.");
   if (plan.status === "dismissed") parts.push("Set aside, sir.");
   const html = parts.join("\n\n");
-  if (plan.status !== "proposed" || plan.items.length === 0) return { html };
+  // Overdue tasks the plan could not place: tomorrow, or drop, one by one or all at once. Plain code.
+  const overdueLeft = plan.status === "proposed" && mode === "view" ? await overdueAmong(plan.left_out.map((item) => item.task_id), now) : [];
+  if (plan.status !== "proposed" || plan.items.length === 0) {
+    if (overdueLeft.length === 0) return { html };
+    return { html, keyboard: leftOutKeyboard(plan.id, overdueLeft) };
+  }
 
   const keyboard = new InlineKeyboard();
   if (mode === "view") {
     keyboard.text("✓ Apply", `pl:ap:${plan.id}`).text("✎ Adjust", `pl:adj:${plan.id}`);
+    if (overdueLeft.length > 0) {
+      keyboard.row();
+      for (const row of leftOutKeyboard(plan.id, overdueLeft).inline_keyboard) {
+        for (const button of row) if ("callback_data" in button && button.callback_data) keyboard.text(button.text, button.callback_data);
+        keyboard.row();
+      }
+    }
   } else {
     plan.items.forEach((item, index) => {
       const title = item.title.length > 16 ? `${item.title.slice(0, 15)}…` : item.title;
@@ -358,6 +432,24 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
     keyboard.text("✓ Apply", `pl:ap:${plan.id}`).text("↺ Plan again", `pl:re:${plan.id}`).text("Drop plan", `pl:no:${plan.id}`);
   }
   return { html, keyboard };
+}
+
+/** Which of these tasks are open and overdue (to offer Tomorrow / Drop for them). */
+async function overdueAmong(ids: number[], now: Date): Promise<Task[]> {
+  if (ids.length === 0) return [];
+  const { data } = await requireDb().from("tasks").select().in("id", ids).in("status", OPEN_STATUSES).lt("due_at", now.toISOString());
+  return (data ?? []) as Task[];
+}
+
+/** [→ Tomorrow] [Drop] for each overdue task left out, and [Move all to tomorrow]. */
+function leftOutKeyboard(planId: number, tasks: Task[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const task of tasks.slice(0, 6)) {
+    const title = task.title.length > 18 ? `${task.title.slice(0, 17)}…` : task.title;
+    keyboard.text(`${title} → Tomorrow`, `tomorrow:${task.id}`).text("Drop", `drop:${task.id}`).row();
+  }
+  if (tasks.length > 1) keyboard.text("Move all to tomorrow", `pl:tomall:${planId}`);
+  return keyboard;
 }
 
 /** Moves one item of a proposed plan by `minutes`, to the nearest free start in that direction. */
@@ -398,6 +490,9 @@ export async function dismissPlan(planId: number): Promise<Plan | undefined> {
   const plan = await loadPlan(planId);
   if (!plan || plan.status !== "proposed") return plan;
   await savePlan(plan.id, { status: "dismissed" });
+  // Proposed tasks he did not confirm are not kept.
+  const ids = plan.items.map((item) => item.task_id);
+  if (ids.length) await requireDb().from("tasks").delete().in("id", ids).eq("status", "draft");
   return { ...plan, status: "dismissed" };
 }
 
@@ -414,7 +509,8 @@ export async function applyPlan(planId: number, now = new Date()): Promise<{ pla
     if (at.getTime() <= now.getTime()) continue;
     const found = await db.from("tasks").select().eq("id", item.task_id).maybeSingle();
     const task = found.data as Task | null;
-    if (!task || !OPEN_STATUSES.includes(task.status)) continue;
+    // Open tasks, and drafts he has just confirmed with "Looks good".
+    if (!task || !(OPEN_STATUSES.includes(task.status) || task.status === "draft")) continue;
     const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo" }).eq("id", task.id);
     if (error) throw new Error(`applyPlan: ${error.message}`);
     await scheduleReminder(task.id, at);

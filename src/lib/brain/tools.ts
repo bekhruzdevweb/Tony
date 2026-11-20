@@ -9,6 +9,9 @@ import { MAX_TITLE_LENGTH, OPEN_STATUSES, type Task } from "../tasks";
 import { addMinutes, dayBounds, formatDue, parseLocalDateTime, toWholeMinute } from "../time";
 import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
+import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
+import { fetchTitle } from "../links";
+import { estimateMinutes } from "../schedule";
 
 const TIME = "YYYY-MM-DDTHH:MM";
 /** Lets the model confirm in the same call, so most messages need one model call, not two. */
@@ -25,7 +28,7 @@ const taskFields = {
   persistent: { type: "boolean" },
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
   notes: { type: "string", description: "Description: links, details, anything that would make the title long." },
-  duration: { type: "integer", description: "Minutes it takes, only if he says (\"takes 45 min\")" },
+  duration: { type: "integer", description: "Minutes it takes: his figure, or your estimate" },
 };
 
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
@@ -60,12 +63,24 @@ export const TOOLS: ToolDefinition[] = [
     },
     [],
   ),
-  tool("set_reminder", "Extra reminder; due time unchanged.", { task_id: id, at: { type: "string", description: TIME }, reply }, ["task_id", "at"]),
+  tool(
+    "set_reminder",
+    "A reminder for a task at a time. Before the task's time: an extra heads-up. At or after it (or for an undated task): the task moves to that time.",
+    { task_id: id, at: { type: "string", description: TIME }, reply },
+    ["task_id", "at"],
+  ),
   tool(
     "remember",
     "Save a lasting fact about him (a project, goal, person, preference, habit). One fact per call, as a short line he would agree with.",
     { fact: { type: "string" }, reply },
     ["fact"],
+  ),
+  // "Save this" with a link: saved at once as a bookmark, with a proper title. Nothing is asked.
+  tool(
+    "save_link",
+    "Save a link as a bookmark right away (his \"save this\"). With no url, the link in his message or in the last thing he shared is used.",
+    { url: { type: "string" }, title: { type: "string", description: "Only if you know the page's real title" } },
+    [],
   ),
   // Talk mode: suggests a task without creating it. He gets a [➕ Make this a task] button; only his tap creates it.
   tool(
@@ -197,19 +212,26 @@ async function attachShared(args: Args, taskId: number): Promise<string | undefi
 }
 
 /** Runs one tool call. Problems come back as { ok: false }, so the model can tell the user. */
-export async function runTool(name: string, args: Args, now = new Date()): Promise<Result> {
+export async function runTool(name: string, args: Args, now = new Date(), said?: string): Promise<Result> {
   const db = requireDb();
   switch (name) {
     case "add_task": {
       const fields = await readFields(args, now);
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
+      // A saved link or note gets no date unless his own words gave one: it goes to the inbox.
+      if (fields.dueAt && said !== undefined && isLinkTask(fields.patch.title, fields.patch.notes) && !givesTime(said)) {
+        fields.dueAt = undefined;
+        delete fields.patch.due_at;
+      }
       // The same task twice is almost always a mistake (and once was: a
       // complaint about a late reminder became a second copy of the task).
       const open = await db.from("tasks").select().in("status", OPEN_STATUSES);
       check("add_task", open.error);
       const wanted = normaliseTitle(fields.patch.title);
       const twin = (open.data as Task[]).find((t) => normaliseTitle(t.title) === wanted);
+      // Every task gets a length: his, the model's estimate, or a guess from the title.
+      if (fields.patch.duration_minutes === undefined) fields.patch.duration_minutes = estimateMinutes(fields.patch.title);
       if (twin) {
         return fail(
           `task ${taskLine(twin, await loadProjects(), now)} already exists. Do not add it again: use update_task on #${twin.id} if he asked to change it, otherwise just tell him it is already on the list.`,
@@ -224,7 +246,7 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       const task = data as Task;
       if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
       const attached = await attachShared(args, task.id);
-      return { ok: true, task: taskLine(task, await loadProjects(), now), ...(attached ? { attached } : {}) };
+      return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), ...(attached ? { attached } : {}) };
     }
 
     case "update_task": {
@@ -239,7 +261,7 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       if (status === "skipped" && Object.keys(patch).length === 0) {
         // Skipping a repeating task moves it to its next date instead of closing it.
         const { nextLabel } = await finishTask(task, "skipped", now);
-        return { ok: true, task: task.title, status: nextLabel ? `skipped; next one ${nextLabel}` : "skipped" };
+        return { ok: true, task_id: task.id, task: task.title, status: nextLabel ? `skipped; next one ${nextLabel}` : "skipped" };
       }
       if (status === "dropped" || status === "skipped") {
         patch.status = status;
@@ -252,7 +274,7 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
         patch.status = task.due_at ? "todo" : "inbox";
       }
       if (Object.keys(patch).length === 0 && args.attach_shared === true) {
-        return { ok: true, task: taskLine(task, await loadProjects(), now), attached: await attachShared(args, task.id) };
+        return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), attached: await attachShared(args, task.id) };
       }
       if (Object.keys(patch).length === 0) return fail("nothing to change");
 
@@ -263,15 +285,15 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       if (!OPEN_STATUSES.includes(updated.status) || args.clear_due === true) await settleReminders(task.id);
       else if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
       const attached = await attachShared(args, task.id);
-      return { ok: true, task: taskLine(updated, await loadProjects(), now), status: updated.status, ...(attached ? { attached } : {}) };
+      return { ok: true, task_id: task.id, task: taskLine(updated, await loadProjects(), now), status: updated.status, ...(attached ? { attached } : {}) };
     }
 
     case "complete_task": {
       const task = await loadTask(args.id);
       if (!task) return fail(`no task #${args.id}`);
-      if (task.status === "done") return { ok: true, note: "it was already done", task: task.title };
+      if (task.status === "done") return { ok: true, task_id: task.id, note: "it was already done", task: task.title };
       const { nextLabel } = await finishTask(task, "done", now);
-      return nextLabel ? { ok: true, task: task.title, repeats: `it comes round again ${nextLabel}` } : { ok: true, task: task.title };
+      return nextLabel ? { ok: true, task_id: task.id, task: task.title, repeats: `it comes round again ${nextLabel}` } : { ok: true, task_id: task.id, task: task.title };
     }
 
     case "list_tasks": {
@@ -290,9 +312,9 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
 
       if (typeof args.day === "string" && args.day.trim()) {
         const day = args.day.trim().toLowerCase();
-        const today = dayBounds(now);
         if (day === "overdue") {
-          query = query.lt("due_at", today.start.toISOString());
+          // Everything past its time (earlier today too); the shared rule below drops started tasks and prayers.
+          query = query.lt("due_at", now.toISOString());
         } else {
           const anchor =
             day === "today" ? now : day === "tomorrow" ? addMinutes(now, 24 * 60) : parseLocalDateTime(day);
@@ -304,7 +326,8 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
 
       const { data, error } = await query.order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(40);
       check("list_tasks", error);
-      const tasks = data as Task[];
+      const wantOverdue = typeof args.day === "string" && args.day.trim().toLowerCase() === "overdue";
+      const tasks = (data as Task[]).filter((t) => t.kind !== "prayer" && (!wantOverdue || isOverdue(t, now)));
       return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now)) };
     }
 
@@ -316,9 +339,23 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       if (!parsed) return fail(`could not read at "${args.at}"; use YYYY-MM-DDTHH:MM`);
       const at = toWholeMinute(parsed);
       if (at.getTime() < now.getTime() - 60_000) return fail(`${formatDue(at, now)} has already passed`);
-      const { error } = await db.from("reminders").insert({ task_id: task.id, fire_at: at.toISOString(), kind: "extra", attempt: 0 });
-      check("set_reminder", error);
-      return { ok: true, task: task.title, reminder_at: formatDue(at, now) };
+      const decision = decideReminder(task.due_at ? new Date(task.due_at) : null, at);
+      if (decision === "move") {
+        // A reminder after the task's time (or for an undated task) is a reschedule: the task itself moves.
+        const moved = await db.from("tasks").update({ due_at: at.toISOString(), status: task.status === "inbox" ? "todo" : task.status }).eq("id", task.id);
+        check("set_reminder", moved.error);
+        await scheduleReminder(task.id, at);
+        return { ok: true, task_id: task.id, task: task.title, moved_to: formatDue(at, now) };
+      }
+      if (decision === "same") return { ok: true, task_id: task.id, task: task.title, note: "it is already set for that time" };
+      // A heads-up before the task's time, unless one is already waiting at that minute.
+      const waiting = await db.from("reminders").select("fire_at").eq("task_id", task.id).eq("state", "scheduled");
+      check("set_reminder", waiting.error);
+      if (!isDuplicateReminder((waiting.data ?? []) as { fire_at: string }[], at)) {
+        const { error } = await db.from("reminders").insert({ task_id: task.id, fire_at: at.toISOString(), kind: "extra", attempt: 0 });
+        check("set_reminder", error);
+      }
+      return { ok: true, task_id: task.id, task: task.title, reminder_at: at.toISOString() };
     }
 
     case "remember": {
@@ -330,6 +367,20 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
       const { data, error } = await db.from("memory").insert({ fact, source: "user" }).select("id").single();
       check("remember", error);
       return { ok: true, id: (data as { id: number }).id, fact };
+    }
+
+    case "save_link": {
+      const settings = await getSettings();
+      const url = findLink(typeof args.url === "string" ? args.url : "", settings.last_shared_text);
+      if (!url) return fail("there is no link in his message or in what he shared recently");
+      const title = typeof args.title === "string" && args.title.trim() ? args.title.trim().slice(0, 120) : await fetchTitle(url);
+      const fact = `Saved link: ${title} (${url})`.slice(0, 300);
+      const known = await db.from("memory").select("id").eq("fact", fact).limit(1);
+      if (!known.error && (known.data ?? []).length === 0) {
+        const { error } = await db.from("memory").insert({ fact, source: "link" });
+        check("save_link", error);
+      }
+      return { ok: true, saved: title, url };
     }
 
     case "offer_task": {

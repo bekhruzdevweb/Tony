@@ -289,6 +289,45 @@ the site first, today's remaining prayers re-timed); `/location 41.47 60.78`
 sets the fallback coordinates. Migrations `0016_prayer.sql` and
 `0017_prayer_location.sql`.
 
+**Reliability.** Tony only claims what is stored:
+
+- After any task change the task is read back from the database and the
+  reply is built from that, one line per change ("✓ **Call the barber** →
+  tomorrow **08:30**"), never from what the model said it would do.
+- Every request in a message is handled (the newest message is marked as
+  the one to act on); "this one" with nothing replied to means the
+  reminder sent in the last 15 minutes. Several requests, or moving and
+  planning things, go to Claude Sonnet 5.5 (`ANTHROPIC_DEEP_MODEL`); simple
+  replies to Haiku.
+- A reminder after a task's time moves the task (a reschedule); one before
+  it is an extra heads-up; the same reminder twice is never added.
+- Adding or moving a timed task checks for clashes (within 30 minutes, or
+  overlapping by duration) and offers **Move … HH:MM** (only a free time)
+  and **Keep both**. The morning brief and `/plan` flag clashes too.
+- "Save this" with a link saves it at once as a bookmark with the page's
+  real title; a link or note never gets a date unless his words give one.
+- "Here it is" is only said once Telegram has confirmed the photo or file
+  was sent; "clean the chat" runs the `/clean` sweep.
+- Regression tests for each of these: `npm test` (Vitest, `tests/`).
+
+**Smart scheduling.** Every task gets a length (his, Claude's estimate, or
+a guess from the title). Free time is found in plain code
+(`src/lib/schedule.ts`): other tasks block their length, prayers ±15
+minutes, and the day runs from the end of quiet hours to their start
+(07:00 to 23:00). The most important go first, deep work in the morning
+and light tasks from the afternoon, with a 10-minute gap between things.
+
+- Tasks given without times for a named day ("tomorrow I need to do a
+  presentation and a zoom tutorial") become drafts and are proposed all at
+  once as a table (Time · Task · Length) with **✓ Looks good** /
+  **✏️ Change**; nothing is kept until he confirms. With no day named,
+  they go to the inbox with one suggestion.
+- `/plan` and "plan tomorrow" use the same placement. Asked late (after
+  20:00, or under two free hours left) `/plan` plans tomorrow and says so;
+  a full day rolls on to the next. Overdue tasks get slots, and any it
+  cannot place get **→ Tomorrow** / **Drop** and **Move all to tomorrow**.
+- Migrations `0018_plan_lead.sql` and `0019_task_drafts.sql`.
+
 **Tony's replies.** Everything the brain says in Telegram is a rich
 message written in Telegram's rich markdown. The system prompt tells
 Claude how to lay it out, with two worked examples:

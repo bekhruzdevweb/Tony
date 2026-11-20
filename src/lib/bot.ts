@@ -22,7 +22,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { asksForMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { asksForMedia, findMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -34,10 +34,13 @@ import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, looksLikeTask, OPEN_STATUSES, type Task } from "./tasks";
 import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
+import { asksToClean, claimsSent } from "./brain/checks";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
+import { fetchTitle } from "./links";
+import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
@@ -433,9 +436,20 @@ export function getBot(): Bot | undefined {
           mode = "view";
         } else if (action === "re") {
           await dismissPlan(planId);
-          const again = await buildPlan({ scope: plan.scope, day: new Date(`${plan.day.slice(0, 10)}T12:00:00+05:00`), instructions: "Propose different times from before." });
+          const again = await buildPlan({
+            scope: plan.scope,
+            day: new Date(`${plan.day.slice(0, 10)}T12:00:00+05:00`),
+            instructions: "Propose different times from before.",
+            // A proposal for tasks he just gave stays about those tasks.
+            ...(plan.compact ? { taskIds: [...plan.items.map((item) => item.task_id), ...plan.left_out.map((item) => item.task_id)] } : {}),
+          });
           if ("nothing" in again) toast = again.nothing;
           else plan = again.plan;
+          mode = "view";
+        } else if (action === "tomall") {
+          // Every overdue task to tomorrow, at its own time of day. Plain code.
+          const moved = await rescheduleOverdue("tomorrow");
+          toast = moved ? `Moved ${moved} to tomorrow, sir.` : "Nothing overdue, sir.";
           mode = "view";
         } else if (action === "noop") {
           return;
@@ -452,6 +466,13 @@ export function getBot(): Bot | undefined {
     }
 
     // An answer to a question Tony asked with buttons ("ch:<n>"), or "Other".
+    // "Keep both" under a clash warning: nothing changes; the buttons go.
+    if (payload === "clash:keep") {
+      await ctx.answerCallbackQuery({ text: "Both stay, sir." }).catch(() => undefined);
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      return;
+    }
+
     // Offers: a task suggested in conversation, or a summarised link. Plain code, no AI.
     if (payload.startsWith("of:")) {
       const [, how, idText] = payload.split(":");
@@ -565,16 +586,11 @@ export function getBot(): Bot | undefined {
     }
     if (link) {
       const page = fetched.find((item) => item.url === link) ?? fetched[0];
-      let host = link;
-      try {
-        host = new URL(link).hostname.replace(/^www\./, "");
-      } catch {
-        // keep the link as it is
-      }
       const summary = spokenFromMarkdown(reply).slice(0, 400);
       const { data, error } = await requireDb()
         .from("offers")
-        .insert({ kind: "link", payload: { url: link, title: (page?.title ?? host).slice(0, 200), summary } })
+        // A real title, not the bare site ("Read: instagram.com"): the page's own, or fetched.
+        .insert({ kind: "link", payload: { url: link, title: (page?.title && page.title !== link ? page.title : await fetchTitle(link)).slice(0, 200), summary } })
         .select("id")
         .single();
       if (error) console.error(`Could not keep the link offer: ${error.message}`);
@@ -599,6 +615,11 @@ export function getBot(): Bot | undefined {
   // One path for typed and spoken messages: the brain, with a safe fallback.
   // Returns what Tony said and whether it was a confirmation of something done.
   const answer = async (ctx: Context, text: string, options: { note?: string; keepHours?: number; link?: string } = {}): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
+    // "Clean the chat": the same sweep as /clean, in plain code.
+    if (asksToClean(text) && ctx.chat && ctx.message) {
+      await cleanFromCommand(bot, ctx.chat.id, ctx.message.message_id);
+      return { reply: "Chat cleaned, sir.", confirmed: false, completed: false };
+    }
     // Replying to one of Tony's messages says which task is meant, and keeps that message.
     let context = options.note;
     const repliedTo = ctx.message?.reply_to_message?.message_id;
@@ -615,16 +636,29 @@ export function getBot(): Bot | undefined {
     // as Tony is thinking, which includes waiting out a rate limit.
     const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
     try {
-      const { reply, tools, titles, planId, choices, mediaIds, offerIds, fetched } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      const thought = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      const { tools, titles, planId, choices, mediaIds, offerIds, fetched, clash } = thought;
+      let reply = thought.reply;
       // Whatever he was asked before has now been answered or overtaken.
       await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
       // Originals go back only when he asked for them in so many words; never on the model's say-so alone.
-      if (mediaIds?.length && ctx.chat && asksForMedia(text)) {
-        // "Show my video ideas": the originals come back, each with its label.
-        for (const id of mediaIds) {
+      // Originals he asked for come back: what the model found, or failing that, a search of his words.
+      let mediaSent = 0;
+      if (ctx.chat && asksForMedia(text)) {
+        const ids = mediaIds?.length ? mediaIds : (await findMedia(text).catch(() => [])).map((item) => item.id);
+        for (const id of ids) {
           const item = await loadMedia(id);
-          if (item) await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).catch((error) => console.error("Could not resend media:", error));
+          if (!item) continue;
+          // Counted only once Telegram has confirmed the send.
+          await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
+            () => mediaSent++,
+            (error) => console.error("Could not resend media:", error),
+          );
         }
+      }
+      // "Here it is" is only said if something was really sent.
+      if (mediaSent === 0 && claimsSent(reply) && !tools.includes("save_link")) {
+        reply = asksForMedia(text) ? "I could not find that among your saved photos and files, sir." : reply;
       }
       if (planId !== undefined && ctx.chat) {
         await showPlan(ctx.chat.id, planId);
@@ -643,6 +677,12 @@ export function getBot(): Bot | undefined {
       // Offers under the reply, acted on in plain code when tapped: a task suggested in conversation,
       // or a link he sent (now summarised) to save or to turn into a task.
       let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
+      // A clash the change created: move it to the next free hour, or keep both. Plain code.
+      if (clash) {
+        keyboard ??= new InlineKeyboard();
+        if (clash.suggestAt) keyboard.text(`Move ${shortLabel(clash.title, 16)} ${formatTime(clash.suggestAt)}`, `move:${clash.taskId}:${Math.round(clash.suggestAt.getTime() / 60_000)}`);
+        keyboard.text("Keep both", "clash:keep");
+      }
       // A yes-or-no question left in the words still gets buttons: he taps, he does not type.
       const yesNo = choices || keyboard ? undefined : yesNoQuestion(reply);
       if (yesNo) {

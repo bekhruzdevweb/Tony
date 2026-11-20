@@ -53,7 +53,11 @@ export async function POST(request: Request) {
     // A reminder, a brief or a rolled-over task may have changed today's list.
     await refreshBoard(bot, chatId);
     // Once an hour, forget update ids too old for Telegram to resend.
-    if (new Date().getMinutes() === 7) await pruneUpdates().catch(() => undefined);
+    if (new Date().getMinutes() === 7) {
+      await pruneUpdates().catch(() => undefined);
+      // Proposed tasks never confirmed ("Looks good") are let go after two days.
+      await getDb()!.from("tasks").delete().eq("status", "draft").lt("created_at", new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString()).then(({ error }) => error && console.error(`Draft cleanup: ${error.message}`));
+    }
     // Last, tidy the chat: remove messages whose time has come.
     const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));
     // Once after a deployment, a full sweep of the chat. After the answer, so the clock is not kept waiting.

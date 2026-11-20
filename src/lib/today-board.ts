@@ -107,12 +107,6 @@ export async function boardView(day: Date): Promise<Board> {
   ]);
   if (openRows.error || finishedRows.error) throw new Error(`boardView: ${(openRows.error ?? finishedRows.error)!.message}`);
 
-  // Today's prayers: one calm line under the list, never counted as tasks.
-  const prayerLine = [...(openRows.data as Task[]), ...(finishedRows.data as Task[])]
-    .filter((task) => task.kind === "prayer" && task.due_at && new Date(task.due_at).getTime() >= start.getTime() && new Date(task.due_at).getTime() < end.getTime())
-    .sort((a, b) => a.due_at!.localeCompare(b.due_at!))
-    .map((task) => `${task.status === "done" ? "✓ " : ""}${task.title} ${formatTime(new Date(task.due_at!))}`)
-    .join(" · ");
   // The same split the app's Today view uses, so the counts always agree.
   const { carried, timed, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
 
@@ -135,7 +129,7 @@ export async function boardView(day: Date): Promise<Board> {
   // The first line is what the pinned banner shows, so it is the short one.
   // The pinned banner is a separate one-line message (see postBoard), so the board leads with the date.
   const status = `Today · ${done.length}/${total} done`;
-  const html = [`<b>📋 ${esc(shortDay(day))}</b>`, i(`${done.length}/${total} done`), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n"), ...(prayerLine ? ["", i(`🕌 ${esc(prayerLine)}`)] : [])].join("\n");
+  const html = [`<b>📋 ${esc(shortDay(day))}</b>`, i(`${done.length}/${total} done`), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
 
   // Two short buttons a row, in the same order as the list.
   const buttons = [
@@ -193,7 +187,6 @@ export async function boardView(day: Date): Promise<Board> {
       { type: "heading", size: 2, text: shortDay(day) },
       { type: "paragraph", text: { type: "italic", text: `${done.length}/${total} done` } },
       total === 0 ? { type: "paragraph", text: "Nothing is due today, sir." } : { type: "list", items },
-      ...(prayerLine ? [{ type: "paragraph" as const, text: { type: "italic" as const, text: `🕌 ${prayerLine}` } }] : []),
       ...rows,
     ],
     skip_entity_detection: true,
@@ -218,6 +211,15 @@ export async function refreshBoard(bot: Bot, chatId: number): Promise<void> {
     const day = parseLocalDateTime(`${String(settings.today_message_day).slice(0, 10)}T12:00`);
     if (!day) return;
     const board = await boardView(day);
+    // No one-line banner yet (a board from before banners, or one that failed to send):
+    // post it now and pin it, so the pinned bar reads "Today · 3/14 done" and nothing more.
+    if ("today_status_id" in settings && !settings.today_status_id) {
+      const statusId = (await bot.api.sendMessage(chatId, board.status, { disable_notification: true })).message_id;
+      await updateSettings({ today_status_id: statusId });
+      await bot.api.pinChatMessage(chatId, statusId, { disable_notification: true }).catch((error) => console.error("Could not pin the banner:", error));
+      await bot.api.unpinChatMessage(chatId, Number(settings.today_message_id)).catch(() => undefined);
+      settings.today_status_id = statusId;
+    }
     const isRich = settings.today_message_hash?.startsWith(RICH) ?? false;
     const hash = isRich ? board.richHash : board.hash;
     if (hash === settings.today_message_hash) return;
