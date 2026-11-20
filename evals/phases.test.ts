@@ -199,6 +199,15 @@ describe("c) The 🌙 Free Time list and its suggestions", () => {
     expect(result.replies[0]).toMatch(/✓ \*\*Watch: Instagram Masterclass\*\* → 🌙 Free Time · 🔗 link/);
     expect((await listInbox()).map((row) => row.title)).not.toContain("Watch: Instagram Masterclass");
   });
+  it("rig, 21 Nov: in a burst, a time inside the screenshot's text is not his; 'in my free time' still wins, and the notes quote none of the photo", async () => {
+    const burst = "[He sent you a photo]\nText in the image: TADBIR: Ingliz tili o'qituvchilari forumi. 20-21 noyabr, soat 10:00\n\nsave this masterclass to watch in my free time\n\nhttps://youtu.be/SaiTtbRJwic";
+    const result = await run(burst, "2026-11-21T12:00", [tools(["add_task", { title: "Watch: Instagram Masterclass" }])]);
+    const item = byTitle("Watch: Instagram Masterclass");
+    expect(item.free_time).toBe(true);
+    expect(item.due_at).toBeNull();
+    expect(String(item.notes)).not.toMatch(/TADBIR|He sent you/);
+    expect(result.replies[0]).toMatch(/→ 🌙 Free Time/);
+  });
   it("'I'm free': one item now, longest waiting, in code: 'You're free until 18:00. Want to finally watch …? It's been waiting 9 days.'", async () => {
     task({ title: "Watch: Instagram Masterclass", free_time: true, duration_minutes: 120, created_at: at("2026-11-12T10:00").toISOString() });
     task({ title: "Workout", due_at: "2026-11-21T18:00" });

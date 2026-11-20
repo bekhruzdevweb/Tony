@@ -252,6 +252,8 @@ export function withoutInstructions(message: string): string {
 }
 
 export function notesToKeep(message: string, saved: { title: string; notes: string | null; parts?: string[] }[]): string | undefined {
+  // What a photo or a forwarded post says is material, never his details (phase b: messages sent together).
+  message = ownWords(message);
   const all = saved.map((task) => [task.title, task.notes ?? "", ...(task.parts ?? [])].join(" "));
   const missingLinks = linksIn(message).filter((url) => !all.some((text) => text.includes(url)));
   // What is quoted is his request without its instructions ("remind me to", "save this"): details, never orders to Tony.
@@ -374,6 +376,22 @@ export function withoutSendClaims(reply: string): string {
 }
 
 // ── Phase 2: Tony's own words stay, with the receipt under them ─────────
+
+/**
+ * His own words in a message that also carries material: without forwarded
+ * posts («« »» blocks), the text read from a photo, and Tony's notes about
+ * what he attached. Used to decide what HE asked for (bursts, phase b).
+ */
+export function ownWords(text: string): string {
+  return text
+    .replace(/\[He forwarded this to you\]\s*«««[\s\S]*?»»»/g, " ")
+    .replace(/«««[\s\S]*?»»»/g, " ")
+    .replace(/\[He (sent you|attached) an? [^\]]*\]/g, " ")
+    .replace(/^\s*(Text in the image:|Shows:|\(Saved\.|\(Its image|\(A [a-z]+; you cannot)[^\n]*$/gim, " ")
+    .replace(/\[In a voice note he said:\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /** Clock times in some words, as "HH:MM" ("8.30" → "08:30"). */
 export function clockTimes(text: string): string[] {

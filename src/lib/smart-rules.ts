@@ -143,7 +143,8 @@ export function slippedDays(task: Pick<OpenTask, "due_at">, now: Date): number {
 export function missedToday(tasks: OpenTask[], now: Date, followedUp: Set<number>): OpenTask[] {
   return tasks
     .filter((task) => task.due_at && task.kind !== "prayer" && task.status !== "in_progress" && !followedUp.has(task.id))
-    .filter((task) => slippedDays(task, now) === 0 && now.getTime() - new Date(task.due_at!).getTime() >= 2 * 60 * MINUTE)
+    // Due today (after midnight, "today" by the calendar too: his day has not turned yet), two hours or more ago.
+    .filter((task) => slippedDays(task, now) <= 0 && now.getTime() - new Date(task.due_at!).getTime() >= 2 * 60 * MINUTE)
     .sort((a, b) => a.due_at!.localeCompare(b.due_at!));
 }
 

@@ -16,7 +16,7 @@ import { itemLabel } from "../library-rules";
 import { addRule, deleteRule, fireRule } from "../rules";
 import { isFreeTimeRequest } from "../smart-rules";
 import { dayFromText, estimateMinutes } from "../schedule";
-import { givenTimes, heldToGivenTime, hisTitle, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
+import { givenTimes, heldToGivenTime, hisTitle, mergeNotes, nightTomorrow, ownWords, statedByHim, type GivenTime } from "./reliability";
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
@@ -329,7 +329,9 @@ async function readFields(
     if (dueAt) patch.due_at = dueAt.toISOString();
   }
   // "In my free time", "someday": the 🌙 Free Time list, with no date (unless his words also name a day or a time).
-  const freeTime = args.free_time === true || (said !== undefined && args.free_time !== false && isFreeTimeRequest(said) && !dayFromText(said, now) && givenTimes(said, now).length === 0);
+  // His own words decide (a time inside a screenshot he sent with it is not his).
+  const his = said !== undefined ? ownWords(said) : undefined;
+  const freeTime = args.free_time === true || (his !== undefined && args.free_time !== false && isFreeTimeRequest(his) && !dayFromText(his, now) && givenTimes(his, now).length === 0);
   if (freeTime) {
     patch.free_time = true;
     dueAt = undefined;
@@ -660,7 +662,8 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (action === "add") {
         const result = await addRule({ situation: String(args.situation ?? ""), action: String(args.do ?? ""), item: typeof args.attach === "string" && args.attach.trim() ? args.attach.trim() : undefined }, now);
         if (!result.ok) return fail(result.error);
-        return { ok: true, rule: { id: result.rule.id, situation: result.rule.situation, action: result.rule.action, item: result.item ? itemLabel(result.item, now) : undefined, skip: result.rule.skip_days ? `${result.rule.skip_days} days without ${result.rule.skip_kind}` : undefined } };
+        const without = result.rule.skip_kind === "workout" ? "a workout" : result.rule.skip_kind;
+        return { ok: true, rule: { id: result.rule.id, situation: result.rule.situation, action: result.rule.action, item: result.item ? itemLabel(result.item, now) : undefined, skip: result.rule.skip_days ? `${result.rule.skip_days} days without ${without}` : undefined } };
       }
       if (action === "delete") {
         const id = Number(args.id);

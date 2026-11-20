@@ -608,7 +608,10 @@ async function proposeInstead(name: string, args: Record<string, unknown>, now: 
     say = `I'll forget: "${fact?.fact ?? "that note"}".`;
   } else if (name === "subtask") say = `I'll remove ${Array.isArray(args.titles) ? args.titles.map((t) => `"${t}"`).join(", ") : "that part"} from **${task?.title ?? "the task"}**.`;
   else if (name === "rule") say = `I'll remove rule #${args.id}.`;
-  else if (name === "add_task") say = `I'll add **${String(args.title ?? "it")}**${typeof args.due_at === "string" ? ` for **${args.due_at.replace("T", " ")}**` : ""}.`;
+  else if (name === "add_task") {
+    const due = typeof args.due_at === "string" ? parseLocalDateTime(args.due_at) : undefined;
+    say = `I'll add **${String(args.title ?? "it")}**${due ? ` for ${formatWhen(due, now).replace(/(\d{2}:\d{2})$/, "**$1**")}` : ""}.`;
+  }
   else if (name === "update_task") say = `I'll change **${task?.title ?? "that task"}** as that post suggests.`;
   else say = "I'll do what that post asks.";
   return runTool("propose", { say, tool: name, args }, now, said, heard);

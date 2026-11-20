@@ -103,6 +103,9 @@ describe("d) Follow-up ladder", () => {
   it("missed today: two hours past, open, not prayers, not followed up yet", () => {
     const list = [task(1, "Call the bank", "2026-11-21T10:00"), task(2, "Post stories", "2026-11-21T11:00"), task(3, "Dhuhr", "2026-11-21T09:00", { kind: "prayer" }), task(4, "Workout", "2026-11-21T10:00")];
     expect(missedToday(list, at("2026-11-21T12:30"), new Set([4])).map((t) => t.id)).toEqual([1]);
+    // Rig, 21 Nov 03:30: tasks due at 00:30 and 01:00, after midnight, are missed today too.
+    const night = [task(5, "Call the bank", "2026-11-21T00:30"), task(6, "Post stories", "2026-11-21T01:00")];
+    expect(missedToday(night, at("2026-11-21T03:30"), new Set()).map((t) => t.id)).toEqual([5, 6]);
   });
   it("the brief's '⚠️ Still open' and Sunday's review of the inbox (7 days untouched, never the Free Time list)", () => {
     const now = at("2026-11-22T19:00");

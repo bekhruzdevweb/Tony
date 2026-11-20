@@ -38,7 +38,8 @@ export async function saveMistake(telegramMessageId: number | undefined, note?: 
     telegram_message_id: telegramMessageId ?? null,
     tony_text: tony ? ("text" in tony ? tony.text : null) : null,
     his_text: his?.text ?? null,
-    context,
+    // An object, not a bare list: every JSON layer stores it the same way.
+    context: { messages: context },
     note: note ?? null,
   });
   if (error) console.error(`saveMistake: ${error.message}`);
