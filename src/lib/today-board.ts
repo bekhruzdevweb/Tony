@@ -82,7 +82,7 @@ type RichButton = Extract<RichBlock, { type: "buttons" }>["buttons"][number];
  * list and buttons inside it) and, if Telegram will not take that, as the
  * HTML message it was before.
  */
-type Board = { html: string; keyboard: InlineKeyboard; hash: string; rich: RichMessage; richHash: string };
+type Board = { html: string; keyboard: InlineKeyboard; hash: string; rich: RichMessage; richHash: string; status: string };
 
 /** Which form the board in the chat was sent in is kept with its hash. */
 const RICH = "rich:";
@@ -127,7 +127,9 @@ export async function boardView(day: Date): Promise<Board> {
     ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>`),
   ];
   // The first line is what the pinned banner shows, so it is the short one.
-  const html = [`<b>📋 Today · ${done.length}/${total} done</b>`, i(shortDay(day)), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
+  // The pinned banner is a separate one-line message (see postBoard), so the board leads with the date.
+  const status = `Today · ${done.length}/${total} done`;
+  const html = [`<b>📋 ${esc(shortDay(day))}</b>`, i(`${done.length}/${total} done`), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
 
   // Two short buttons a row, in the same order as the list.
   const buttons = [
@@ -151,7 +153,7 @@ export async function boardView(day: Date): Promise<Board> {
   keyboard.text("➕ Add", "td:add");
   if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
 
-  const hash = createHash("sha256").update(`${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
+  const hash = createHash("sha256").update(`${status}\n${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
 
   // The rich form. Native checkboxes show what is done; ticking happens on
   // the buttons below the list, one per open task, because a tap on the
@@ -182,16 +184,15 @@ export async function boardView(day: Date): Promise<Board> {
   rows.push({ type: "buttons", buttons: lastRow });
   const rich: RichMessage = {
     blocks: [
-      // The pinned banner shows the first line: keep it short ("Today · 2/11 done").
-      { type: "heading", size: 2, text: `Today · ${done.length}/${total} done` },
-      { type: "paragraph", text: { type: "italic", text: shortDay(day) } },
+      { type: "heading", size: 2, text: shortDay(day) },
+      { type: "paragraph", text: { type: "italic", text: `${done.length}/${total} done` } },
       total === 0 ? { type: "paragraph", text: "Nothing is due today, sir." } : { type: "list", items },
       ...rows,
     ],
     skip_entity_detection: true,
   };
-  const richHash = RICH + createHash("sha256").update(JSON.stringify(rich)).digest("hex");
-  return { html, keyboard, hash, rich, richHash };
+  const richHash = RICH + createHash("sha256").update(`${status}\n${JSON.stringify(rich)}`).digest("hex");
+  return { html, keyboard, hash, rich, richHash, status };
 }
 
 const gone = (error: unknown) => /message to edit not found|message can't be edited|MESSAGE_ID_INVALID/i.test(String((error as { description?: string })?.description ?? error));
@@ -225,6 +226,12 @@ export async function refreshBoard(bot: Bot, chatId: number): Promise<void> {
       }
       if (!unchanged(error)) throw error;
     }
+    // The pinned one-line banner follows the board's counts.
+    if (settings.today_status_id) {
+      await bot.api.editMessageText(chatId, Number(settings.today_status_id), board.status).catch((error) => {
+        if (!unchanged(error)) console.error("Could not update the pinned banner:", error);
+      });
+    }
     await updateSettings({ today_message_hash: hash });
   } catch (error) {
     console.error("Could not refresh the Today message:", error);
@@ -241,7 +248,12 @@ export async function postBoard(bot: Bot, chatId: number, now = new Date()): Pro
   // sent but never found again, so it is not sent at all.
   if (!("today_message_id" in settings)) throw new BoardNotReady();
   const previous = settings.today_message_id;
+  const previousStatus = settings.today_status_id;
   const board = await boardView(now);
+  // The banner: a one-line message pinned right above the board. Telegram's pinned bar shows
+  // the start of the pinned message with its lines run together, so this keeps it to
+  // "Today · 3/14 done" and nothing else.
+  const statusId = (await bot.api.sendMessage(chatId, board.status, { disable_notification: true })).message_id;
   let messageId: number;
   let hash: string;
   try {
@@ -254,13 +266,16 @@ export async function postBoard(bot: Bot, chatId: number, now = new Date()): Pro
     hash = board.hash;
   }
   await updateSettings({ today_message_id: messageId, today_message_day: localDate(now), today_message_hash: hash });
-  await bot.api.pinChatMessage(chatId, messageId, { disable_notification: true }).catch((error) => console.error("Could not pin the Today message:", error));
+  // Kept separately, so the board still works if this column is not there yet (migration 0015).
+  await updateSettings({ today_status_id: statusId }).catch((error) => console.error("Could not keep the banner's id:", error));
+  await bot.api.pinChatMessage(chatId, statusId, { disable_notification: true }).catch((error) => console.error("Could not pin the banner:", error));
   // Any older day list sent by /today before the board existed goes too.
   await retire({ kinds: ["cmd:today"] }, now);
-  if (previous && Number(previous) !== messageId) {
-    await bot.api.unpinChatMessage(chatId, Number(previous)).catch(() => undefined);
-    // A bot can delete its own message for 48 hours, which covers yesterday's.
-    await bot.api.deleteMessage(chatId, Number(previous)).catch(() => undefined);
+  // Yesterday's banner and board are unpinned and removed (a bot may delete its own messages for 48 hours).
+  for (const old of [previousStatus, previous]) {
+    if (!old || Number(old) === messageId || Number(old) === statusId) continue;
+    await bot.api.unpinChatMessage(chatId, Number(old)).catch(() => undefined);
+    await bot.api.deleteMessage(chatId, Number(old)).catch(() => undefined);
   }
   return messageId;
 }

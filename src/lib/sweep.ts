@@ -40,7 +40,7 @@ async function keepers(bot: Bot, chatId: number): Promise<Set<number>> {
   };
 
   const [settings, waiting, brief, briefVoice] = await Promise.all([
-    db.from("settings").select("today_message_id").limit(1).maybeSingle(),
+    db.from("settings").select("*").limit(1).maybeSingle(),
     // Reminders sent and not yet answered, for tasks that are still open.
     db.from("reminders").select("telegram_message_id, task_id").eq("state", "sent").not("telegram_message_id", "is", null),
     // The latest morning brief (briefs are recorded with attempt 0 for the morning).
@@ -51,6 +51,7 @@ async function keepers(bot: Bot, chatId: number): Promise<Set<number>> {
   for (const query of [settings, waiting, brief, briefVoice]) if (query.error) throw new Error(`sweep: ${query.error.message}`);
 
   add((settings.data as { today_message_id: number | null } | null)?.today_message_id);
+  add((settings.data as { today_status_id?: number | null } | null)?.today_status_id);
   const sent = (waiting.data ?? []) as { telegram_message_id: number; task_id: number | null }[];
   const taskIds = [...new Set(sent.map((row) => row.task_id).filter((id): id is number => id !== null))];
   if (taskIds.length > 0) {

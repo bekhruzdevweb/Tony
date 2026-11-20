@@ -17,6 +17,8 @@ export type Settings = {
   last_shared_text: string | null;
   last_shared_at: string | null;
   today_message_id: number | null;
+  /** The pinned one-line banner above the board. */
+  today_status_id?: number | null;
   today_message_day: string | null;
   today_message_hash: string | null;
   last_shared_media_id: number | null;

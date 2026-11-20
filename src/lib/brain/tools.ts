@@ -188,6 +188,10 @@ async function attachShared(args: Args, taskId: number): Promise<string | undefi
   if (args.attach_shared !== true) return undefined;
   const { last_shared_media_id } = await getSettings();
   if (!last_shared_media_id) return "nothing was attached: he has not shared a photo or file recently";
+  // A voice note is never attached: a reminder must not play his own voice back to him.
+  const shared = await requireDb().from("media").select("kind").eq("id", last_shared_media_id).maybeSingle();
+  const kind = (shared.data as { kind?: string } | null)?.kind;
+  if (kind === "voice" || kind === "audio") return "nothing was attached: voice notes are not attached to tasks";
   await updateMedia(Number(last_shared_media_id), { task_id: taskId });
   return "his photo/file is attached; the reminder will send the original back to him";
 }

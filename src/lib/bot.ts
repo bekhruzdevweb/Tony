@@ -22,7 +22,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { asksForMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -565,7 +565,8 @@ export function getBot(): Bot | undefined {
       const { reply, tools, titles, planId, choices, mediaIds, offerIds, fetched } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
       // Whatever he was asked before has now been answered or overtaken.
       await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
-      if (mediaIds?.length && ctx.chat) {
+      // Originals go back only when he asked for them in so many words; never on the model's say-so alone.
+      if (mediaIds?.length && ctx.chat && asksForMedia(text)) {
         // "Show my video ideas": the originals come back, each with its label.
         for (const id of mediaIds) {
           const item = await loadMedia(id);

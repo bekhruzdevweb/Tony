@@ -96,13 +96,30 @@ export async function mediaForTask(taskId: number): Promise<Media | undefined> {
  * Finds saved items by what he called them, wrote with them, or what they
  * show: "video ideas" matches a note "video idea" or a caption mentioning it.
  */
-export async function findMedia(query: string, limit = 5): Promise<Media[]> {
+/** He asked for a voice note or audio back in so many words ("send my voice note"). */
+export const asksForVoiceBack = (text: string) => /\b(voice ?notes?|voice messages?|audio|recordings?)\b/i.test(text);
+
+/**
+ * He asked to see or get something back: a verb like send/show/forward
+ * and a thing like photo/post/file/it. Only then are saved originals resent.
+ */
+export const asksForMedia = (text: string) =>
+  /\b(send|show|resend|forward|give|find|share)\b/i.test(text) && /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|videos?|posts?|ideas?|voice ?notes?|audio|it|them|that|this|these)\b/i.test(text);
+
+export async function findMedia(query: string, limit = 5, now = new Date()): Promise<Media[]> {
   const { data, error } = await requireDb().from("media").select().order("id", { ascending: false }).limit(300);
   if (error) throw new Error(`findMedia: ${error.message}`);
+  // His own voice notes are never handed back unless he asks for a voice note by name,
+  // and nothing he sent in the last two minutes (the message being answered) is a result.
+  const voiceAllowed = asksForVoiceBack(query);
+  const recent = now.getTime() - 2 * 60_000;
+  const candidates = ((data ?? []) as Media[]).filter(
+    (item) => (voiceAllowed || (item.kind !== "voice" && item.kind !== "audio")) && new Date(item.created_at).getTime() < recent,
+  );
   // Words are compared by their first five letters, so "ideas" finds "idea".
   const stems = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).map((word) => word.slice(0, 5));
   const wanted = [...new Set(stems(query))].filter((stem) => !["show", "send", "find", "all", "the", "saved"].includes(stem));
-  const scored = ((data ?? []) as Media[])
+  const scored = candidates
     .map((item) => {
       const strong = new Set(stems(`${item.note ?? ""} ${item.caption ?? ""} ${item.kind}`));
       const weak = new Set(stems(item.description ?? ""));
