@@ -39,7 +39,7 @@ import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, toggleFromBoard } from "./today-board";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
-import { sayAloud } from "./speech";
+import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
 import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
@@ -178,6 +178,22 @@ export function getBot(): Bot | undefined {
   // /clean: sweeps the recent chat in plain code. His command is the newest message, and goes with the rest.
   tasks.command("clean", async (ctx) => {
     await cleanFromCommand(bot, ctx.chat.id, ctx.msg.message_id);
+  });
+
+  // /voice on|off|auto: when Tony speaks. Plain code, no AI.
+  tasks.command("voice", async (ctx) => {
+    const wanted = ctx.match.trim().toLowerCase();
+    if (wanted === "on" || wanted === "off" || wanted === "auto") await setVoiceMode(wanted);
+    else if (wanted) return oops(ctx, "Use /voice on, /voice off or /voice auto, sir.");
+    const state = await voiceState();
+    const what = {
+      auto: `I speak for the morning brief, nudges that matter and a reminder's final call, at most ${DAILY_VOICE_LIMIT} a day (${Math.min(state.count, DAILY_VOICE_LIMIT)} used today), and whenever you ask. Replies to your voice notes are text.`,
+      on: "I speak for the morning brief, nudges, final calls and replies to your voice notes, with no daily limit.",
+      off: "I speak only when you ask (\"say it\", \"tell me\").",
+    }[state.mode];
+    await retire({ kinds: ["cmd:voice"] });
+    const sent = await ctx.reply(`Voice: ${state.mode}. ${what}`);
+    await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
   });
 
   tasks.command("inbox", async (ctx) => {
@@ -653,7 +669,12 @@ export function getBot(): Bot | undefined {
     // A forwarded post is material to read, not something he typed.
     if (ctx.message.forward_origin) return shareItem(ctx);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
-    await answer(ctx, text);
+    const { reply } = await answer(ctx, text);
+    // "Tell me what's left", "say it": he asked to hear it, so the summary is spoken too.
+    if (asksForVoice(text)) {
+      const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), "reply", { asked: true });
+      if (voiceId !== undefined) await track(voiceId, "voice", { deleteAfter: hoursFromNow(VOICE_REPLY_HOURS) });
+    }
   });
 
   // Voice notes (and audio files): transcribe, then treat like typed text.
@@ -686,8 +707,9 @@ export function getBot(): Bot | undefined {
 
     // Spoken to, Tony answers aloud as well (when a voice is configured):
     // cheerfully when a task was just ticked off, softly late in the evening.
-    // Spoken: the reply's prose, a short natural summary; the list or table stays in the chat.
-    const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), completed ? "completed" : "reply");
+    // Answered in text. Spoken only when he asks for it ("say it", "tell me") or with /voice on:
+    // then the reply's prose, a short natural summary; the list or table stays in the chat.
+    const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), completed ? "completed" : "reply", { asked: asksForVoice(text) });
     if (voiceId !== undefined && confirmed) await track(voiceId, "voice", { deleteAfter: hoursFromNow(VOICE_REPLY_HOURS) });
   });
 

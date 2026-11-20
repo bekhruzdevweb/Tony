@@ -217,8 +217,9 @@ and a skipped day neither breaks a streak nor adds to it.
   sir; your best streak was 9. One today puts you back on track."), kept to
   about 300 characters. The text has the full day plus a 🔥 Habits section
   with each habit's facts.
-- **Voice nudges**, at most two a day and never in quiet hours: a habit due
-  today and not started, 30 minutes before its time; and a habit missed
+- **Nudges**, at most two a day and never in quiet hours: a habit that is
+  slipping or is a key task, due today and not started, 30 minutes before
+  its time; a key one-off task likewise; and a habit missed
   three due days or more in a row, once a day from 10:00 (unless it is due
   later that day, when the 30-minute nudge speaks to it instead). Each is a
   short voice note with its words as a caption.
@@ -226,7 +227,8 @@ and a skipped day neither breaks a streak nor adds to it.
   Every sentence is a fixed template filled with numbers from the log; no
   model writes them, so no number is made up. The brain is given the same
   facts and told to quote only those.
-- **Voice budget.** Every character sent to ElevenLabs is counted for the
+- **Voice budget.** (Nudges are spoken within the voice rules above, else
+  sent as text.) Every character sent to ElevenLabs is counted for the
   month (`settings.tts_chars`). Tony also reads the plan's own usage and
   limit when the key is allowed to (they include anything spoken outside
   Tony); otherwise he uses his own count against `ELEVENLABS_MONTHLY_CHARS`
@@ -335,10 +337,26 @@ After a deployment that adds a new kind of update (poll votes were one),
 send `/start` to Tony once: it refreshes the webhook, the command list and
 the Menu button.
 
-**Spoken replies.** Tony speaks on two occasions: in answer to a voice
-note, and for the morning brief. What he says aloud is short (whole
-sentences, up to about 300 characters); the full reply is in the text
-message beside it.
+**When Tony speaks.** `/voice on|off|auto` (default **auto**).
+
+- **auto**: a voice note only for (1) the morning brief, (2) nudges that
+  matter: a habit missed 3+ due days in a row, or a key task (persistent, or
+  priority 1-2, habits included) due in 30 minutes and not started, (3) a
+  persistent reminder's final call, said aloud when two nudges went
+  unanswered ("Final call, sir: Gym session. It was due at 18:00."), and
+  (4) whenever you ask. At most 3 a day, not counting the ones you ask for;
+  past that, the same words go as text. Replies to your voice notes are
+  text.
+- **on**: all of the above with no daily limit, and voice notes are answered
+  aloud.
+- **off**: Tony speaks only when you ask.
+
+Asking means words like "say it", "voice", "tell me", "read it out" or
+"out loud", typed or spoken; that reply is then also spoken, as its short
+prose summary. `/voice` on its own shows the mode and today's count.
+Separately, past 80% of the month's ElevenLabs characters only the morning
+brief and what you ask for are spoken. What is said aloud is whole
+sentences, up to about 300 characters; the detail is in the text.
 
 His voice is ElevenLabs (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, model
 `eleven_flash_v2_5`). The audio is asked for as Opus and sent to Telegram as

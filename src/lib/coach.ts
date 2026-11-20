@@ -7,6 +7,7 @@ import { b, esc, i } from "./html";
 import { logMessage } from "./messages";
 import type { Settings } from "./settings";
 import { sayAloud } from "./speech";
+import type { Task } from "./tasks";
 import { formatTime, inWindow, localDate, minuteOfDay } from "./time";
 
 /**
@@ -108,14 +109,15 @@ async function claim(kind: string, taskId: number, day: string): Promise<boolean
 }
 
 async function nudgesToday(day: string): Promise<number> {
-  const { data, error } = await requireDb().from("coach_events").select("id").eq("day", day).in("kind", ["nudge:before", "nudge:slipping"]);
+  const { data, error } = await requireDb().from("coach_events").select("id").eq("day", day).in("kind", ["nudge:before", "nudge:slipping", "nudge:task"]);
   if (error) throw new Error(error.message);
   return (data ?? []).length;
 }
 
 /**
  * From the minute tick: at most two short voice nudges a day, outside quiet
- * hours. (1) A habit due today and not started, 30 minutes before its time.
+ * hours. (1) A habit due today and not started, 30 minutes before its time;
+ * a key task (persistent or priority 1-2) likewise.
  * (2) A habit missed three due days or more in a row, once a day from
  * mid-morning. When voice is unavailable or saved for the brief, the same
  * words go as text. Returns how many were sent.
@@ -137,7 +139,9 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
   const due: { habit: HabitStats; kind: string; text: string; firm: boolean }[] = [];
   for (const habit of stats) {
     const started = habit.task.status === "in_progress";
-    if (habit.dueToday && habit.dueAtToday && !habit.doneToday && !started) {
+    // Only when it matters: the habit is slipping, or it is a key task (persistent, or priority 1-2).
+    const matters = habit.missedRun >= SLIPPING_DAYS || habit.task.persistent || habit.task.priority <= 2;
+    if (matters && habit.dueToday && habit.dueAtToday && !habit.doneToday && !started) {
       const minutesLeft = (habit.dueAtToday.getTime() - now.getTime()) / 60_000;
       if (minutesLeft > 0 && minutesLeft <= NUDGE_LEAD_MINUTES) due.push({ habit, kind: "nudge:before", ...beforeNudge(habit) });
     }
@@ -146,6 +150,21 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
     if (habit.missedRun >= SLIPPING_DAYS && !dueLater && !habit.doneToday && minuteOfDay(now, settings.timezone) >= SLIPPING_FROM) {
       due.push({ habit, kind: "nudge:slipping", text: slippingNudge(habit), firm: true });
     }
+  }
+
+  // Key one-off tasks (persistent, or priority 1-2) due within 30 minutes and not started.
+  const soon = await requireDb()
+    .from("tasks")
+    .select()
+    .is("repeat_rule", null)
+    .eq("status", "todo")
+    .gt("due_at", now.toISOString())
+    .lte("due_at", new Date(now.getTime() + NUDGE_LEAD_MINUTES * 60_000).toISOString());
+  if (soon.error) console.error(`Coach: ${soon.error.message}`);
+  for (const task of (soon.data ?? []) as Task[]) {
+    if (!task.persistent && task.priority > 2) continue;
+    const at = formatTime(new Date(task.due_at!));
+    due.push({ habit: { task } as HabitStats, kind: "nudge:task", text: `${task.title} is at ${at}, sir: thirty minutes. Time to get ready.`, firm: false });
   }
 
   let count = 0;

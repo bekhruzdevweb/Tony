@@ -22,6 +22,7 @@ export type MessageKind =
   | "cmd:app"
   | "cmd:help"
   | "cmd:ping"
+  | "cmd:voice"
   | "plan"
   | "voice"
   // An apology, "I don't know that command", and the message that caused it.

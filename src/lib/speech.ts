@@ -3,7 +3,7 @@ import { InputFile, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { env } from "./env";
 import { joinPcm, pcmToOggOpus, readWav } from "./ogg-opus";
-import { minuteOfDay, TIMEZONE } from "./time";
+import { localDate, minuteOfDay, TIMEZONE } from "./time";
 
 /**
  * Tony's speaking voice. He speaks on two occasions only: in answer to a
@@ -17,7 +17,66 @@ import { minuteOfDay, TIMEZONE } from "./time";
  * Orpheus, and nowhere else: the text message never contains one, and
  * ElevenLabs, which would read a bracketed word aloud, is never sent one.
  */
-export type SpeechOccasion = "reply" | "completed" | "brief" | "coach" | "coach:firm";
+export type SpeechOccasion = "reply" | "completed" | "brief" | "coach" | "coach:firm" | "final";
+
+/**
+ * When Tony speaks (/voice on|off|auto):
+ * - auto (the default): the morning brief, the coach's nudges that matter
+ *   (a habit slipping, a key task due in 30 minutes and not started), and
+ *   a reminder's final call after two were ignored; at most three a day.
+ *   Replies to voice notes are text.
+ * - on: all of that with no daily limit, and voice notes are answered aloud.
+ * - off: never on his own.
+ * Whatever the mode, when he asks for it ("say it", "voice", "tell me") he
+ * gets it, and that one is not counted.
+ */
+export type VoiceMode = "on" | "off" | "auto";
+export const DAILY_VOICE_LIMIT = 3;
+
+type VoiceState = { mode: VoiceMode; day: string | null; count: number };
+
+export async function voiceState(now = new Date()): Promise<VoiceState> {
+  try {
+    const { data, error } = await requireDb().from("settings").select("voice_mode, voice_day, voice_count").limit(1).maybeSingle();
+    if (error || !data) return { mode: "auto", day: null, count: 0 };
+    const row = data as { voice_mode: VoiceMode | null; voice_day: string | null; voice_count: number | null };
+    const today = localDate(now);
+    const sameDay = row.voice_day !== null && String(row.voice_day).slice(0, 10) === today;
+    return { mode: row.voice_mode ?? "auto", day: today, count: sameDay ? Number(row.voice_count ?? 0) : 0 };
+  } catch {
+    return { mode: "auto", day: null, count: 0 };
+  }
+}
+
+export async function setVoiceMode(mode: VoiceMode): Promise<void> {
+  const { error } = await requireDb().from("settings").update({ voice_mode: mode }).eq("id", true);
+  if (error) throw new Error(`setVoiceMode: ${error.message}`);
+}
+
+/** Whether this voice note may be sent, by the rules above. */
+async function voiceAllowed(occasion: SpeechOccasion, asked: boolean, now: Date): Promise<{ ok: boolean; why?: string; state: VoiceState }> {
+  const state = await voiceState(now);
+  if (asked) return { ok: true, state };
+  if (state.mode === "off") return { ok: false, why: "voice is off", state };
+  const isReply = occasion === "reply" || occasion === "completed";
+  if (isReply && state.mode !== "on") return { ok: false, why: "replies are text in auto mode", state };
+  if (state.mode === "auto" && state.count >= DAILY_VOICE_LIMIT) return { ok: false, why: `${state.count} of ${DAILY_VOICE_LIMIT} voice notes already sent today`, state };
+  return { ok: true, state };
+}
+
+async function countVoice(state: VoiceState, now: Date): Promise<void> {
+  try {
+    const { error } = await requireDb().from("settings").update({ voice_day: localDate(now), voice_count: state.count + 1 }).eq("id", true);
+    if (error) console.error(`countVoice: ${error.message}`);
+  } catch (error) {
+    console.error("countVoice:", error);
+  }
+}
+
+/** He asked to hear it: "say it", "voice", "tell me", "read it out", "out loud". */
+export function asksForVoice(text: string): boolean {
+  return /\b(say (it|that|this)|voice( note| message| reply)?|tell me|read (it|that|this|them) (out|aloud)|out loud|aloud)\b/i.test(text);
+}
 
 /** What he says aloud is short; the detail is in the text message. */
 const MAX_SPOKEN = 300;
@@ -37,7 +96,7 @@ const NIGHT_UNTIL = 7 * 60;
 export function vocalDirection(occasion: SpeechOccasion, now = new Date()): string | undefined {
   const minute = minuteOfDay(now, TIMEZONE);
   if (minute >= NIGHT_FROM || minute < NIGHT_UNTIL) return "calm";
-  if (occasion === "coach:firm") return "firmly";
+  if (occasion === "coach:firm" || occasion === "final") return "firmly";
   if (occasion === "brief" || occasion === "completed" || occasion === "coach") return "cheerful";
   return undefined;
 }
@@ -228,14 +287,21 @@ export async function sayAloud(
   chatId: number,
   text: string,
   occasion: SpeechOccasion,
-  options: { now?: Date; silent?: boolean; caption?: string } = {},
+  options: { now?: Date; silent?: boolean; caption?: string; asked?: boolean } = {},
 ): Promise<number | undefined> {
   if (!canSpeak()) return undefined;
   try {
     const words = spokenPart(text);
     if (!words) return undefined;
-    // Past 80% of the month's characters, only the morning brief is spoken.
-    if (occasion !== "brief" && env.elevenLabsApiKey && env.elevenLabsVoiceId) {
+    const now = options.now ?? new Date();
+    const asked = options.asked ?? false;
+    const allowed = await voiceAllowed(occasion, asked, now);
+    if (!allowed.ok) {
+      console.log(`Not spoken (${occasion}): ${allowed.why}.`);
+      return undefined;
+    }
+    // Past 80% of the month's characters, only the morning brief (and what he asks for) is spoken.
+    if (occasion !== "brief" && !asked && env.elevenLabsApiKey && env.elevenLabsVoiceId) {
       const budget = await voiceBudget(options.now);
       if (budget.share >= VOICE_BUDGET_SHARE) {
         console.warn(`Voice kept for the morning brief: ${budget.used} of ${budget.limit} ElevenLabs characters used this month (${budget.source}).`);
@@ -258,6 +324,8 @@ export async function sayAloud(
       disable_notification: options.silent,
       ...(options.caption ? { caption: options.caption.slice(0, 1024), parse_mode: "HTML" as const } : {}),
     });
+    // Counted towards the day's three, unless he asked for it.
+    if (!asked) await countVoice(allowed.state, now);
     return sent.message_id;
   } catch (error) {
     console.error("Spoken message failed:", error);

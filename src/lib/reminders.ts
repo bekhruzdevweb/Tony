@@ -5,10 +5,11 @@ import { retire, sendHtml, track } from "./chat-log";
 import { i, plain } from "./html";
 import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
+import { sayAloud } from "./speech";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, inWindow, toWholeMinute } from "./time";
+import { addMinutes, dayBounds, formatTime, inWindow, toWholeMinute } from "./time";
 
 export type Reminder = {
   id: number;
@@ -278,6 +279,13 @@ export async function runTick(
     await logMessage("tony", plain(message.text));
     // Tracked, so it is removed once the task is done, skipped or moved.
     await track(messageId, "reminder", { taskId: task.id });
+    // The final call: two nudges of a persistent reminder went unanswered, so the third is also said aloud
+    // (within the day's voice limit, and only while this tick has time to spare).
+    if (chained && attempt === 2 && Date.now() - started < TICK_BUDGET_MS / 2) {
+      const due = task.due_at ? ` It was due at ${formatTime(new Date(task.due_at))}.` : "";
+      const voiceId = await sayAloud(bot, chatId, `Final call, sir: ${task.title}.${due} A tap on the reminder settles it.`, "final", { now });
+      if (voiceId !== undefined) await track(voiceId, "reminder", { taskId: task.id });
+    }
     sentThisHour++;
     result.sent++;
     await queueNext();
