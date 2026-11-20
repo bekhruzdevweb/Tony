@@ -244,12 +244,12 @@ export async function think(
     const undated = [...changes]
       .filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !isLinkTask(stored.get(id)!.title, stored.get(id)!.notes))
       .map(([id]) => id);
-    if (undated.length >= 1 && planId === undefined) {
-      // He named a day: the tasks are drafts until he confirms the proposed times ("nothing is saved").
-      // He named none: they stay in the inbox, with one suggestion.
-      const day = dayFromText(text, now);
+    // He named a day: the tasks are drafts until he confirms the proposed times ("nothing is saved").
+    // He named none: they stay in the inbox, quietly. No suggested time unless he asks for one.
+    const day = undated.length >= 1 && planId === undefined ? dayFromText(text, now) : undefined;
+    if (day) {
       if (day) await requireDb().from("tasks").update({ status: "draft" }).in("id", undated);
-      const proposal = await buildPlan({ scope: "day", now, taskIds: undated, ...(day ? { day } : { lead: "Saved to your inbox, sir. A suggestion:" }) }).catch(
+      const proposal = await buildPlan({ scope: "day", now, taskIds: undated, day }).catch(
         (error) => (console.error("Slot proposal failed:", error), undefined),
       );
       if (!proposal || !("plan" in proposal)) {
