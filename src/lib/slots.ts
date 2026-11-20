@@ -7,6 +7,7 @@ import { scheduleReminder } from "./reminders";
 import { getRoutine, kindFor, recordSample } from "./routine";
 import { typedTime } from "./routine-rules";
 import { OPEN_STATUSES, type Task } from "./tasks";
+import { addSubtasks, progress, subtasksFor } from "./subtasks";
 import { parseLocalDateTime } from "./time";
 
 /**
@@ -48,6 +49,18 @@ export async function placeTask(taskId: number, at: Date, options: { learn?: boo
   const back = (await db.from("tasks").select().eq("id", taskId).maybeSingle()).data as Task | null;
   if (!back?.due_at || new Date(back.due_at).getTime() !== at.getTime()) return { text: `⚠️ **${task.title}**: the time did not save, sir.` };
   return { text: confirmationFor([{ tool: "update_task", title: back.title, status: back.status, due_at: back.due_at }], new Date()), task: back };
+}
+
+/** The steps he typed after [🧩 Steps] on a task that slipped: its parts, added in code, read back. */
+export async function addStepsInCode(taskId: number, steps: string[]): Promise<string> {
+  const db = requireDb();
+  const task = (await db.from("tasks").select().eq("id", taskId).maybeSingle()).data as Task | null;
+  if (!task) return "That task no longer exists, sir.";
+  await addSubtasks(taskId, steps);
+  const list = (await subtasksFor([taskId])).get(taskId) ?? [];
+  const kept = steps.filter((step) => list.some((part) => part.title === step));
+  if (kept.length === 0) return `⚠️ **${task.title}**: the steps did not save, sir.`;
+  return `☑ **${task.title}** · ${progress(list)} parts\n${list.map((part) => `${part.done ? "☑" : "☐"} ${part.title}`).join("\n")}`;
 }
 
 /**

@@ -1,7 +1,16 @@
 import "server-only";
-import { Bot, InlineKeyboard, type Context } from "grammy";
-import type { MessageOrigin } from "grammy/types";
-import { keyboardOf, runAction } from "./actions";
+import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
+import type { Message, MessageOrigin, Update } from "grammy/types";
+import { askForSlot, keyboardOf, runAction } from "./actions";
+import { answerFreeTime, freeTimeList } from "./free-time";
+import { laterToday } from "./followups";
+import { itemLabel } from "./library-rules";
+import { loadItem, saveToLibrary } from "./library";
+import { markSent, saveMistake } from "./mistakes";
+import { deleteRule, rulesView } from "./rules";
+import { latestBackup } from "./safety";
+import { describeUrl } from "./library-rules";
+import { linksIn } from "./brain/reliability";
 import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
@@ -48,7 +57,7 @@ import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, toW
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
-import { fetchTitle } from "./links";
+import { fetchTitle, pageTitle } from "./links";
 import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
@@ -60,6 +69,9 @@ let cached: { token: string; bot: Bot } | undefined;
 
 /** Separates a reminder's text from the outcome written into it after a tap. */
 const OUTCOME_MARK = "\n\n— ";
+
+/** The bot, with the burst handler the webhook calls for messages sent together (phase b). */
+export type TonyBot = Bot & { burst?: (updates: Update[]) => Promise<void> };
 
 /** The bot, or undefined while TELEGRAM_BOT_TOKEN is not set. */
 export function getBot(): Bot | undefined {
@@ -276,6 +288,25 @@ export function getBot(): Bot | undefined {
   });
 
   // /routine: his routine as Tony uses it. Plain code. He changes it by telling Tony ("I teach Mon–Fri 14–18").
+  // "Show my rules": each with 🗑 (phase b).
+  tasks.command("rules", async (ctx) => {
+    const view = await rulesView();
+    await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
+  });
+
+  // The 🌙 Free Time list (phase c).
+  tasks.command("freetime", async (ctx) => {
+    const list = await freeTimeList();
+    await sendMarkdown(bot, ctx.chat.id, list.text, { keyboard: list.rows.length ? keyboardOf(list.rows) : undefined });
+  });
+
+  // Today's backup of tasks, memory and the library, as a file (phase e).
+  tasks.command("backup", async (ctx) => {
+    const backup = await latestBackup();
+    if (!backup) return ctx.reply("No backup yet, sir: the first is made at 03:00.");
+    await ctx.replyWithDocument(new InputFile(Buffer.from(backup.json, "utf8"), `tony-backup-${backup.day}.json`), { caption: `Backup of ${backup.day}: tasks, memory and library.` });
+  });
+
   tasks.command("routine", async (ctx) => {
     const routine = await getRoutine();
     await retire({ kinds: ["cmd:routine"] });
@@ -651,6 +682,92 @@ export function getBot(): Bot | undefined {
       return;
     }
 
+    // The follow-up ladder's buttons ("fu:<action>:<task>"): plain code, never the model (phase d).
+    if (payload.startsWith("fu:")) {
+      const [, action, id] = payload.split(":");
+      const taskId = Number(id);
+      const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+      const task = found.data as Task | null;
+      let line: string | undefined;
+      let toast = "Done, sir.";
+      try {
+        if (!task || !OPEN_STATUSES.includes(task.status)) {
+          toast = "Already settled, sir.";
+        } else if (action === "done" || action === "drop" || action === "tom") {
+          const outcome = await runAction(action === "tom" ? "tomorrow" : action, taskId, undefined);
+          // An undated task's "tomorrow" is a question with its slots: it comes as its own message.
+          if (outcome.keyboard && outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard, kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+          else line = outcome.text;
+          toast = plain(outcome.text ?? "Done").slice(0, 180);
+        } else if (action === "snooze") {
+          const outcome = await runAction("snooze", taskId, 15);
+          line = outcome.text;
+          toast = plain(outcome.text ?? "Snoozed").slice(0, 180);
+        } else if (action === "later") {
+          const at = await laterToday(task, new Date());
+          const outcome = await runAction("move", taskId, Math.round(at.getTime() / 60_000));
+          line = outcome.text;
+          toast = plain(outcome.text ?? "Moved").slice(0, 180);
+        } else if (action === "steps") {
+          await setPendingSlot({ task_id: taskId, steps: true });
+          line = `🧩 Type the steps for ${b(task.title)}, one per line.`;
+          toast = "Type the steps";
+        } else if (action === "slot" || action === "sched") {
+          const outcome = await askForSlot(task, hisTomorrow(new Date()), new Date());
+          if (outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard ?? undefined, kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+          toast = "Pick a time";
+        } else if (action === "keep") {
+          await requireDb().from("tasks").update({ updated_at: new Date().toISOString() }).eq("id", taskId);
+          line = `📌 ${b(task.title)} stays in the inbox.`;
+          toast = "Kept";
+        }
+      } finally {
+        await ctx.answerCallbackQuery({ text: toast }).catch(() => undefined);
+      }
+      // The tapped task's buttons go; the others stay; what happened is written under the list.
+      const rows = (tapped?.reply_markup?.inline_keyboard ?? []).map((row) => row.filter((button) => !("callback_data" in button) || !String(button.callback_data).endsWith(`:${taskId}`))).filter((row) => row.length > 0);
+      if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, line ? `${base}\n${line}` : base, rows.length ? InlineKeyboard.from(rows) : undefined, isCaption);
+      else await ctx.editMessageReplyMarkup({ reply_markup: rows.length ? InlineKeyboard.from(rows) : undefined }).catch(() => undefined);
+      if (line) await logMessage("tony", plain(line));
+      return;
+    }
+
+    // A free-time suggestion ("ft:now|later|list:<task>"): plain code (phase c).
+    if (payload.startsWith("ft:")) {
+      const [, action, id] = payload.split(":");
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      const result = action === "list" ? await freeTimeList() : await answerFreeTime(action, Number(id));
+      if (action === "list") {
+        if (chatId !== undefined) await sendMarkdown(bot, chatId, result.text, { keyboard: result.rows?.length ? keyboardOf(result.rows) : undefined });
+      } else if (chatId !== undefined && tapped && base !== undefined) {
+        await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${markdownToHtml(result.text)}`, undefined, isCaption);
+      }
+      await logMessage("tony", result.text);
+      return;
+    }
+
+    // 🗑 on a rule ("ru:del:<rule>"): removed on his tap, the list redrawn (phase b).
+    if (payload.startsWith("ru:del:")) {
+      const ruleId = Number(payload.split(":")[2]);
+      const removed = await deleteRule(ruleId);
+      await ctx.answerCallbackQuery({ text: removed ? "Rule removed" : "That rule is already gone" }).catch(() => undefined);
+      const view = await rulesView();
+      const text = `${removed ? "🗑 Rule removed." : "That rule is already gone."}\n\n${view.text}`;
+      const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(text), view.rows.length ? keyboardOf(view.rows) : undefined) : false;
+      if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
+      await logMessage("tony", text);
+      return;
+    }
+
+    // A library item he picked from two that fit ("lib:send:<source>:<id>"): sent at once, in code (phase b).
+    if (payload.startsWith("lib:send:")) {
+      const [, , source, id] = payload.split(":");
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      if (chatId !== undefined) await sendLibraryItem(chatId, `${source}:${id}`);
+      return;
+    }
+
     if (payload.startsWith("ch:")) {
       await ctx.answerCallbackQuery().catch(() => undefined);
       const { pending_choices: pending } = await getSettings();
@@ -821,6 +938,17 @@ export function getBot(): Bot | undefined {
         replies.push("(the last changes, to undo)");
         continue;
       }
+      if (item.kind === "choose") {
+        // Two items fit equally: he picks; the tap sends it, in code.
+        if (ctx.chat) await sendMarkdown(bot, ctx.chat.id, item.question, { keyboard: keyboardOf(item.options.map((option) => [option])) });
+        replies.push(item.question);
+        continue;
+      }
+      if (item.kind === "free" || item.kind === "rules") {
+        if (ctx.chat) await sendMarkdown(bot, ctx.chat.id, boldTimes(item.reply), { keyboard: item.rows.length ? keyboardOf(item.rows) : undefined });
+        replies.push(item.reply);
+        continue;
+      }
       if (item.kind === "placed") {
         // The time he typed after [✏️ Other time], placed in plain code.
         if (ctx.chat) {
@@ -887,6 +1015,20 @@ export function getBot(): Bot | undefined {
     const lines = changes.map((change, index) => `${index + 1}. ${formatTime(new Date(change.at))} · ${change.text}`);
     return { text: [...(lead ? [lead, ""] : []), "**Last changes**, newest first. Tap a number to undo it:", ...lines].join("\n"), keyboard };
   };
+  /** One library item sent back: the original file, or the link with its title (phase b). */
+  const sendLibraryItem = async (chatId: number, ref: string) => {
+    const item = await loadItem(ref).catch(() => undefined);
+    if (!item) return;
+    if (item.source === "media") {
+      const media = await loadMedia(item.id);
+      if (media) await sendMedia(bot, chatId, media, emphasise(mediaLabel(media))).catch((error) => console.error("Could not send the item:", error));
+      return;
+    }
+    const text = `${itemLabel(item)}${item.url ? `\n${item.url}` : item.description ? `\n${item.description}` : ""}`;
+    await sendMarkdown(bot, chatId, text);
+    await logMessage("tony", text);
+  };
+
   const showUndo = async (chatId: number) => {
     await retire({ kinds: ["cmd:undo"] });
     const view = await undoView();
@@ -968,8 +1110,17 @@ export function getBot(): Bot | undefined {
       // The reply as a rich message (lists, tables, headings), times in bold; a confirmation is tidied away later.
       // A confirmation names its task in bold, as it did before.
       const named = confirmed ? titles.reduce((text, title) => (title && text.includes(title) && !text.includes(`**${title}**`) ? text.replace(title, `**${title}**`) : text), reply) : reply;
+      // "Show my rules": each with 🗑 (phase b).
+      if (thought.showRules) {
+        const view = await rulesView();
+        if (view.rows.length) keyboard = keyboardOf(view.rows);
+      }
       const sent = await sendMarkdown(bot, ctx.chat!.id, boldTimes(named), { keyboard });
+      // Which message this reply became, so a 👎 on it finds its words (phase e).
+      await markSent(reply, sent);
       if (confirmed) await track(sent, "confirmation", { deleteAfter: hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
+      // What one of his rules sends: the item itself, after the words (phase b).
+      for (const ref of thought.sendItems ?? []) await sendLibraryItem(ctx.chat!.id, ref);
       // A small acknowledgement on his own message when something was written down or ticked off.
       const reaction = tools.includes("complete_task")
         ? "👌"
@@ -998,11 +1149,30 @@ export function getBot(): Bot | undefined {
   const shareItem = async (ctx: Context) => {
     const message = ctx.message;
     if (!message) return;
-    const words = (message.text ?? message.caption ?? "").trim();
     // An album arrives as one message per photo; only the captioned one is read.
-    if (message.media_group_id && !words) return;
+    if (message.media_group_id && !(message.text ?? message.caption ?? "").trim()) return;
     await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const read = await readShare(message);
+    if (!read) return oops(ctx, "Text, a voice note, a photo, a file or a forwarded post, sir; I cannot read that kind of message yet.");
+    // Known before Tony thinks, so "remind me about this tomorrow" in the caption can attach it at once.
+    if (read.saved) await updateSettings({ last_shared_media_id: read.saved.id }).catch(() => undefined);
+    try {
+      await answer(ctx, read.asked);
+    } finally {
+      if (!read.saved) await updateSettings({ last_shared_media_id: null }).catch(() => undefined);
+      await updateSettings({ last_shared_text: read.shared.slice(0, 2000), last_shared_at: new Date().toISOString() }).catch((error) =>
+        console.error("Could not remember the shared item:", error),
+      );
+    }
+  };
 
+  /**
+   * What a shared item is (a forwarded post, a photo, a file): read, kept
+   * (media, or the library for a post), and put into words for the brain. No
+   * answer here: shareItem answers one item, a burst answers several together.
+   */
+  const readShare = async (message: Message): Promise<{ asked: string; shared: string; saved?: Media } | undefined> => {
+    const words = (message.text ?? message.caption ?? "").trim();
     // What kind of thing it is, and Telegram's handle on the original.
     const photo = message.photo?.length ? ([...message.photo].reverse().find((size) => (size.file_size ?? 0) <= 3_500_000) ?? message.photo[0]) : undefined;
     const file = photo
@@ -1040,9 +1210,7 @@ export function getBot(): Bot | undefined {
         (error) => (console.error("Could not save the media:", error), undefined),
       );
     }
-    if (!words && !imageText && !file) {
-      return oops(ctx, "Text, a voice note, a photo, a file or a forwarded post, sir; I cannot read that kind of message yet.");
-    }
+    if (!words && !imageText && !file) return undefined;
 
     const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
     const thing = file ? (file.kind === "photo" ? "photo" : file.kind === "animation" ? "GIF" : file.kind) : "post";
@@ -1056,20 +1224,92 @@ export function getBot(): Bot | undefined {
     ]
       .filter(Boolean)
       .join("\n");
-    // What the brain is asked: his own caption is his words; a forwarded post is all material.
-    const asked = forwarded ? `[He forwarded this to you]\n${shared}` : words ? `${words}\n\n[He attached a ${thing}. ${image ?? ""}]` : `[He sent you a ${thing}]\n${image ?? ""}`;
+    // A forwarded post (with no file) goes into his library; files are kept in media already (phase b).
+    if (forwarded && !file && words) await saveToLibrary({ kind: "post", title: `Post from ${forwarded}`, description: words.slice(0, 800), source: "forwarded" });
+    for (const url of linksIn(words)) await saveToLibrary({ kind: "link", url, title: describeUrl(url), source: forwarded ? "forwarded" : "sent" });
+    // What the brain is asked: his own caption is his words; a forwarded post is all material, fenced off as such.
+    const asked = forwarded ? `[He forwarded this to you]\n«««\n${shared}\n»»»` : words ? `${words}\n\n[He attached a ${thing}. ${image ?? ""}]` : `[He sent you a ${thing}]\n${image ?? ""}`;
+    return { asked, shared, saved };
+  };
 
-    // Known before Tony thinks, so "remind me about this tomorrow" in the caption can attach it at once.
-    if (saved) await updateSettings({ last_shared_media_id: saved.id }).catch(() => undefined);
+  /** A voice note, heard: its words (kept with the original), or why it could not be heard. */
+  const hear = async (message: Message): Promise<{ text: string } | { error: string }> => {
+    const media = message.voice ?? message.audio;
+    if (!media) return { error: "none" };
+    if (media.duration > MAX_VOICE_SECONDS) return { error: "long" };
     try {
-      await answer(ctx, asked);
-    } finally {
-      if (!saved) await updateSettings({ last_shared_media_id: null }).catch(() => undefined);
-      await updateSettings({ last_shared_text: shared.slice(0, 2000), last_shared_at: new Date().toISOString() }).catch((error) =>
-        console.error("Could not remember the shared item:", error),
+      const file = await downloadTelegramFile(bot, media.file_id);
+      // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
+      const text = await transcribeAudio(file.bytes, file.name.replace(/\.oga$/i, ".ogg"), "audio/ogg");
+      // Kept like any other media: the original, a private copy, and what was said.
+      await saveMedia({ kind: message.voice ? "voice" : "audio", fileId: media.file_id, uniqueId: media.file_unique_id, mime: media.mime_type ?? "audio/ogg", description: text, bytes: file.bytes }).catch((error) =>
+        console.error("Could not save the voice note:", error),
       );
+      return { text };
+    } catch (error) {
+      console.error("Voice note failed:", error);
+      return { error: "failed" };
     }
   };
+
+  /**
+   * The burst rule (phase b): what he sent within a minute (a photo, a link,
+   * a voice note, some words, in any order) is read item by item and
+   * answered as ONE request.
+   */
+  const burst = async (updates: Update[]) => {
+    const last = updates[updates.length - 1];
+    if (!last.message) return;
+    const ctx = new Context(last, bot.api, bot.botInfo);
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const parts: string[] = [];
+    let shared: string | undefined;
+    let savedId: number | undefined;
+    let spoken = false;
+    for (const update of updates) {
+      const message = update.message;
+      if (!message) continue;
+      if (message.voice || message.audio) {
+        const heard = await hear(message);
+        if ("text" in heard && heard.text) {
+          parts.push(`[In a voice note he said:] ${heard.text}`);
+          spoken = true;
+        }
+        continue;
+      }
+      if (message.photo || message.video || message.document || message.animation || message.forward_origin || (!message.text && message.caption)) {
+        if (message.media_group_id && !(message.text ?? message.caption ?? "").trim() && !message.photo) continue;
+        const read = await readShare(message);
+        if (read) {
+          parts.push(read.asked);
+          shared = read.shared;
+          if (read.saved) savedId = read.saved.id;
+        }
+        continue;
+      }
+      if (message.text) {
+        parts.push(message.text.trim());
+        for (const url of linksIn(message.text)) await saveToLibrary({ kind: "link", url, title: await fetchTitle(url, 3_000).catch(() => describeUrl(url)), source: "sent" });
+      }
+    }
+    if (parts.length === 0) return;
+    if (savedId) await updateSettings({ last_shared_media_id: savedId }).catch(() => undefined);
+    const { reply } = await answer(ctx, parts.join("\n\n"), {
+      note: `He sent these ${updates.length} messages together, within a minute: they are ONE request. Handle them as one, answer once.${spoken ? " One was a voice note; its transcript is included, so you did hear him." : ""}`,
+    });
+    if (shared) await updateSettings({ last_shared_text: shared.slice(0, 2000), last_shared_at: new Date().toISOString() }).catch(() => undefined);
+    void reply;
+  };
+  (bot as TonyBot).burst = burst;
+
+  tasks.on("message_reaction", async (ctx) => {
+    const reaction = ctx.messageReaction;
+    if (!reaction) return;
+    const added = reaction.new_reaction.some((entry) => entry.type === "emoji" && entry.emoji === "👎");
+    if (!added) return;
+    const saved = await saveMistake(reaction.message_id).catch(() => false);
+    if (saved) await say(ctx, "Noted as a mistake, sir. I'll learn from that one.", { kind: "error", deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+  });
 
   tasks.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
@@ -1078,6 +1318,12 @@ export function getBot(): Bot | undefined {
       return oops(ctx, guess ? `I don't know that command, sir. Did you mean /${guess}?` : "I don't know that command, sir. /help lists the ones I do.");
     }
     if (!text) return;
+    // "👎" (with a note, if he likes) as a reply to one of Tony's messages: a mistake saved (phase e).
+    const repliedTo = ctx.message.reply_to_message;
+    if (/^👎/.test(text) && repliedTo?.from?.is_bot) {
+      const saved = await saveMistake(repliedTo.message_id, text.replace(/^👎\s*/, "") || undefined).catch(() => false);
+      return say(ctx, saved ? "Noted as a mistake, sir. I'll learn from that one." : "I could not save that, sir.", { kind: "error", deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+    }
     // A forwarded post is material to read, not something he typed.
     if (ctx.message.forward_origin) return shareItem(ctx);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
@@ -1090,6 +1336,8 @@ export function getBot(): Bot | undefined {
       link,
       note: `He sent a link: ${link}. Read it with web_fetch and sum it up: one line on what it is, then the key points as a short list. If he also asked something about it, answer that. Do not add a task or save anything yourself: Save and Task buttons are shown under your reply.`,
     } : {});
+    // Every link he sends goes into his library, with its title (phase b).
+    for (const url of linksIn(text)) await saveToLibrary({ kind: "link", url, title: await pageTitle(url).catch(() => describeUrl(url)), source: "sent" });
     // "Tell me what's left", "say it": he asked to hear it, so the summary is spoken too.
     if (asksForVoice(text)) {
       const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), "reply", { asked: true });

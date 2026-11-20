@@ -74,7 +74,8 @@ export async function POST(request: Request) {
         const replies: string[] = [];
         for (const item of await handleMessage(text, { channel: "app" })) {
           if (item.kind === "clean") replies.push("The chat in Telegram is cleaned with /clean, sir.");
-          else if (item.kind === "failed" || item.kind === "link" || item.kind === "placed") replies.push(markdownToPlain(item.reply));
+          else if (item.kind === "failed" || item.kind === "link" || item.kind === "placed" || item.kind === "free" || item.kind === "rules") replies.push(markdownToPlain(item.reply));
+          else if (item.kind === "choose") replies.push(`${item.question} ${item.options.map((option) => option.text).join(" / ")}`);
           // Originals are sent in Telegram, and /undo lives there too, with its buttons.
           else if (item.kind === "media") replies.push("It's in your Telegram chat with me, sir: send me the same words there and I'll send the original.");
           else if (item.kind === "undo") replies.push("Send /undo in Telegram, sir: the last ten changes are listed there, each with an undo button.");

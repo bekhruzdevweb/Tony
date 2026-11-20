@@ -19,6 +19,8 @@ export type Task = {
   duration_minutes?: number | null;
   /** null for an ordinary task; "prayer" for one of the five daily prayers. */
   kind?: string | null;
+  /** On the 🌙 Free Time list ("in my free time", "someday"): no date, suggested when he is free. */
+  free_time?: boolean | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -64,7 +66,8 @@ export async function listInbox(): Promise<Task[]> {
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
   if (error) throw new Error(`listInbox: ${error.message}`);
-  return data as Task[];
+  // The 🌙 Free Time list is its own list, not the inbox.
+  return (data as Task[]).filter((task) => !task.free_time);
 }
 
 /** Open tasks due before the end of today, split into overdue and today. */

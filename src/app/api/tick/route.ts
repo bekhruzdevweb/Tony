@@ -5,7 +5,8 @@ import { runBriefs } from "@/lib/briefs";
 import { runCoach } from "@/lib/coach";
 import { ensurePrayers } from "@/lib/prayer";
 import { moveNoteListsOnce } from "@/lib/subtasks";
-import { runSuggestions } from "@/lib/suggest";
+import { runSelfTestJob, runSmartJobs } from "@/lib/smart-jobs";
+import { budgetLeft } from "@/lib/safety";
 import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
 import { pruneUpdates } from "@/lib/dedupe";
@@ -41,14 +42,16 @@ export async function POST(request: Request) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     const result = await runTick(bot, chatId, new Date(), {
-      // Briefs first, then at most one unprompted suggestion.
+      // Briefs first, then at most one unasked message: a follow-up, a rule, a free-time suggestion (phases b–e).
       briefs: async (settings, now) => {
         const briefs = await runBriefs(bot, chatId, settings, now);
-        if (briefs === 0) await runSuggestions(bot, chatId, settings, now);
-        // The coach's voice nudges for habits (at most two a day).
-        await runCoach(bot, chatId, settings, now).catch((error) => console.error("Coach failed:", error));
+        if (briefs === 0) await runSmartJobs(bot, chatId, settings, now);
+        // The coach's voice nudges for habits (at most two a day), within the day's budget of unasked messages.
+        if ((await budgetLeft(now)) > 0) await runCoach(bot, chatId, settings, now).catch((error) => console.error("Coach failed:", error));
       },
     });
+    // The 07:00 self-test, after the answer: the AI check can take a few seconds.
+    after(() => runSelfTestJob(bot, chatId, new Date()));
     // Once: lists written into tasks' notes become subtasks.
     await moveNoteListsOnce().catch((error) => console.error("Moving note lists failed:", error));
     // Prayer times: once a day from 00:05 (a failed fetch is tried again next minute).

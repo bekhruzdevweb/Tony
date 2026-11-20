@@ -25,8 +25,8 @@ export type Settings = {
   pending_choices: { question: string; options: string[] } | null;
   pending_note: string | null;
   pending_note_at: string | null;
-  /** After [✏️ Other time]: the task waiting for the time he types next (migration 0023). */
-  pending_slot?: { task_id: number; day: string } | null;
+  /** After [✏️ Other time]: the task waiting for the time he types next (migration 0023); after [🧩 Steps], for its steps. */
+  pending_slot?: { task_id: number; day?: string; steps?: boolean } | null;
   pending_slot_at?: string | null;
 };
 
@@ -38,7 +38,7 @@ const SLOT_MINUTES = 30;
  * the columns are missing: nothing is kept, and Tony's note to the brain does
  * the job instead. Never fails the tap.
  */
-export async function setPendingSlot(slot: { task_id: number; day: string } | null, now = new Date()): Promise<void> {
+export async function setPendingSlot(slot: { task_id: number; day?: string; steps?: boolean } | null, now = new Date()): Promise<void> {
   const { error } = await requireDb()
     .from("settings")
     .update({ pending_slot: slot, pending_slot_at: slot ? now.toISOString() : null })
@@ -47,11 +47,13 @@ export async function setPendingSlot(slot: { task_id: number; day: string } | nu
 }
 
 /** The task waiting for a typed time, if he tapped [✏️ Other time] in the last half hour. */
-export async function waitingSlot(now = new Date()): Promise<{ task_id: number; day: string } | undefined> {
+export async function waitingSlot(now = new Date()): Promise<{ task_id: number; day: string } | { task_id: number; steps: true } | undefined> {
   const settings = await getSettings().catch(() => undefined);
   const slot = settings?.pending_slot;
-  if (!slot || !settings?.pending_slot_at || !Number.isFinite(Number(slot.task_id)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(slot.day))) return undefined;
+  if (!slot || !settings?.pending_slot_at || !Number.isFinite(Number(slot.task_id))) return undefined;
   if (now.getTime() - new Date(settings.pending_slot_at).getTime() > SLOT_MINUTES * 60_000) return undefined;
+  if (slot.steps) return { task_id: Number(slot.task_id), steps: true };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(slot.day))) return undefined;
   return { task_id: Number(slot.task_id), day: String(slot.day) };
 }
 

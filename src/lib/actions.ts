@@ -51,6 +51,11 @@ async function askOnDay(task: Task, day: Date, now: Date): Promise<ActionOutcome
 
 const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** [📌 Fixed slot] or [📅 Schedule]: the slot question for that day, whatever time the task had before. */
+export async function askForSlot(task: Task, day: Date, now = new Date()): Promise<ActionOutcome> {
+  return askOnDay(task, day, now);
+}
+
 export type ActionOutcome = {
   /** What Tony says back, as Telegram HTML; nothing when the tap only changes the buttons. */
   text?: string;

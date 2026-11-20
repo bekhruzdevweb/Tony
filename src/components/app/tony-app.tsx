@@ -6,7 +6,7 @@ import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Menu, type Theme } from "./menu";
-import { ChatScreen, FiltersScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
+import { ChatScreen, FiltersScreen, FreeTimeScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
 import { Icon, RowActionsContext, isOpen, type RowActions } from "./ui";
 import { splitToday } from "@/lib/today";
@@ -14,7 +14,7 @@ import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "upcoming" | "chat" | "search" | "filters" | `project:${number}`;
+type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
@@ -181,7 +181,8 @@ export function TonyApp({ initial }: { initial: AppState }) {
             Add task
           </button>
           <SideItem icon={Icon.search} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
-          <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox").length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
+          <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox" && !t.free_time).length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
+          <SideItem icon={<span aria-hidden>🌙</span>} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
           <SideItem icon={Icon.today} label="Today" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
           <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
@@ -217,7 +218,8 @@ export function TonyApp({ initial }: { initial: AppState }) {
       </div>
 
       {tab === "today" && <TodayScreen {...screen} onQuickAdd={tell} onReschedule={reschedule} />}
-      {tab === "inbox" && <InboxScreen {...screen} />}
+      {tab === "inbox" && <InboxScreen {...screen} onFreeTime={() => setTab("freetime")} />}
+      {tab === "freetime" && <FreeTimeScreen {...screen} />}
       {tab === "upcoming" && <UpcomingScreen {...screen} onMove={move} onAddTo={(day) => setSheet({ day })} />}
       {tab === "search" && <SearchScreen {...screen} />}
       {tab === "filters" && <FiltersScreen {...screen} onProject={(id) => setTab(`project:${id}`)} />}

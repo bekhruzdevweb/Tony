@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { recordUsage } from "../safety";
 import { env } from "../env";
 import type { Answer, ChatMessage, SystemPrompt, ToolCall, ToolDefinition } from "./model";
 
@@ -175,6 +176,8 @@ export async function chatWithClaude(
   console.log(
     `Claude ${response.model}: ${usage.input_tokens} in (+${usage.cache_read_input_tokens ?? 0} from cache, +${usage.cache_creation_input_tokens ?? 0} written to cache), ${usage.output_tokens} out${searches}; stop: ${response.stop_reason}`,
   );
+  // Noted for the budget guard (phase e): what this call cost.
+  recordUsage({ model: response.model, input: usage.input_tokens, output: usage.output_tokens, cacheRead: usage.cache_read_input_tokens ?? 0, cacheWrite: usage.cache_creation_input_tokens ?? 0 });
 
   if (response.stop_reason === "refusal") {
     throw new Error(`Claude declined the request (${response.stop_details?.category ?? "no category"})`);

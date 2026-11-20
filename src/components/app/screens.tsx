@@ -183,18 +183,43 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
 }
 
 /** Undated tasks, oldest first; anything older than three days carries its age. */
-export function InboxScreen({ state, now, onOpen, onToggle, onAdd }: ScreenProps) {
-  const inbox = state.tasks.filter((t) => t.status === "inbox").sort((a, b) => a.created_at.localeCompare(b.created_at));
+export function InboxScreen({ state, now, onOpen, onToggle, onAdd, onFreeTime }: ScreenProps & { onFreeTime?: () => void }) {
+  const inbox = state.tasks.filter((t) => t.status === "inbox" && !t.free_time).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const freeTime = state.tasks.filter((t) => isOpen(t) && t.free_time).length;
   return (
     <div className="flex-1 overflow-y-auto pb-8">
       <div className={PAGE}>
         <Title sub={inbox.length ? `${inbox.length} without a date` : undefined}>Inbox</Title>
+        {onFreeTime && freeTime > 0 && (
+          <button type="button" onClick={onFreeTime} className="mb-3 flex w-full items-center justify-between rounded-lg border border-hairline px-3 py-2 text-left text-[14px] hover:bg-hairline">
+            <span>🌙 Free Time</span>
+            <span className="text-secondary">{freeTime}</span>
+          </button>
+        )}
         <Section title="Oldest first">
           {inbox.map((task) => {
             const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
             return <TaskRow key={task.id} task={task} projects={state.projects} now={now} when="none" badge={days > 3 ? `${days} days` : undefined} onOpen={onOpen} onToggle={onToggle} />;
           })}
           <AddTaskRow onAdd={() => onAdd()} />
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+/** The 🌙 Free Time list (phase c): "in my free time", "someday"; no dates, the longest waiting first. */
+export function FreeTimeScreen({ state, now, onOpen, onToggle }: ScreenProps) {
+  const items = state.tasks.filter((t) => isOpen(t) && t.free_time).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return (
+    <div className="flex-1 overflow-y-auto pb-8">
+      <div className={PAGE}>
+        <Title sub={items.length ? `${items.length} waiting for a free moment` : "Say \"in my free time…\" to add one"}>🌙 Free Time</Title>
+        <Section title="Longest waiting first">
+          {items.map((task) => {
+            const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
+            return <TaskRow key={task.id} task={task} projects={state.projects} now={now} when="none" badge={days >= 1 ? `${days} ${days === 1 ? "day" : "days"}` : undefined} onOpen={onOpen} onToggle={onToggle} />;
+          })}
         </Section>
       </div>
     </div>

@@ -13,6 +13,9 @@ export const COMMANDS = [
   { command: "routine", description: "Your routine: the hours I use to choose times" },
   { command: "undo", description: "The last 10 changes to your tasks, to undo with a tap" },
   { command: "memory", description: "What I remember about you, to forget with a tap" },
+  { command: "rules", description: "Your rules (\"when X, do Y\"), to remove with a tap" },
+  { command: "freetime", description: "Your 🌙 Free Time list" },
+  { command: "backup", description: "Today's backup of your tasks, memory and library" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
   { command: "ping", description: "Check that Tony is awake" },
@@ -27,16 +30,20 @@ export const HELP = [
   "• \"I work out in the evenings\" and I shall remember it.",
   "• \"I teach Mon–Fri 14:00–18:00\", \"content 10–12\": your routine (/routine), which I use for every time I choose.",
   "• \"Remind me if I don't check it for 2 days\": a check-in if a task sits untouched.",
+  "• \"In my free time, watch this\": your 🌙 Free Time list (/freetime); \"I'm free\" and I suggest one.",
+  "• \"When I'm not motivated to work out, send me this video\": a rule (/rules).",
+  "• Send several things together (a photo, a link, a voice note): I take them as one request.",
+  "• 👎 on any of my messages: I note it as a mistake and learn from it.",
   "Reply to one of my reminders and I know which task you mean.",
   "Forward me a post or send a photo and I shall read it and offer to make it a task.",
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today (or /list)  /tomorrow  /plan  /inbox  /routine  /undo  /memory  /prayer  /voice  /clean  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /freetime  /rules  /routine  /undo  /memory  /backup  /prayer  /voice  /clean  /app  /help  /ping",
 ].join("\n");
 
-/** What Telegram should send Tony: messages, button taps, and votes in his polls. */
-export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer"] as const;
+/** What Telegram should send Tony: messages, button taps, votes in his polls, and his 👎 reactions (phase e). */
+export const ALLOWED_UPDATES = ["message", "callback_query", "poll_answer", "message_reaction"] as const;
 
 /**
  * The bot's command list, its Menu button and its webhook. With an https

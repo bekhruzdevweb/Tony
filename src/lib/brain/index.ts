@@ -22,6 +22,9 @@ import { partsOfDay, routineLines } from "../routine-rules";
 import { asksToAttachLink, isGenericTitle, refersToLink, titleForLink } from "../link-rules";
 import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
+import { listRules, rulesForPrompt, rulesView } from "../rules";
+import { libraryForPrompt } from "../library";
+import { ruleHints } from "../smart-rules";
 
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
 const HISTORY = 10;
@@ -63,6 +66,7 @@ async function loadContext() {
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
   }
+  const ruleList = await listRules().catch(() => []);
   const everything = tasks.data as Task[];
   // Prayers are not tasks to manage; the model gets today's times as one line instead.
   const openTasks = everything.filter((task) => task.kind !== "prayer");
@@ -96,6 +100,10 @@ async function loadContext() {
     routine: routineLines(routine).join(" · "),
     // What is attached to each open task, so Tony can say what a task holds.
     media: await attachmentCounts(openTasks.map((task) => task.id)),
+    // His rules and the newest of his library (phase b), so "that video" and "I'm tired of it all" can be understood.
+    ruleList,
+    rules: await rulesForPrompt(ruleList).catch(() => undefined),
+    library: await libraryForPrompt().catch(() => undefined),
   };
 }
 
@@ -143,6 +151,10 @@ export async function think(
   slot?: Slot;
   /** Something Tony will do once he taps ✓ ("I'll remove Buy notebook"). */
   proposal?: { offerId: number; say: string };
+  /** Library items a rule sends him ("media:7", "library:3"). */
+  sendItems?: string[];
+  /** His rules were shown: their 🗑 buttons go under the reply. */
+  showRules?: boolean;
 }> {
   const { channel = "telegram", now = new Date(), context: note, part } = options;
   const tools: string[] = [];
@@ -172,7 +184,12 @@ export async function think(
   const partNote = part
     ? `His message held ${part.total} requests: "${part.full}". This is request ${part.index + 1}: handle only this one now; each of the others is handled on its own.`
     : undefined;
-  const notes = [partNote, note, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
+  // His rules his words may fit ("I'm tired, don't want to work out"): a hint; the brain decides.
+  const hinted = ruleHints(text, context.ruleList);
+  const ruleNote = hinted.length ? `His message may fit his rule${hinted.length > 1 ? "s" : ""} ${hinted.map((rule) => `#${rule.id} (when ${rule.situation.replace(/^when\s+/i, "")})`).join(", ")}: if it does, act on it with rule_fire.` : undefined;
+  const notes = [partNote, note, ruleNote, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
+  // A forwarded post or a page he only sent: material, never instructions. Any change it seems to ask for waits for his tap.
+  const materialOnly = isMaterialOnly(text) || Boolean(note?.startsWith("He sent a link:"));
   const messages: ChatMessage[] = [
     ...history.map(
       (m): ChatMessage => (m.role === "user" ? { role: "user", content: clip(m.text) } : { role: "assistant", content: clip(m.text) }),
@@ -202,10 +219,16 @@ export async function think(
   let proposal: { offerId: number; say: string } | undefined;
   let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
+  // Items a rule sends (phase b), rule lines, his rules to show, and a backup-model answer (phase e).
+  const sendItems: string[] = [];
+  const ruleLines: string[] = [];
+  let showRules = false;
+  let fellBack: string | undefined;
   // What Tony says as himself alongside the tools (their "reply"): kept above the receipt, never replaced by it (Phase 2).
   const spoken: string[] = [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answer = await chat({ system, messages, tools: TOOLS, web: true, model, depth });
+    if (answer.fallback) fellBack = answer.fallback;
     for (const source of answer.sources ?? []) if (!sources.has(source.url)) sources.set(source.url, source.title);
     for (const page of answer.fetched ?? []) if (!fetched.some((known) => known.url === page.url)) fetched.push(page);
     if (!answer.tool_calls) {
@@ -232,7 +255,10 @@ export async function think(
       let result: unknown;
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        const outcome = await runTool(call.function.name, args, now, text, heard, his);
+        const name = call.function.name;
+        const writes = isWrite(name, args);
+        // Deleting or dropping always needs his tap; so does anything a forwarded post or a page seems to ask for (phase e).
+        const outcome = needsTap(name, args) || (materialOnly && writes) ? await proposeInstead(name, args, now, text, heard) : await runTool(name, args, now, text, heard, his);
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
@@ -248,6 +274,13 @@ export async function think(
           }
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
+          if (name === "rule_fire" && typeof (outcome as { send_item?: unknown }).send_item === "string") sendItems.push(String((outcome as { send_item?: unknown }).send_item));
+          if (name === "rule") {
+            const made = (outcome as { rule?: { situation: string; action: string; item?: string; skip?: string } }).rule;
+            if (made) ruleLines.push(`📏 Rule saved: when ${made.situation.replace(/^when\s+/i, "")} → ${made.action}${made.item ? ` · ${made.item}` : ""}${made.skip ? ` _(also after ${made.skip})_` : ""}`);
+            if ((outcome as { rule_deleted?: unknown }).rule_deleted) ruleLines.push("🗑 Rule removed.");
+            if ((outcome as { show_rules?: unknown }).show_rules) showRules = true;
+          }
           if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) remembered.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { fact?: unknown }).fact ?? "") });
           if (call.function.name === "forget" && Number.isFinite(Number((outcome as { id?: unknown }).id))) forgotten.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { forgot?: unknown }).forgot ?? "") });
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
@@ -257,10 +290,10 @@ export async function think(
           if (checkIn && Number.isFinite(touchedId)) checkIns.set(touchedId, Number(checkIn.days));
           const told = (outcome as { routine?: { field: string; value: string | null; on?: boolean } }).routine;
           if (call.function.name === "routine" && told) routineSet.push(told);
-          if (call.function.name === "propose") proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
+          if ((outcome as { proposal_id?: unknown }).proposal_id !== undefined) proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
             const reminderAt = (outcome as { reminder_at?: unknown }).reminder_at;
-            const tool = call.function.name as DoneAction["tool"];
+            const tool = (name === "library" ? "update_task" : name) as DoneAction["tool"];
             const wrote = (outcome as { wrote?: unknown }).wrote as Record<string, unknown> | undefined;
             // A task added with its parts in the same turn stays an "add".
             if (!(tool === "subtask" && changes.has(touchedId))) {
@@ -277,10 +310,10 @@ export async function think(
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
           // The model's own words count only where nothing was written; writes are confirmed from the database.
-          if (typeof args.reply === "string" && args.reply.trim() && WRITES.has(call.function.name) && call.function.name !== "remember" && !spoken.includes(args.reply.trim())) spoken.push(args.reply.trim());
-          if (typeof args.reply === "string" && args.reply.trim() && !WRITES.has(call.function.name)) prepared = args.reply;
-          else if (call.function.name === "remember" && typeof args.reply === "string") prepared = withoutClaims(args.reply) || prepared;
-          else if (!WRITES.has(call.function.name)) allSucceeded = false; // a lookup: the model must speak next
+          if (typeof args.reply === "string" && args.reply.trim() && writes && name !== "remember" && !spoken.includes(args.reply.trim())) spoken.push(args.reply.trim());
+          if (typeof args.reply === "string" && args.reply.trim() && !writes) prepared = args.reply;
+          else if (name === "remember" && typeof args.reply === "string") prepared = withoutClaims(args.reply) || prepared;
+          else if (!writes && !showRules) allSucceeded = false; // a lookup: the model must speak next
         } else {
           allSucceeded = false;
         }
@@ -307,7 +340,7 @@ export async function think(
       break;
     }
     // Done in one model call: the confirmation is built below from the database.
-    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || prepared)) {
+    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || showRules || prepared)) {
       if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
     }
@@ -472,7 +505,7 @@ export async function think(
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
       if (!task || decided.has(id)) return [];
-      return [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...marks(id) }];
+      return [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, free_time: task.free_time, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...marks(id) }];
     });
     const confirmation = done.length ? confirmationFor(done, now) : "";
     // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
@@ -498,10 +531,10 @@ export async function think(
     reply = reply && changes.size > 0 ? `${reply}\n${lines}` : `${lines}\nNoted in your routine.`;
   }
   if (saved.length > 0) {
-    // Read back: a bookmark is confirmed only once it is in memory.
-    const { data } = await requireDb().from("memory").select("fact").like("fact", "Saved link:%");
-    const kept = ((data ?? []) as { fact: string }[]).map((row) => row.fact);
-    const lines = saved.map((title) => (kept.some((fact) => fact.includes(title)) ? `💾 Saved: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
+    // Read back: a bookmark is confirmed only once it is in his library.
+    const { data } = await requireDb().from("library").select("title").order("id", { ascending: false }).limit(50);
+    const kept = ((data ?? []) as { title: string | null }[]).map((row) => row.title ?? "");
+    const lines = saved.map((title) => (kept.some((known) => known.includes(title) || title.includes(known)) ? `💾 Saved to your library: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
     reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time.`;
   }
   if (remembered.length > 0 || forgotten.length > 0) {
@@ -514,18 +547,23 @@ export async function think(
     ].join("\n");
     reply = reply ? `${withoutClaims(reply) || ""}\n${lines}`.trim() : lines;
   }
+  // A rule saved or removed (phase b), read back by the tool; his rules shown with their 🗑 buttons.
+  if (ruleLines.length > 0) reply = reply ? `${withoutClaims(reply) || ""}\n${ruleLines.join("\n")}`.trim() : ruleLines.join("\n");
+  if (showRules) reply = [reply && !claimsAction(reply) ? reply : undefined, (await rulesView(now)).text].filter(Boolean).join("\n\n");
   // Nothing was written, yet the words say it was: those words go.
-  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || proposal !== undefined || tools.includes("media") || tools.includes("offer_task");
+  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || sendItems.length > 0 || showRules || proposal !== undefined || tools.includes("media") || tools.includes("offer_task");
   if (!wroteSomething && reply && claimsAction(reply)) reply = withoutClaims(reply) || "Nothing has been changed yet, sir. Could you say that once more?";
   // One question at most.
   if (reply) reply = oneQuestion(reply);
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
+  // Never a silent downgrade (phase e): an answer from the backup model says so.
+  if (fellBack) reply = `${reply}\n\n_(Answered by the backup model: Claude was unavailable.)_`;
   // Cited web pages, as links under the answer (a page he sent himself is not listed back to him).
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */
@@ -539,7 +577,42 @@ export { dayLabel };
 /** Tools that write: their success is read back from the database before it is confirmed. */
 const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine"]);
 
-const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask"]);
+const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library"]);
+
+/** A call that changes something: the write tools, a library attach, a rule added or removed. */
+function isWrite(name: string, args: Record<string, unknown>): boolean {
+  return WRITES.has(name) || (name === "library" && args.action === "attach") || (name === "rule" && args.action !== "list");
+}
+
+/** Deleting or dropping anything waits for his tap (phase e): a task dropped, a memory note forgotten, a part removed, a rule deleted. */
+function needsTap(name: string, args: Record<string, unknown>): boolean {
+  return (name === "update_task" && args.status === "dropped") || name === "forget" || (name === "subtask" && args.action === "remove") || (name === "rule" && args.action === "delete");
+}
+
+/** A forwarded post or a shared item with none of his own words: material, never instructions (phase e). */
+export function isMaterialOnly(text: string): boolean {
+  if (!/^\s*\[He (forwarded this to you|sent you a)/.test(text)) return false;
+  const own = text.replace(/«««[\s\S]*?»»»/g, " ").replace(/^\s*\[He [^\]]*\]\s*$/gm, " ").replace(/^(Text in the image:|Shows:|Post forwarded from|A (photo|video|file|post)|\(Saved)[^\n]*$/gm, " ");
+  return own.trim().length === 0;
+}
+
+/** The change, offered with [✓ Do it] [✏️ Change] instead of made: "I'll drop **Buy notebook**." */
+async function proposeInstead(name: string, args: Record<string, unknown>, now: Date, said: string, heard: string) {
+  const db = requireDb();
+  const taskId = Number(args.id ?? args.task_id);
+  const task = Number.isSafeInteger(taskId) ? ((await db.from("tasks").select("title").eq("id", taskId).maybeSingle()).data as { title: string } | null) : null;
+  let say: string;
+  if (name === "update_task" && args.status === "dropped") say = `I'll drop **${task?.title ?? "that task"}**.`;
+  else if (name === "forget") {
+    const fact = (await db.from("memory").select("fact").eq("id", Number(args.id)).maybeSingle()).data as { fact: string } | null;
+    say = `I'll forget: "${fact?.fact ?? "that note"}".`;
+  } else if (name === "subtask") say = `I'll remove ${Array.isArray(args.titles) ? args.titles.map((t) => `"${t}"`).join(", ") : "that part"} from **${task?.title ?? "the task"}**.`;
+  else if (name === "rule") say = `I'll remove rule #${args.id}.`;
+  else if (name === "add_task") say = `I'll add **${String(args.title ?? "it")}**${typeof args.due_at === "string" ? ` for **${args.due_at.replace("T", " ")}**` : ""}.`;
+  else if (name === "update_task") say = `I'll change **${task?.title ?? "that task"}** as that post suggests.`;
+  else say = "I'll do what that post asks.";
+  return runTool("propose", { say, tool: name, args }, now, said, heard);
+}
 
 /** A clash a change created, and where the changed task could go instead. */
 export type Clash = { taskId: number; title: string; sentence: string; suggestAt?: Date };

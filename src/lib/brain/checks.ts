@@ -41,6 +41,8 @@ export type DoneAction = {
   link?: boolean;
   /** Photos, videos and files attached to the task. */
   media?: { photo: number; video: number; file: number };
+  /** On the 🌙 Free Time list. */
+  free_time?: boolean | null;
   /** Words saved in its notes this time (shown short). */
   note?: string;
   /** A check-in comes after this many untouched days. */
@@ -95,7 +97,7 @@ export function confirmationFor(actions: DoneAction[], now: Date): string {
     if (action.reminder_at) {
       return `🔔 ${title}: reminder ${bold(new Date(action.reminder_at))}${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
     }
-    if (!action.due_at) return `✓ ${title} in the inbox`;
+    if (!action.due_at) return action.free_time ? `✓ ${title} → 🌙 Free Time` : `✓ ${title} in the inbox`;
     return `✓ ${title} → ${bold(new Date(action.due_at))}`;
   };
   const unique = actions.filter((action, index) => actions.findIndex((other) => other.title === action.title && other.tool === action.tool && other.reminder_at === action.reminder_at) === index);

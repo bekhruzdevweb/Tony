@@ -11,7 +11,11 @@ import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
-import { estimateMinutes } from "../schedule";
+import { attachItem, findInLibrary, itemRef, loadItem, saveToLibrary } from "../library";
+import { itemLabel } from "../library-rules";
+import { addRule, deleteRule, fireRule } from "../rules";
+import { isFreeTimeRequest } from "../smart-rules";
+import { dayFromText, estimateMinutes } from "../schedule";
 import { givenTimes, heldToGivenTime, hisTitle, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
@@ -36,6 +40,7 @@ const taskFields = {
   duration: { type: "integer", description: "Minutes it takes: his figure, or your estimate" },
   day: { type: "string", description: "YYYY-MM-DD: a day he named WITHOUT a time. Leave due_at out; Tony picks or offers the time from his routine." },
   nudge_after_days: { type: "integer", description: "\"Remind me if I don't check it for N days\": N. A check-in comes if the task sits untouched that long." },
+  free_time: { type: "boolean", description: "\"In my free time\", \"someday\", \"when I'm free\": the 🌙 Free Time list, no date and no day." },
 };
 
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
@@ -154,6 +159,37 @@ export const TOOLS: ToolDefinition[] = [
     { action: { type: "string", enum: ["note", "find"] }, text: { type: "string" }, reply },
     ["action", "text"],
   ),
+  // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
+  tool(
+    "library",
+    "His library: everything he sent (links, posts, photos, videos, files, voice notes). find: the items that fit his words (\"that Instagram video\", \"the photo I sent yesterday\"). attach: put an item on a task (a file is attached, a link goes into its notes). To send him an item, Tony does it himself when he asks.",
+    {
+      action: { type: "string", enum: ["find", "attach"] },
+      text: { type: "string", description: "His words for the item" },
+      item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
+      task_id: { type: "integer", description: "attach: the task" },
+    },
+    ["action"],
+  ),
+  // Situation rules: "when I'm not motivated to work out, send me this video".
+  tool(
+    "rule",
+    "His rules, \"when X, do Y\". add: save one (situation in his words, what to do, and attach \"last\" for the thing he just shared, or a library item). delete: remove one he asks to remove. list: his rules (Tony shows them with buttons).",
+    {
+      action: { type: "string", enum: ["add", "delete", "list"] },
+      situation: { type: "string", description: "In his words: \"I'm not motivated to work out\"" },
+      do: { type: "string", description: "What to do then: \"send me the workout video\"" },
+      attach: { type: "string", description: "\"last\" (what he just shared) or a library item (\"media:7\")" },
+      id: { type: "integer" },
+    },
+    ["action"],
+  ),
+  tool(
+    "rule_fire",
+    "His message fits one of his rules (listed below): act on it. Tony sends the rule's item; your reply is the empathy and a helpful offer.",
+    { id: { type: "integer" }, reply },
+    ["id"],
+  ),
   tool(
     "ask",
     "Ask him a question with tappable answers.",
@@ -163,7 +199,7 @@ export const TOOLS: ToolDefinition[] = [
 ];
 
 /** What Tony may propose and do on his ✓. */
-const PROPOSABLE = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember"]);
+const PROPOSABLE = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "rule", "routine", "library"]);
 
 /** Whether his words name this task (a shared word of five letters or more, by its first five). */
 const mentions = (said: string, title: string) => {
@@ -292,6 +328,15 @@ async function readFields(
     }
     if (dueAt) patch.due_at = dueAt.toISOString();
   }
+  // "In my free time", "someday": the 🌙 Free Time list, with no date (unless his words also name a day or a time).
+  const freeTime = args.free_time === true || (said !== undefined && args.free_time !== false && isFreeTimeRequest(said) && !dayFromText(said, now) && givenTimes(said, now).length === 0);
+  if (freeTime) {
+    patch.free_time = true;
+    dueAt = undefined;
+    delete patch.due_at;
+    return { patch, dueAt: undefined, dayOnly: undefined };
+  }
+  if (args.free_time === false) patch.free_time = false;
   // A day he named without a time: Tony decides or asks, from his routine.
   if (!dueAt && !dayOnly && typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day.trim())) {
     dayOnly = args.day.trim();
@@ -583,13 +628,53 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const url = findLink(typeof args.url === "string" ? args.url : "", settings.last_shared_text);
       if (!url) return fail("there is no link in his message or in what he shared recently");
       const title = typeof args.title === "string" && args.title.trim() ? args.title.trim().slice(0, 120) : await fetchTitle(url);
-      const fact = `Saved link: ${title} (${url})`.slice(0, 300);
-      const known = await db.from("memory").select("id").eq("fact", fact).limit(1);
-      if (!known.error && (known.data ?? []).length === 0) {
-        const { error } = await db.from("memory").insert({ fact, source: "link" });
-        check("save_link", error);
+      // Kept in his library (phase b), never in memory: memory is for facts about him.
+      const id = await saveToLibrary({ kind: "link", url, title, source: "saved" });
+      if (id === undefined) return fail("the link could not be saved");
+      return { ok: true, saved: title, url, item: `library:${id}` };
+    }
+
+    case "library": {
+      const action = String(args.action ?? "");
+      const item = typeof args.item === "string" && args.item.trim() ? await loadItem(args.item.trim()) : undefined;
+      if (action === "find") {
+        const query = typeof args.text === "string" ? args.text : "";
+        const found = item ? { found: item } : await findInLibrary(query, now);
+        const list = found.found ? [found.found] : (found.choices ?? []);
+        if (list.length === 0) return { ok: true, items: [], note: "nothing in his library fits; say so" };
+        return { ok: true, items: list.map((entry) => `${itemRef(entry)} ${itemLabel(entry, now)}${entry.url ? ` ${entry.url}` : ""}`), ...(found.choices ? { note: "several fit equally: ask him which, with their titles" } : {}) };
       }
-      return { ok: true, saved: title, url };
+      if (action === "attach") {
+        const task = await loadTask(args.task_id);
+        if (!task) return fail(`no task #${args.task_id}`);
+        const target = item ?? (typeof args.text === "string" ? (await findInLibrary(args.text, now)).found : undefined);
+        if (!target) return fail("no single item fits: find it first, or ask him which");
+        if (!(await attachItem(target, task.id))) return fail("it could not be attached");
+        return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), attached: itemLabel(target, now), wrote: {} };
+      }
+      return fail("library action must be find or attach");
+    }
+
+    case "rule": {
+      const action = String(args.action ?? "");
+      if (action === "add") {
+        const result = await addRule({ situation: String(args.situation ?? ""), action: String(args.do ?? ""), item: typeof args.attach === "string" && args.attach.trim() ? args.attach.trim() : undefined }, now);
+        if (!result.ok) return fail(result.error);
+        return { ok: true, rule: { id: result.rule.id, situation: result.rule.situation, action: result.rule.action, item: result.item ? itemLabel(result.item, now) : undefined, skip: result.rule.skip_days ? `${result.rule.skip_days} days without ${result.rule.skip_kind}` : undefined } };
+      }
+      if (action === "delete") {
+        const id = Number(args.id);
+        if (!Number.isSafeInteger(id)) return fail("which rule? give its id");
+        return (await deleteRule(id)) ? { ok: true, rule_deleted: id } : fail("that rule could not be removed");
+      }
+      if (action === "list") return { ok: true, show_rules: true };
+      return fail("rule action must be add, delete or list");
+    }
+
+    case "rule_fire": {
+      const fired = await fireRule(Number(args.id), now);
+      if (!fired) return fail("no such rule");
+      return { ok: true, send_item: fired.item ? itemRef(fired.item) : undefined, item: fired.item ? itemLabel(fired.item, now) : undefined, url: fired.item?.url ?? undefined };
     }
 
     case "routine": {
@@ -605,7 +690,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const say = typeof args.say === "string" ? args.say.trim().slice(0, 300) : "";
       const toolName = String(args.tool ?? "");
       const toolArgs = args.args && typeof args.args === "object" && !Array.isArray(args.args) ? (args.args as Args) : undefined;
-      if (!say || !toolArgs || !PROPOSABLE.has(toolName)) return fail("propose needs say, a tool (add_task, update_task, complete_task, set_reminder, subtask, remember) and its args");
+      if (!say || !toolArgs || !PROPOSABLE.has(toolName)) return fail("propose needs say, a tool (add_task, update_task, complete_task, set_reminder, subtask, remember, forget, rule) and its args");
       const { data, error } = await db.from("offers").insert({ kind: "action", payload: { say, tool: toolName, args: toolArgs, said: said ?? null, heard: heard ?? null } }).select("id").single();
       check("propose", error);
       return { ok: true, proposal_id: (data as { id: number }).id, say };

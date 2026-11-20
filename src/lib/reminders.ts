@@ -13,6 +13,8 @@ import { progress, subtasksFor } from "./subtasks";
 import { data, dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
+import { downtime, MERGE_MS, mergeable } from "./smart-rules";
+import { logEvent } from "./events";
 import { addMinutes, dayBounds, formatTime, inWindow, toWholeMinute } from "./time";
 
 export type Reminder = {
@@ -152,8 +154,71 @@ export async function runTick(
     .order("fire_at", { ascending: true })
     .limit(BATCH);
   fail("runTick: due", due.error);
-  const reminders = (due.data ?? []) as (Reminder & { task: Task | null })[];
+  let reminders = (due.data ?? []) as (Reminder & { task: Task | null })[];
   if (reminders.length === 0) return finish();
+
+  // After downtime (phase e): what came due while Tony was away goes out as ONE catch-up message, not a flood.
+  const away = downtime(settings.last_tick_at, now);
+  if (away && !inWindow(now, settings.quiet_start, settings.quiet_end, settings.timezone)) {
+    const missed = reminders.filter((reminder) => reminder.task && OPEN_STATUSES.includes(reminder.task.status) && !isPrayer(reminder.task) && reminder.kind !== "stale" && new Date(reminder.fire_at).getTime() >= away.from.getTime() && new Date(reminder.fire_at).getTime() <= now.getTime() - 5 * 60_000);
+    const tasks = [...new Map(missed.map((reminder) => [reminder.task!.id, reminder.task!])).values()];
+    if (tasks.length >= 2) {
+      const lines = tasks.slice(0, 8).map((task, index) => `${index + 1}. ${b(task.title)}${task.due_at ? ` (${formatTime(new Date(task.due_at))})` : ""}`);
+      const keyboard = new InlineKeyboard();
+      tasks.slice(0, 8).forEach((task, index) => {
+        if (index > 0) keyboard.row();
+        keyboard.text(`✓ ${index + 1}`, `fu:done:${task.id}`).text(`⏰ ${index + 1}`, `fu:later:${task.id}`).text(`📅 ${index + 1}`, `fu:tom:${task.id}`);
+      });
+      const text = `I was offline from ${b(formatTime(away.from))} to ${b(formatTime(now))}, sir. Missed meanwhile:\n${lines.join("\n")}`;
+      const messageId = await sendHtml(bot, chatId, text, { keyboard }).catch(() => undefined);
+      if (messageId !== undefined) {
+        for (const reminder of missed) {
+          await db.from("reminders").update({ state: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, claimed_at: null }).eq("id", reminder.id).eq("state", "scheduled");
+        }
+        await track(messageId, "reminder");
+        await logMessage("tony", plain(text));
+        await logEvent("catch_up", { from: away.from.toISOString(), minutes: away.minutes, tasks: tasks.map((task) => task.id) });
+        result.sent++;
+        reminders = reminders.filter((reminder) => !missed.includes(reminder));
+      }
+    }
+  }
+
+  // Reminders within 15 minutes of each other go out as ONE message (phase e): plain first reminders, not prayers or persistent chains.
+  const plainFirst = (reminder: Reminder & { task: Task | null }) => reminder.kind === "due" && reminder.attempt === 0 && reminder.task && !reminder.task.persistent && !isPrayer(reminder.task) && OPEN_STATUSES.includes(reminder.task.status);
+  const lead = reminders.find(plainFirst);
+  if (lead && !inWindow(now, settings.quiet_start, settings.quiet_end, settings.timezone)) {
+    const soon = await db
+      .from("reminders")
+      .select("*, task:tasks(*)")
+      .eq("state", "scheduled")
+      .eq("kind", "due")
+      .eq("attempt", 0)
+      .lte("fire_at", new Date(new Date(lead.fire_at).getTime() + MERGE_MS).toISOString())
+      .order("fire_at", { ascending: true })
+      .limit(10);
+    const together = [lead, ...mergeable(lead, ((soon.data ?? []) as (Reminder & { task: Task | null })[]).filter(plainFirst).filter((other) => other.id !== lead.id))];
+    if (together.length >= 2) {
+      const lines = together.map((reminder, index) => `${index + 1}. ${b(formatTime(new Date(reminder.task!.due_at ?? reminder.fire_at)))} ${b(reminder.task!.title)}`);
+      const keyboard = new InlineKeyboard();
+      together.forEach((reminder, index) => {
+        if (index > 0) keyboard.row();
+        keyboard.text(`✓ ${index + 1}`, `fu:done:${reminder.task!.id}`).text(`⏰ 15m ${index + 1}`, `fu:snooze:${reminder.task!.id}`).text(`📅 ${index + 1}`, `fu:tom:${reminder.task!.id}`);
+      });
+      const text = `Sir, ${together.length} reminders together:\n${lines.join("\n")}`;
+      const messageId = await sendHtml(bot, chatId, text, { keyboard }).catch(() => undefined);
+      if (messageId !== undefined) {
+        for (const reminder of together) {
+          await db.from("reminders").update({ state: "sent", sent_at: new Date().toISOString(), telegram_message_id: messageId, claimed_at: null }).eq("id", reminder.id).eq("state", "scheduled");
+          await track(messageId, "reminder", { taskId: reminder.task!.id });
+        }
+        await logMessage("tony", plain(text));
+        result.sent++;
+        const ids = new Set(together.map((reminder) => reminder.id));
+        reminders = reminders.filter((reminder) => !ids.has(reminder.id));
+      }
+    }
+  }
 
   const recent = await db
     .from("reminders")

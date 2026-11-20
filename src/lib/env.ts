@@ -26,6 +26,11 @@ export const env = {
   get anthropicApiKey() {
     return read("ANTHROPIC_API_KEY");
   },
+  /** How long Tony waits after his last message before answering, so messages sent together are one request (phase b). */
+  get burstQuietMs() {
+    const value = Number(read("BURST_QUIET_MS"));
+    return Number.isFinite(value) && value >= 0 ? value : 4_000;
+  },
   get anthropicModel() {
     return read("ANTHROPIC_MODEL") ?? "claude-haiku-5-5";
   },

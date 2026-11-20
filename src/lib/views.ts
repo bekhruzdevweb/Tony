@@ -104,8 +104,11 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
 export async function inboxView(now = new Date()): Promise<{ html: string; count: number }> {
   const { data, error } = await requireDb().from("tasks").select().eq("status", "inbox").order("created_at").order("id");
   if (error) throw new Error(`inboxView: ${error.message}`);
-  const tasks = data as Task[];
-  if (tasks.length === 0) return { html: `<b>📥 Inbox</b>\n\nEmpty, sir.`, count: 0 };
+  // The 🌙 Free Time list is its own list (/freetime), not the inbox (phase c).
+  const tasks = (data as Task[]).filter((task) => !task.free_time);
+  const freeTime = (data as Task[]).length - tasks.length;
+  const more = freeTime > 0 ? `\n\n🌙 ${i(`${freeTime} on your Free Time list: /freetime`)}` : "";
+  if (tasks.length === 0) return { html: `<b>📥 Inbox</b>\n\nEmpty, sir.${more}`, count: 0 };
   const line = (task: Task) => {
     const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
     return `• ${esc(task.title)}${days > 3 ? ` ${i(`${days} days`)}` : ""}`;
@@ -114,5 +117,5 @@ export async function inboxView(now = new Date()): Promise<{ html: string; count
   if (tasks.length > 40) lines.push(i(`…and ${tasks.length - 40} more`));
   // A long inbox folds away after its first few lines.
   const body = lines.length > 6 ? `${lines.slice(0, 3).join("\n")}\n${expandable(lines.slice(3).join("\n"))}` : lines.join("\n");
-  return { html: `<b>📥 Inbox · ${tasks.length}</b>\n\n${body}`, count: tasks.length };
+  return { html: `<b>📥 Inbox · ${tasks.length}</b>\n\n${body}${more}`, count: tasks.length };
 }

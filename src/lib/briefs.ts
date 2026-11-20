@@ -2,12 +2,13 @@ import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
 import { retire, sendHtml, track, type MessageKind } from "./chat-log";
-import { sendRich } from "./rich";
+import { markdownToHtml, sendRich } from "./rich";
+import { stillOpenSection } from "./followups";
+import { logEvent } from "./events";
 import { requireDb } from "./db";
 import { b, code, esc, expandable, i, plain } from "./html";
 import { logMessage } from "./messages";
-import { sendMissedPoll, sendPlanPoll, sendWeekPoll } from "./polls";
-import { data } from "./reminder-messages";
+import { sendPlanPoll, sendWeekPoll } from "./polls";
 import type { Settings } from "./settings";
 import { postBoard, shortLabel } from "./today-board";
 import { coachForBrief } from "./coach";
@@ -20,9 +21,6 @@ import { dayView, loadProjects, taskLine } from "./views";
 /** A brief that could not go out on time is still sent for this long, then skipped for the day. */
 const LATE_WINDOW_MINUTES = 180;
 const DAY_MS = 24 * 60 * 60_000;
-/** Spec: inbox items untouched for 3 days get a nudge. */
-const STALE_DAYS = 3;
-const MAX_MISSED_POLLS = 2;
 
 // Which daily message a "brief" row in the reminders table stands for.
 const MORNING = 0;
@@ -60,6 +58,16 @@ async function send(
   await track(messageId, options.kind, { taskId: options.taskId });
   await logMessage("tony", plain(html));
   return messageId;
+}
+
+/** Rows of buttons (from the follow-up ladder) as a Telegram keyboard. */
+function rowsKeyboard(rows: { text: string; data: string }[][]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  rows.forEach((row, index) => {
+    if (index > 0) keyboard.row();
+    for (const button of row) keyboard.text(button.text, button.data);
+  });
+  return keyboard;
 }
 
 async function openTasks(): Promise<Task[]> {
@@ -127,7 +135,9 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const coach = await coachForBrief(now);
   // Two things at once today: flagged so they can be sorted before the day starts.
   const clashLines = allClashes(view.open).map(([a, c]) => `⚠️ ${esc(`Clash: ${clashSentence(a, c)}`)}`);
-  const html = [view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  // The follow-up ladder (phase d): what is still open from earlier days comes first, with its buttons.
+  const open = await stillOpenSection(now).catch((error) => (console.error("Still open failed:", error), undefined));
+  const html = [open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 
@@ -136,11 +146,13 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   // The brief is the summary; the ticking is done on the pinned Today message that follows it.
   // (Until the board's database update is applied, the brief keeps its own tick boxes.)
   const boardReady = "today_message_id" in settings;
-  const briefId = await send(bot, chatId, html, { keyboard: boardReady ? undefined : view.keyboard, kind: "brief:morning", rich: true });
+  const openKeyboard = open ? rowsKeyboard(open.rows) : undefined;
+  const briefId = await send(bot, chatId, html, { keyboard: openKeyboard ?? (boardReady ? undefined : view.keyboard), kind: "brief:morning", rich: !openKeyboard });
+  if (open) await logEvent("followup", { task_ids: open.taskIds, brief: true });
   await record(now, briefId, MORNING);
   // A fresh Today message for the new day, pinned; yesterday's is unpinned and removed.
   if (boardReady) await postBoard(bot, chatId, now).catch((error) => console.error("Could not post the Today message:", error));
-  let sent = 1;
+  const sent = 1;
   {
     // Said aloud: today's key tasks and the coach's one line, about 300 characters at most.
     const spoken = spokenBrief(view.open, view.overdue.length, coach.line, settings.timezone);
@@ -148,43 +160,9 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
     if (voiceId !== undefined) await track(voiceId, "brief:morning");
   }
 
-  // Missed tasks come back, one question each, oldest first.
-  for (const task of carried.slice(0, MAX_MISSED_POLLS)) {
-    await retire({ kinds: ["prompt"], taskId: task.id }, now);
-    const pollId = await sendMissedPoll(bot, chatId, task, now);
-    await record(now, pollId, 2, { taskId: task.id });
-    sent++;
-  }
-
-  // One forgotten inbox item a day, asked about quietly, and not again for three days.
-  const stale = tasks
-    .filter((task) => task.status === "inbox" && now.getTime() - new Date(task.updated_at).getTime() >= STALE_DAYS * DAY_MS)
-    .sort((x, y) => x.updated_at.localeCompare(y.updated_at));
-  for (const task of stale) {
-    const recent = await requireDb()
-      .from("reminders")
-      .select("id", { count: "exact", head: true })
-      .eq("task_id", task.id)
-      .eq("kind", "stale")
-      .gte("sent_at", new Date(now.getTime() - STALE_DAYS * DAY_MS).toISOString());
-    if (recent.error) throw new Error(`briefs: ${recent.error.message}`);
-    if ((recent.count ?? 0) > 0) continue;
-    const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
-    const keyboard = new InlineKeyboard()
-      .text("Tomorrow", data("tomorrow", task.id))
-      .text("This weekend", data("weekend", task.id))
-      .text("Drop", data("drop", task.id));
-    await retire({ kinds: ["stale"], taskId: task.id }, now);
-    const id = await send(bot, chatId, `📥 Sir, ${b(task.title)} has sat in the inbox for ${b(`${days} days`)}. Shall I schedule it?`, {
-      keyboard,
-      silent: true,
-      kind: "stale",
-      taskId: task.id,
-    });
-    await record(now, id, 0, { taskId: task.id, kind: "stale" });
-    sent++;
-    break;
-  }
+  // Missed tasks are in the brief's "⚠️ Still open" (one message, their buttons under it), never one poll each;
+  // inbox items untouched for a week come in Sunday evening's review (phase d).
+  void carried;
   return sent;
 }
 

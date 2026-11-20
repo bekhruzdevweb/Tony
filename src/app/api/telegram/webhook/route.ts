@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Update } from "grammy/types";
 import { after } from "next/server";
-import { getBot } from "@/lib/bot";
+import { getBot, type TonyBot } from "@/lib/bot";
+import { burstable, holdForBurst, takeBurst } from "@/lib/burst";
 import { firstSight } from "@/lib/dedupe";
 import { env } from "@/lib/env";
 import { refreshBoard } from "@/lib/today-board";
@@ -43,7 +44,18 @@ export async function POST(request: Request) {
   await bot.init();
   after(async () => {
     try {
-      await bot.handleUpdate(update);
+      // The burst rule (phase b): a message waits a few quiet seconds; the last of a burst answers for all of them.
+      if (burstable(update) && (await holdForBurst(update))) {
+        await bot.api.sendChatAction(update.message!.chat.id, "typing").catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, env.burstQuietMs));
+        const groups = await takeBurst(update);
+        for (const group of groups ?? []) {
+          if (group.length === 1 || !(bot as TonyBot).burst) for (const one of group) await bot.handleUpdate(one);
+          else await (bot as TonyBot).burst!(group);
+        }
+      } else {
+        await bot.handleUpdate(update);
+      }
     } catch (error) {
       console.error("Update failed:", error);
     }

@@ -1,6 +1,7 @@
 import "server-only";
 import { env } from "../env";
 import { anthropicClient, chatWithClaude, describeClaudeError } from "./anthropic";
+import { logEvent } from "../events";
 
 export type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
@@ -40,6 +41,8 @@ export type Answer = {
   content: string | null;
   tool_calls?: ToolCall[];
   raw?: unknown;
+  /** Claude could not answer and the backup model did: never silent (phase e). */
+  fallback?: string;
   /** Web pages the answer cites (Claude's web search), and pages it read. */
   sources?: { url: string; title: string }[];
   fetched?: { url: string; title: string }[];
@@ -160,7 +163,23 @@ export async function chat(input: {
     } catch (error) {
       console.error(`Claude failed, ${env.aiApiKey ? `falling back to ${env.aiModel}` : "and there is no fallback"}: ${describeClaudeError(error)}`);
       if (!env.aiApiKey) throw new ModelError(`Claude failed: ${describeClaudeError(error)}`);
+      // Every fallback is noted, and the answer says it came from the backup model (phase e).
+      void logEvent("model_fallback", { from: input.model ?? env.anthropicModel, to: env.aiModel, error: describeClaudeError(error).slice(0, 300) });
+      const answer = await chatWithGroq(system, input.messages, input.tools, input.force);
+      return { ...answer, fallback: describeClaudeError(error).slice(0, 120) };
     }
   }
   return chatWithGroq(system, input.messages, input.tools, input.force);
+}
+
+/** The morning self-test: Claude answers a one-word request, or why it did not. */
+export async function checkClaude(): Promise<string | undefined> {
+  const claude = anthropicClient();
+  if (!claude) return "no Anthropic key is set";
+  try {
+    const answer = await chatWithClaude(claude, { stable: "Reply with the single word OK.", live: "" }, [{ role: "user", content: "Self-test. Reply OK." }], []);
+    return answer.content?.trim() ? undefined : "it gave an empty answer";
+  } catch (error) {
+    return describeClaudeError(error).slice(0, 160);
+  }
 }
