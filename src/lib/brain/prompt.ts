@@ -212,7 +212,7 @@ export function buildSystemPrompt(input: {
       ? `Last thing he shared (${formatDue(input.shared.at, now)}):\n${input.shared.text}\n\n`
       : "",
     waiting: input.waiting ? `Open question: ${input.waiting}\n\n` : "",
-    prayers: input.prayers ? `Prayer times today (Tashkent; reminders are automatic, not tasks to manage): ${input.prayers}\n\n` : "",
+    prayers: input.prayers ? `Prayer times today (his location, official times; reminders are automatic, not tasks to manage): ${input.prayers}\n\n` : "",
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",

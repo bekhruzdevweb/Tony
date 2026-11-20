@@ -38,7 +38,7 @@ import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } fr
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
-import { prayerStatus, setPrayer, setPrayerCalculation } from "./prayer";
+import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
@@ -196,10 +196,39 @@ export function getBot(): Bot | undefined {
     }
     const status = await prayerStatus();
     if (!status) return oops(ctx, "Prayer times need a database update first, sir.");
-    const times = status.today.map((p) => `${p.status === "done" ? "✓ " : ""}${p.title} ${formatTime(new Date(p.at))}`).join(" · ");
+    const times = status.today.map((p) => `${p.status === "done" ? "✓ " : ""}${p.title} ${formatTime(new Date(p.at))}${p.approx ? " (approx.)" : ""}`).join(" · ");
     const text = status.on
-      ? `🕌 Prayer times are on (Tashkent, method ${status.method}, ${status.school === 1 ? "Hanafi" : "standard"} Asr).\n${times || "Today's times will come at 00:05."}\nA quiet note 10 minutes before and one at the time; no voice.`
+      ? `🕌 Prayer times are on for ${status.location} (official times from namoz-vaqti.uz; if the site is down, approximate times, ${status.school === 1 ? "Hanafi" : "standard"} Asr).\n${times || "Today's times will come at 00:05."}\nA quiet note 10 minutes before and one at the time; no voice. /location to change the place.`
       : "🕌 Prayer times are off. /prayer on to turn them on.";
+    await retire({ kinds: ["cmd:voice"] });
+    const sent = await ctx.reply(text);
+    await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+  });
+
+  // /location <region> or /location <lat> <lng>: where prayer times are for. Plain code, no AI.
+  tasks.command("location", async (ctx) => {
+    const input = ctx.match.trim();
+    const coords = /^(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)$/.exec(input);
+    let text: string;
+    try {
+      if (coords) {
+        await setCoordinates(Number(coords[1]), Number(coords[2]));
+        text = `Noted, sir: ${coords[1]}, ${coords[2]} for the approximate times, if the official site is ever down.`;
+      } else if (input) {
+        await ctx.replyWithChatAction("typing").catch(() => undefined);
+        const name = await setLocation(input);
+        const status = await prayerStatus();
+        const times = (status?.today ?? []).map((p) => `${p.title} ${formatTime(new Date(p.at))}`).join(" · ");
+        text = `📍 ${name}. Prayer times now follow the official table for it.${times ? `\nToday: ${times}` : ""}`;
+      } else {
+        const where = await locationStatus();
+        if (!where) return oops(ctx, "Locations need a database update first, sir.");
+        text = `📍 ${where.name} (${where.slug}; fallback coordinates ${where.lat}, ${where.lng}).\nTo change it: /location Xiva shahri, or /location 41.47 60.78 for the coordinates.`;
+      }
+    } catch (error) {
+      console.error("Location failed:", error);
+      return oops(ctx, `I could not find "${input}" on namoz-vaqti.uz, sir. Try the region as the site writes it, for example "Xonqa tumani" or "Urganch shahri".`);
+    }
     await retire({ kinds: ["cmd:voice"] });
     const sent = await ctx.reply(text);
     await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });

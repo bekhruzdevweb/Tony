@@ -298,7 +298,8 @@ export async function runTick(
 
 /** A prayer's reminder: "🕌 Asr in 10 minutes · 15:20", then "🕌 Asr · 15:20" with [✓ Prayed]. */
 function prayerReminder(task: Task, early: boolean): { text: string; keyboard?: InlineKeyboard } {
-  const at = formatTime(new Date(task.due_at!));
+  // A time from the fallback (not the official table) says so.
+  const at = `${formatTime(new Date(task.due_at!))}${task.notes === "approx." ? " (approx.)" : ""}`;
   return early
     ? { text: `🕌 ${esc(task.title)} in 10 minutes · ${at}` }
     : { text: `🕌 ${esc(task.title)} · ${at}`, keyboard: new InlineKeyboard().text("✓ Prayed", `done:${task.id}`) };

@@ -114,6 +114,10 @@ export const env = {
   get prayerApiBase() {
     return (read("PRAYER_API_BASE") ?? "https://api.aladhan.com").replace(/\/+$/, "");
   },
+  /** The Muslim Board's prayer times site (overridable for tests). */
+  get prayerSiteBase() {
+    return (read("PRAYER_SITE_BASE") ?? "https://namoz-vaqti.uz").replace(/\/+$/, "");
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

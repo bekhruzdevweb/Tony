@@ -8,6 +8,7 @@ export const COMMANDS = [
   { command: "inbox", description: "Tasks without a date" },
   { command: "app", description: "Open the app, or get a key for it" },
   { command: "prayer", description: "Prayer times: /prayer on, off, hanafi or standard" },
+  { command: "location", description: "Where prayer times are for (e.g. /location Xonqa tumani)" },
   { command: "voice", description: "When I speak: /voice on, off or auto" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
