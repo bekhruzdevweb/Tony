@@ -36,7 +36,14 @@ export class ModelError extends Error {
 /** How long a rate-limited call may wait before trying again. */
 const MAX_WAIT_MS = 15_000;
 
-export type Answer = { content: string | null; tool_calls?: ToolCall[]; raw?: unknown };
+export type Answer = {
+  content: string | null;
+  tool_calls?: ToolCall[];
+  raw?: unknown;
+  /** Web pages the answer cites (Claude's web search), and pages it read. */
+  sources?: { url: string; title: string }[];
+  fetched?: { url: string; title: string }[];
+};
 
 /** "Please try again in 7.66s" / "in 1m2.5s", or the Retry-After header, in milliseconds. */
 export function retryDelay(status: number, headers: Headers, body: string): number | undefined {
@@ -135,12 +142,12 @@ async function chatWithGroq(system: SystemPrompt, messages: ChatMessage[], tools
  * goes to the second model on Groq, so he is not left without an answer.
  * With no Anthropic key at all, Groq is the brain, as it was before.
  */
-export async function chat(input: { system: SystemPrompt | string; messages: ChatMessage[]; tools: ToolDefinition[]; force?: string }): Promise<Answer> {
+export async function chat(input: { system: SystemPrompt | string; messages: ChatMessage[]; tools: ToolDefinition[]; force?: string; web?: boolean }): Promise<Answer> {
   const system = typeof input.system === "string" ? { stable: input.system, live: "" } : input.system;
   const claude = anthropicClient();
   if (claude) {
     try {
-      return await chatWithClaude(claude, system, input.messages, input.tools, input.force);
+      return await chatWithClaude(claude, system, input.messages, input.tools, input.force, input.web);
     } catch (error) {
       console.error(`Claude failed, ${env.aiApiKey ? `falling back to ${env.aiModel}` : "and there is no fallback"}: ${describeClaudeError(error)}`);
       if (!env.aiApiKey) throw new ModelError(`Claude failed: ${describeClaudeError(error)}`);

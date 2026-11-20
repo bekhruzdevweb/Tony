@@ -75,48 +75,126 @@ const toTools = (tools: ToolDefinition[]): Anthropic.Tool[] =>
     input_schema: tool.function.parameters as Anthropic.Tool.InputSchema,
   }));
 
+/** A web page Claude cited or read. */
+export type WebSource = { url: string; title: string };
+
+/**
+ * Anthropic's own web tools, run on Anthropic's side. Haiku takes the
+ * basic versions (the newer ones, with dynamic filtering, are for larger
+ * models). At most three searches and two page reads per reply.
+ */
+const WEB_TOOLS: Anthropic.ToolUnion[] = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", city: "Tashkent", country: "UZ", timezone: "Asia/Tashkent" } },
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 2, citations: { enabled: true }, max_content_tokens: 8000 },
+];
+/** If the account refuses the web tools (not enabled for it), they are left out for an hour. */
+let webOffUntil = 0;
+const MAX_PAUSES = 3;
+
+const SERVER_BLOCKS = new Set(["server_tool_use", "web_search_tool_result", "web_fetch_tool_result"]);
+
 /**
  * One call to Claude. Throws on any failure (including a refusal), so the
  * caller can fall back to the second model.
  */
-export async function chatWithClaude(client: Anthropic, system: SystemPrompt, messages: ChatMessage[], tools: ToolDefinition[], force?: string): Promise<Answer> {
-  const response = await client.messages.create({
-    model: env.anthropicModel,
-    // Thinking counts towards this, so it is generous for replies that are a sentence or two.
-    max_tokens: 4000,
-    // Routing a request to a tool and wording a short reply is light work; the model still thinks when it needs to.
-    output_config: { effort: env.anthropicEffort },
-    system: [
-      { type: "text", text: system.stable, cache_control: { type: "ephemeral" } },
-      ...(system.live.trim() ? [{ type: "text" as const, text: system.live }] : []),
-    ],
-    tools: toTools(tools),
-    // `force` names a tool the model must call (used when a structured answer is needed).
-    tool_choice: force ? { type: "tool", name: force } : { type: "auto" },
-    messages: toMessages(messages),
-  });
+export async function chatWithClaude(
+  client: Anthropic,
+  system: SystemPrompt,
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  force?: string,
+  web = false,
+): Promise<Answer> {
+  const useWeb = web && Date.now() > webOffUntil;
+  const request = (conversation: Anthropic.MessageParam[], withWeb: boolean) =>
+    client.messages.create({
+      model: env.anthropicModel,
+      // Thinking counts towards this, so it is generous for replies that are a sentence or two.
+      max_tokens: 4000,
+      // Routing a request to a tool and wording a short reply is light work; the model still thinks when it needs to.
+      output_config: { effort: env.anthropicEffort },
+      system: [
+        { type: "text", text: system.stable, cache_control: { type: "ephemeral" } },
+        ...(system.live.trim() ? [{ type: "text" as const, text: system.live }] : []),
+      ],
+      tools: [...toTools(tools), ...(withWeb ? WEB_TOOLS : [])],
+      // `force` names a tool the model must call (used when a structured answer is needed).
+      tool_choice: force ? { type: "tool", name: force } : { type: "auto" },
+      messages: conversation,
+    });
+
+  let conversation = toMessages(messages);
+  let withWeb = useWeb;
+  const content: Anthropic.ContentBlock[] = [];
+  let response: Anthropic.Message | undefined;
+  for (let pause = 0; pause <= MAX_PAUSES; pause++) {
+    try {
+      response = await request(conversation, withWeb);
+    } catch (error) {
+      // The web tools may not be enabled for the account: answer without them rather than not at all.
+      if (withWeb && error instanceof Anthropic.BadRequestError && /web_(search|fetch)|server tool/i.test(error.message)) {
+        console.error(`Web tools refused, answering without them for an hour: ${error.message}`);
+        webOffUntil = Date.now() + 60 * 60_000;
+        withWeb = false;
+        response = await request(conversation, false);
+      } else {
+        throw error;
+      }
+    }
+    content.push(...response.content);
+    // A long search can pause the turn; sending it back lets Anthropic carry on where it stopped.
+    if (response.stop_reason !== "pause_turn") break;
+    conversation = [...conversation, { role: "assistant", content: response.content as Anthropic.ContentBlockParam[] }];
+  }
+  if (!response) throw new Error("Claude gave no response");
 
   // In the logs, so cost and cache use can be read off rather than guessed.
   const usage = response.usage;
+  const searches = usage.server_tool_use ? `, ${usage.server_tool_use.web_search_requests ?? 0} searches, ${usage.server_tool_use.web_fetch_requests ?? 0} page reads` : "";
   console.log(
-    `Claude ${response.model}: ${usage.input_tokens} in (+${usage.cache_read_input_tokens ?? 0} from cache, +${usage.cache_creation_input_tokens ?? 0} written to cache), ${usage.output_tokens} out; stop: ${response.stop_reason}`,
+    `Claude ${response.model}: ${usage.input_tokens} in (+${usage.cache_read_input_tokens ?? 0} from cache, +${usage.cache_creation_input_tokens ?? 0} written to cache), ${usage.output_tokens} out${searches}; stop: ${response.stop_reason}`,
   );
 
   if (response.stop_reason === "refusal") {
     throw new Error(`Claude declined the request (${response.stop_details?.category ?? "no category"})`);
   }
 
-  // Blocks are read by type: a reply can open with thinking, and text and tool calls can be mixed.
-  const text = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-  const calls: ToolCall[] = response.content
+  // The answer is the text after the last search or page read; anything before it was "let me look".
+  let lastServer = -1;
+  content.forEach((block, index) => {
+    if (SERVER_BLOCKS.has(block.type)) lastServer = index;
+  });
+  const texts = content.filter((block, index): block is Anthropic.TextBlock => block.type === "text" && index > lastServer);
+  // A cited answer arrives in pieces (one block per citation), so they are joined as they are.
+  const text = texts.map((block) => block.text).join("").trim();
+  const calls: ToolCall[] = content
     .filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use")
     .map((block) => ({ id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) } }));
 
-  return { content: text || null, tool_calls: calls.length ? calls : undefined, raw: response.content };
+  // Sources: the pages the answer cites; failing that, the first few results it searched.
+  const sources = new Map<string, string>();
+  for (const block of texts) {
+    for (const citation of block.citations ?? []) {
+      if (citation.type === "web_search_result_location" && !sources.has(citation.url)) sources.set(citation.url, citation.title ?? citation.url);
+    }
+  }
+  const fetched: WebSource[] = [];
+  for (const block of content) {
+    if (block.type === "web_fetch_tool_result" && block.content.type === "web_fetch_result") {
+      fetched.push({ url: block.content.url, title: block.content.content.title ?? block.content.url });
+    }
+    if (block.type === "web_search_tool_result" && Array.isArray(block.content) && sources.size === 0 && text) {
+      for (const result of block.content.slice(0, 3)) sources.set(result.url, result.title || result.url);
+    }
+  }
+
+  return {
+    content: text || null,
+    tool_calls: calls.length ? calls : undefined,
+    raw: content,
+    sources: [...sources].map(([url, title]) => ({ url, title })),
+    fetched,
+  };
 }
 
 /** Reads an image with Claude: the text in it, word for word, and what it shows. */

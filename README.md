@@ -238,6 +238,36 @@ and a skipped day neither breaks a streak nor adds to it.
 
 Needs migration `0011_coach.sql` (applied).
 
+**Talk mode.** Tony first decides whether a message is talk (chat,
+opinions, ideas, debate, a joke, a question about the world) or a request
+about his tasks. In talk he simply converses, as Jarvis: views of his own,
+dry humour, a follow-up question now and then, "sir". Talk never creates a
+task. When something sounds actionable ("I should film that series"),
+Claude calls `offer_task`, which creates nothing: a **➕ Make this a task**
+button appears under the reply, and only the tap creates the task (plain
+code, in the inbox, or at the time he named). When unsure, it is talk.
+
+**Long-term memory.** When he mentions something lasting (a project, a
+goal, a person, a preference, a routine), Claude saves it with `remember`
+alongside its reply, without asking; moods, one-off plans and trivia are
+not saved, and the same fact is never stored twice. The twelve notes most
+relevant to each message are given to Claude, to use naturally.
+
+**Web.** Claude has Anthropic's web search (up to 3 searches per reply,
+located in Tashkent) and web fetch (up to 2 pages). Haiku takes the basic
+tool versions (`web_search_20250305`, `web_fetch_20250910`). The pages an
+answer cites are listed under it as **Sources** links. A long search that
+pauses is resumed. If the account refuses the web tools (they can need
+enabling in the Anthropic Console), Tony answers without them and tries
+again an hour later.
+
+**Links.** Send a link and Tony reads the page and sums it up (a line on
+what it is, then the key points). Under the summary: **💾 Save** keeps it
+as a memory note ("Saved link: title (url). summary"), so "what was that
+grammar article?" finds it; **➕ Task** adds "Read: title" to the inbox with
+the link in its notes. Both are plain code and work once each. These offers
+are kept in the `offers` table (migration `0013_offers.sql`, applied).
+
 **Tony's replies.** Everything the brain says in Telegram is a rich
 message written in Telegram's rich markdown. The system prompt tells
 Claude how to lay it out, with two worked examples:

@@ -36,7 +36,8 @@ import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from 
 import { cleanFromCommand } from "./sweep";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
-import { BoardNotReady, postBoard, toggleFromBoard } from "./today-board";
+import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
+import { useOffer } from "./offers";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
@@ -398,6 +399,20 @@ export function getBot(): Bot | undefined {
     }
 
     // An answer to a question Tony asked with buttons ("ch:<n>"), or "Other".
+    // Offers: a task suggested in conversation, or a summarised link. Plain code, no AI.
+    if (payload.startsWith("of:")) {
+      const [, how, idText] = payload.split(":");
+      const outcome = await useOffer(how, Number(idText));
+      await ctx.answerCallbackQuery({ text: outcome.toast }).catch(() => undefined);
+      if (!outcome.used) return;
+      // The tapped button goes; any others on the message stay.
+      const rows = (tapped?.reply_markup?.inline_keyboard ?? [])
+        .map((row) => row.filter((button) => !("callback_data" in button) || button.callback_data !== payload))
+        .filter((row) => row.length > 0);
+      await ctx.editMessageReplyMarkup({ reply_markup: rows.length ? { inline_keyboard: rows } : undefined }).catch(() => undefined);
+      return;
+    }
+
     if (payload.startsWith("ch:")) {
       await ctx.answerCallbackQuery().catch(() => undefined);
       const { pending_choices: pending } = await getSettings();
@@ -483,6 +498,42 @@ export function getBot(): Bot | undefined {
     await logMessage("tony", plain(view.html));
   };
 
+  /** Buttons for what Tony offered: [➕ Make this a task] per offer, and [💾 Save] [➕ Task] for a link. */
+  const offerButtons = async (offerIds: number[], link: string | undefined, fetched: { url: string; title: string }[], reply: string): Promise<InlineKeyboard | undefined> => {
+    const keyboard = new InlineKeyboard();
+    let any = false;
+    if (offerIds.length > 0) {
+      const titles = offerIds.length > 1 ? ((await requireDb().from("offers").select("id, payload").in("id", offerIds)).data ?? []) : [];
+      for (const id of offerIds) {
+        const title = (titles as { id: number; payload: { title?: string } }[]).find((row) => Number(row.id) === id)?.payload.title;
+        keyboard.text(title ? `➕ ${shortLabel(title, 22)}` : "➕ Make this a task", `of:t:${id}`).row();
+        any = true;
+      }
+    }
+    if (link) {
+      const page = fetched.find((item) => item.url === link) ?? fetched[0];
+      let host = link;
+      try {
+        host = new URL(link).hostname.replace(/^www\./, "");
+      } catch {
+        // keep the link as it is
+      }
+      const summary = spokenFromMarkdown(reply).slice(0, 400);
+      const { data, error } = await requireDb()
+        .from("offers")
+        .insert({ kind: "link", payload: { url: link, title: (page?.title ?? host).slice(0, 200), summary } })
+        .select("id")
+        .single();
+      if (error) console.error(`Could not keep the link offer: ${error.message}`);
+      else {
+        const id = (data as { id: number }).id;
+        keyboard.text("💾 Save", `of:s:${id}`).text("➕ Task", `of:k:${id}`);
+        any = true;
+      }
+    }
+    return any ? keyboard : undefined;
+  };
+
   /** The last sentence of a reply, when it is a yes-or-no question ("Shall I move it to 18:00?"). */
   const yesNoQuestion = (reply: string): string | undefined => {
     const last = reply.trim().split("\n").pop()?.trim() ?? "";
@@ -494,7 +545,7 @@ export function getBot(): Bot | undefined {
 
   // One path for typed and spoken messages: the brain, with a safe fallback.
   // Returns what Tony said and whether it was a confirmation of something done.
-  const answer = async (ctx: Context, text: string, options: { note?: string; keepHours?: number } = {}): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
+  const answer = async (ctx: Context, text: string, options: { note?: string; keepHours?: number; link?: string } = {}): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
     // Replying to one of Tony's messages says which task is meant, and keeps that message.
     let context = options.note;
     const repliedTo = ctx.message?.reply_to_message?.message_id;
@@ -511,7 +562,7 @@ export function getBot(): Bot | undefined {
     // as Tony is thinking, which includes waiting out a rate limit.
     const typing = setInterval(() => void ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
     try {
-      const { reply, tools, titles, planId, choices, mediaIds } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
+      const { reply, tools, titles, planId, choices, mediaIds, offerIds, fetched } = await think(text, { channel: "telegram", context }).finally(() => clearInterval(typing));
       // Whatever he was asked before has now been answered or overtaken.
       await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
       if (mediaIds?.length && ctx.chat) {
@@ -535,9 +586,11 @@ export function getBot(): Bot | undefined {
         return { reply, confirmed: false, completed: false };
       }
       const confirmed = tools.some((tool) => MUTATING.includes(tool));
+      // Offers under the reply, acted on in plain code when tapped: a task suggested in conversation,
+      // or a link he sent (now summarised) to save or to turn into a task.
+      let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
       // A yes-or-no question left in the words still gets buttons: he taps, he does not type.
-      const yesNo = choices ? undefined : yesNoQuestion(reply);
-      let keyboard: InlineKeyboard | undefined;
+      const yesNo = choices || keyboard ? undefined : yesNoQuestion(reply);
       if (yesNo) {
         keyboard = new InlineKeyboard().text("Yes", "ch:0").text("No", "ch:1");
         await updateSettings({ pending_choices: { question: yesNo, options: ["Yes", "No"] } });
@@ -669,7 +722,12 @@ export function getBot(): Bot | undefined {
     // A forwarded post is material to read, not something he typed.
     if (ctx.message.forward_origin) return shareItem(ctx);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
-    const { reply } = await answer(ctx, text);
+    // A link: Tony reads the page and sums it up; Save and Task buttons come under the summary.
+    const link = /https?:\/\/[^\s<>"]+/i.exec(text)?.[0]?.replace(/[).,!?]+$/, "");
+    const { reply } = await answer(ctx, text, link ? {
+      link,
+      note: `He sent a link: ${link}. Read it with web_fetch and sum it up: one line on what it is, then the key points as a short list. If he also asked something about it, answer that. Do not add a task or save anything yourself: Save and Task buttons are shown under your reply.`,
+    } : {});
     // "Tell me what's left", "say it": he asked to hear it, so the summary is spoken too.
     if (asksForVoice(text)) {
       const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), "reply", { asked: true });

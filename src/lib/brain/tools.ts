@@ -60,7 +60,23 @@ export const TOOLS: ToolDefinition[] = [
     [],
   ),
   tool("set_reminder", "Extra reminder; due time unchanged.", { task_id: id, at: { type: "string", description: TIME }, reply }, ["task_id", "at"]),
-  tool("remember", "Save a fact about him.", { fact: { type: "string" }, reply }, ["fact"]),
+  tool(
+    "remember",
+    "Save a lasting fact about him (a project, goal, person, preference, habit). One fact per call, as a short line he would agree with.",
+    { fact: { type: "string" }, reply },
+    ["fact"],
+  ),
+  // Talk mode: suggests a task without creating it. He gets a [➕ Make this a task] button; only his tap creates it.
+  tool(
+    "offer_task",
+    "In conversation, when something he said sounds actionable, offer it as a task instead of creating it. Creates nothing.",
+    {
+      title: { type: "string", description: "Short task title" },
+      due_at: { type: "string", description: "YYYY-MM-DDTHH:MM, only if he named a time" },
+      reply: { type: "string", description: "Your conversational reply; the button is added below it" },
+    },
+    ["title", "reply"],
+  ),
   tool("forget", "Delete a memory note.", { id: { type: "integer" }, reply }, ["id"]),
   // Agent mode: not in the spec's seven. Tony proposes; nothing changes until the plan is applied.
   tool(
@@ -286,9 +302,25 @@ export async function runTool(name: string, args: Args, now = new Date()): Promi
     case "remember": {
       const fact = typeof args.fact === "string" ? args.fact.trim().slice(0, 300) : "";
       if (!fact) return fail("fact is required");
+      // Already known (same words, any case): nothing to add.
+      const known = await db.from("memory").select("id, fact").ilike("fact", fact.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(1);
+      if (!known.error && (known.data ?? []).length > 0) return { ok: true, id: (known.data as { id: number }[])[0].id, fact, already_known: true };
       const { data, error } = await db.from("memory").insert({ fact, source: "user" }).select("id").single();
       check("remember", error);
       return { ok: true, id: (data as { id: number }).id, fact };
+    }
+
+    case "offer_task": {
+      const title = typeof args.title === "string" ? args.title.trim().slice(0, 200) : "";
+      if (!title) return fail("title is required");
+      const due = typeof args.due_at === "string" && args.due_at.trim() ? parseLocalDateTime(args.due_at.trim()) : undefined;
+      const { data, error } = await db
+        .from("offers")
+        .insert({ kind: "task", payload: { title, ...(due ? { due_at: due.toISOString() } : {}) } })
+        .select("id")
+        .single();
+      check("offer_task", error);
+      return { ok: true, offer_id: (data as { id: number }).id, offered: title };
     }
 
     case "forget": {

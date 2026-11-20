@@ -88,7 +88,18 @@ export async function respond(text: string, channel: Channel = "telegram", now =
 export async function think(
   text: string,
   options: { channel?: Channel; now?: Date; context?: string } = {},
-): Promise<{ reply: string; tools: string[]; titles: string[]; planId?: number; choices?: { question: string; options: string[] }; mediaIds?: number[] }> {
+): Promise<{
+  reply: string;
+  tools: string[];
+  titles: string[];
+  planId?: number;
+  choices?: { question: string; options: string[] };
+  mediaIds?: number[];
+  /** Tasks offered in conversation, each shown with a [➕ Make this a task] button. */
+  offerIds?: number[];
+  /** Pages Tony read with web_fetch (a link he sent). */
+  fetched?: { url: string; title: string }[];
+}> {
   const { channel = "telegram", now = new Date(), context: note } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
@@ -98,6 +109,10 @@ export async function think(
   let choices: { question: string; options: string[] } | undefined;
   // Saved photos or files he asked to see again.
   let mediaIds: number[] | undefined;
+  const offerIds: number[] = [];
+  // Web pages behind the answer, listed under it as links.
+  const sources = new Map<string, string>();
+  const fetched: { url: string; title: string }[] = [];
   const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
   await logMessage("user", text, channel);
 
@@ -113,7 +128,9 @@ export async function think(
   const taskIds = new Set(context.tasks.map((task) => task.id));
   let reply: string | undefined;
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const answer = await chat({ system, messages, tools: TOOLS });
+    const answer = await chat({ system, messages, tools: TOOLS, web: true });
+    for (const source of answer.sources ?? []) if (!sources.has(source.url)) sources.set(source.url, source.title);
+    for (const page of answer.fetched ?? []) if (!fetched.some((known) => known.url === page.url)) fetched.push(page);
     if (!answer.tool_calls) {
       reply = tidyReply(answer.content ?? "", [...taskIds]);
       break;
@@ -136,6 +153,7 @@ export async function think(
           if (call.function.name === "plan") planId = Number((outcome as { plan_id?: unknown }).plan_id);
           if (call.function.name === "media" && Array.isArray((outcome as { media_ids?: unknown }).media_ids)) mediaIds = (outcome as unknown as { media_ids: number[] }).media_ids;
           if (call.function.name === "ask") choices = outcome as unknown as { question: string; options: string[] };
+          if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
           if (typeof args.reply === "string" && args.reply.trim()) prepared = args.reply;
@@ -168,6 +186,9 @@ export async function think(
   }
 
   reply ||= "My apologies, sir. I lost my thread there; could you say that once more?";
+  // Cited web pages, as links under the answer (a page he sent himself is not listed back to him).
+  const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
+  if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched };
 }
