@@ -128,10 +128,12 @@ export async function chatWithClaude(
       system: [
         { type: "text", text: system.stable, cache_control: { type: "ephemeral" } },
         ...(system.live.trim() ? [{ type: "text" as const, text: system.live }] : []),
+        // Thinking models refuse a forced tool_choice, so the one tool is offered alone and asked for.
+        ...(force ? [{ type: "text" as const, text: `Answer now by calling the ${force} tool. Do not reply in text.` }] : []),
       ],
-      tools: [...toTools(tools), ...(withWeb ? WEB_TOOLS : [])],
+      tools: force ? toTools(tools.filter((tool) => tool.function.name === force)) : [...toTools(tools), ...(withWeb ? WEB_TOOLS : [])],
       // `force` names a tool the model must call (used when a structured answer is needed).
-      tool_choice: force ? { type: "tool", name: force } : { type: "auto" },
+      tool_choice: { type: "auto" },
       messages: conversation,
     });
 
