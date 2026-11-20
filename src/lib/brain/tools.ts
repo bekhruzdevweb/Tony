@@ -12,6 +12,7 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
+import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
 const TIME = "YYYY-MM-DDTHH:MM";
 /** Lets the model confirm in the same call, so most messages need one model call, not two. */
@@ -38,7 +39,22 @@ const tool = (name: string, description: string, properties: Record<string, unkn
 
 /** The seven tools from the spec: everything Tony can do. */
 export const TOOLS: ToolDefinition[] = [
-  tool("add_task", "Create a task.", { ...taskFields, attach_shared: attach, reply }, ["title"]),
+  tool(
+    "add_task",
+    "Create a task.",
+    { ...taskFields, subtasks: { type: "array", items: { type: "string" }, description: "Its parts, when his request lists them (\"stories about X, Y and Z\" → X, Y, Z)" }, attach_shared: attach, reply },
+    ["title"],
+  ),
+  tool(
+    "subtask",
+    "Add, tick, untick or remove a task's parts (subtasks).",
+    {
+      task_id: id,
+      action: { type: "string", enum: ["add", "tick", "untick", "remove"] },
+      titles: { type: "array", items: { type: "string" }, description: "For add: the new parts. For the others: the part, as he named it." },
+    },
+    ["task_id", "action", "titles"],
+  ),
   tool(
     "update_task",
     "Change or drop a task.",
@@ -245,6 +261,9 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       check("add_task", error);
       const task = data as Task;
       if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
+      // Its parts, as subtasks (never as a list in the notes).
+      const parts = Array.isArray(args.subtasks) ? args.subtasks.map(String).filter((t) => t.trim()) : [];
+      if (parts.length) await addSubtasks(task.id, parts);
       const attached = await attachShared(args, task.id);
       return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), ...(attached ? { attached } : {}) };
     }
@@ -367,6 +386,32 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const { data, error } = await db.from("memory").insert({ fact, source: "user" }).select("id").single();
       check("remember", error);
       return { ok: true, id: (data as { id: number }).id, fact };
+    }
+
+    case "subtask": {
+      const task = await loadTask(args.task_id);
+      if (!task) return fail(`no task #${args.task_id}`);
+      const titles = Array.isArray(args.titles) ? args.titles.map(String).filter((t) => t.trim()) : [];
+      if (titles.length === 0) return fail("titles are required");
+      if (args.action === "add") {
+        const all = await addSubtasks(task.id, titles);
+        return { ok: true, task_id: task.id, task: task.title, subtasks: progress(all) };
+      }
+      const current = (await subtasksFor([task.id])).get(task.id) ?? [];
+      const missing: string[] = [];
+      let after = current;
+      for (const words of titles) {
+        const part = findSubtask(after, words);
+        if (!part) {
+          missing.push(words);
+          continue;
+        }
+        if (args.action === "remove") await removeSubtask(part.id);
+        else after = (await setSubtaskDone(part.id, args.action === "tick"))?.subtasks ?? after;
+        if (args.action === "remove") after = after.filter((s) => s.id !== part.id);
+      }
+      if (missing.length === titles.length) return fail(`"${task.title}" has no part called ${missing.map((m) => `"${m}"`).join(", ")}; its parts are ${current.map((s) => s.title).join(", ") || "none"}`);
+      return { ok: true, task_id: task.id, task: task.title, subtasks: progress(after), all_done: allDone(after) };
     }
 
     case "save_link": {

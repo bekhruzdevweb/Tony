@@ -48,6 +48,9 @@ export type AppMedia = {
   note: string | null;
 };
 
+/** One part of a task (a subtask). */
+export type AppSubtask = { id: number; task_id: number; title: string; done: boolean; position: number };
+
 export type AppState = {
   now: string;
   tasks: Task[];
@@ -56,6 +59,8 @@ export type AppState = {
   messages: AppMessage[];
   plans: AppPlan[];
   media: AppMedia[];
+  /** Tasks' parts, ordered. */
+  subtasks: AppSubtask[];
   settings: AppSettings;
   status: AppStatus;
 };

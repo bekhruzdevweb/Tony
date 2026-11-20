@@ -39,6 +39,7 @@ import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } fr
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
+import { allDone, progress, setSubtaskDone } from "./subtasks";
 import { fetchTitle } from "./links";
 import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
@@ -466,6 +467,32 @@ export function getBot(): Bot | undefined {
     }
 
     // An answer to a question Tony asked with buttons ("ch:<n>"), or "Other".
+    // A part of a task, ticked from the board. Plain code. Ticking the last part asks about the task.
+    if (payload.startsWith("st:")) {
+      const id = Number(payload.slice(3));
+      const result = await setSubtaskDone(id, true).catch((error) => (console.error("Subtask tick failed:", error), undefined));
+      if (!result) {
+        await ctx.answerCallbackQuery({ text: "That part is gone, sir." }).catch(() => undefined);
+        return;
+      }
+      const part = result.subtasks.find((s) => s.id === id);
+      await ctx.answerCallbackQuery({ text: `✓ ${part?.title ?? "Done"} (${progress(result.subtasks)})`.slice(0, 190) }).catch(() => undefined);
+      if (allDone(result.subtasks) && chatId !== undefined) {
+        const parent = (await requireDb().from("tasks").select("title, status").eq("id", result.taskId).maybeSingle()).data as { title: string; status: string } | null;
+        if (parent && OPEN_STATUSES.includes(parent.status as Task["status"])) {
+          await sendMarkdown(bot, chatId, `Every part of **${parent.title}** is done, sir. Mark the task itself done?`, { keyboard: completeKeyboard(result.taskId) });
+        }
+      }
+      return;
+    }
+
+    // "Not yet" after "mark the task done?": nothing changes; the buttons go.
+    if (payload === "keep") {
+      await ctx.answerCallbackQuery({ text: "Very good, sir." }).catch(() => undefined);
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      return;
+    }
+
     // "Keep both" under a clash warning: nothing changes; the buttons go.
     if (payload === "clash:keep") {
       await ctx.answerCallbackQuery({ text: "Both stay, sir." }).catch(() => undefined);
@@ -603,6 +630,9 @@ export function getBot(): Bot | undefined {
     return any ? keyboard : undefined;
   };
 
+  /** [✓ Mark done] [Not yet] for a task whose parts are all ticked. */
+  const completeKeyboard = (taskId: number) => new InlineKeyboard().text("✓ Mark done", `done:${taskId}`).text("Not yet", "keep");
+
   /** The last sentence of a reply, when it is a yes-or-no question ("Shall I move it to 18:00?"). */
   const yesNoQuestion = (reply: string): string | undefined => {
     const last = reply.trim().split("\n").pop()?.trim() ?? "";
@@ -677,6 +707,8 @@ export function getBot(): Bot | undefined {
       // Offers under the reply, acted on in plain code when tapped: a task suggested in conversation,
       // or a link he sent (now summarised) to save or to turn into a task.
       let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
+      // Every part ticked: [✓ Mark done] [Not yet], never done without asking.
+      if (thought.askComplete) keyboard = completeKeyboard(thought.askComplete.taskId);
       // A clash the change created: move it to the next free hour, or keep both. Plain code.
       if (clash) {
         keyboard ??= new InlineKeyboard();

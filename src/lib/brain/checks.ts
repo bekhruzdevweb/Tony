@@ -28,13 +28,15 @@ export function isDuplicateReminder(waiting: { fire_at: string }[], at: Date): b
 
 /** One change Tony made, as read back from the database after the change. */
 export type DoneAction = {
-  tool: "add_task" | "update_task" | "complete_task" | "set_reminder";
+  tool: "add_task" | "update_task" | "complete_task" | "set_reminder" | "subtask";
   title: string;
   /** The task's stored state after the change. */
   status: string;
   due_at: string | null;
   /** For a heads-up reminder: when it fires. */
   reminder_at?: string;
+  /** Its parts' progress, "2/3", when it has subtasks. */
+  parts?: string;
 };
 
 /**
@@ -43,11 +45,13 @@ export type DoneAction = {
  * requests gets each one listed.
  */
 export function confirmationFor(actions: DoneAction[], now: Date): string {
-  const line = (action: DoneAction) => {
+  const line = (action: DoneAction) => `${baseLine(action)}${action.parts && action.tool !== "subtask" ? ` · ${action.parts} parts` : ""}`;
+  const baseLine = (action: DoneAction) => {
     const title = `**${action.title}**`;
     if (action.tool === "complete_task" || action.status === "done") return `✓ ${title} done`;
     if (action.status === "dropped") return `✓ ${title} removed`;
     if (action.status === "skipped") return `✓ ${title} skipped`;
+    if (action.tool === "subtask" && action.parts) return `☑ ${title}: ${action.parts} parts done`;
     if (action.reminder_at) {
       const at = new Date(action.reminder_at);
       return `🔔 ${title}: reminder at **${formatTime(at)}**${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useRef, useState, type ReactNode } from "react";
-import type { AppProject } from "@/lib/app-types";
+import type { AppProject, AppSubtask } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime, localDate } from "@/lib/time";
 
@@ -162,6 +162,13 @@ export type RowActions = {
   remove: (task: Task) => void;
   /** Opens the long-press menu (phones). */
   menu: (task: Task) => void;
+  /** A task's parts (subtasks), ticking one, and adding one. */
+  parts: (taskId: number) => AppSubtask[];
+  tickPart: (part: AppSubtask) => void;
+  addPart: (taskId: number, title: string) => void;
+  /** The task whose "Add subtask" field is open, if any. */
+  adding: number | null;
+  setAdding: (taskId: number | null) => void;
 };
 export const RowActionsContext = createContext<RowActions | null>(null);
 
@@ -205,6 +212,7 @@ export function TaskRow(props: {
   const chip = due && when !== "none" ? dateChip(due, now, Boolean(overdue) && !done, when === "full") : undefined;
   const ring = PRIORITY[task.priority] ?? PRIORITY[4];
   const description = task.notes?.split("\n")[0];
+  const parts = actions?.parts(task.id) ?? [];
 
   // Long-press (touch): the row's menu, as Todoist does on phones.
   const startPress = (event: React.PointerEvent) => {
@@ -218,7 +226,8 @@ export function TaskRow(props: {
   const endPress = () => clearTimeout(pressed.current);
 
   return (
-    <li className="group relative flex items-start border-b border-hairline" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress} onContextMenu={(event) => actions && event.preventDefault()}>
+    <li className="group relative border-b border-hairline" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress} onContextMenu={(event) => actions && event.preventDefault()}>
+      <div className="flex items-start">
       <button
         type="button"
         aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
@@ -252,6 +261,12 @@ export function TaskRow(props: {
           {task.repeat_rule && <span className="inline-flex items-center gap-1 text-secondary">{Icon.repeat}{task.repeat_rule}</span>}
           {task.persistent && !done && <span className="inline-flex items-center gap-1 text-accent">{Icon.bell}</span>}
           {task.status === "in_progress" && <span className="font-medium text-primary">Started</span>}
+          {parts.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-secondary" aria-label={`${parts.filter((p) => p.done).length} of ${parts.length} subtasks done`}>
+              <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M6 4v10a3 3 0 0 0 3 3h9M15 14l3 3-3 3" /></svg>
+              {parts.filter((p) => p.done).length}/{parts.length}
+            </span>
+          )}
           {task.duration_minutes ? <span className="text-secondary">{formatMinutes(task.duration_minutes)}</span> : null}
           {attached && <span aria-label="Has an attachment">📎</span>}
           {badge && <span className="rounded-full bg-overdue/12 px-2 py-px font-medium text-overdue">{badge}</span>}
@@ -275,7 +290,64 @@ export function TaskRow(props: {
         )}
         {handle}
       </div>
+      </div>
+      {actions && (parts.length > 0 || actions.adding === task.id) && <Parts task={task} parts={parts} actions={actions} />}
     </li>
+  );
+}
+
+/** A task's parts, nested under it with their own small circles, and "+ Add subtask". */
+function Parts({ task, parts, actions }: { task: Task; parts: AppSubtask[]; actions: RowActions }) {
+  const [draft, setDraft] = useState("");
+  const adding = actions.adding === task.id;
+  const submit = () => {
+    const title = draft.trim();
+    if (title) actions.addPart(task.id, title);
+    setDraft("");
+  };
+  return (
+    <ul className="ml-10 pb-2 md:ml-9">
+      {parts.map((part) => (
+        <li key={part.id} className="flex items-center gap-2 py-1">
+          <button
+            type="button"
+            aria-label={part.done ? `Untick ${part.title}` : `Tick ${part.title}`}
+            onClick={() => actions.tickPart(part)}
+            className={`grid size-4 shrink-0 place-items-center rounded-full border-[1.5px] ${part.done ? "border-secondary bg-secondary text-white" : "border-p4"}`}
+          >
+            {part.done && (
+              <svg viewBox="0 0 24 24" className="size-2.5" fill="none" stroke="currentColor" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round">
+                <path d="m6 12.5 4 4 8-9" />
+              </svg>
+            )}
+          </button>
+          <span className={`text-[13.5px] ${part.done ? "text-secondary line-through" : ""}`}>{part.title}</span>
+        </li>
+      ))}
+      {adding ? (
+        <li className="flex items-center gap-2 py-1">
+          <span className="size-4 shrink-0 rounded-full border-[1.5px] border-dashed border-p4" />
+          <input
+            autoFocus
+            className="min-w-0 flex-1 border-b border-primary/40 bg-transparent text-[13.5px] outline-none"
+            placeholder="Subtask name"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+              if (event.key === "Escape") actions.setAdding(null);
+            }}
+            onBlur={() => (submit(), actions.setAdding(null))}
+          />
+        </li>
+      ) : (
+        <li>
+          <button type="button" onClick={() => actions.setAdding(task.id)} className="flex h-7 items-center gap-2 text-[13px] text-secondary hover:text-primary">
+            <span className="text-primary">+</span> Add subtask
+          </button>
+        </li>
+      )}
+    </ul>
   );
 }
 

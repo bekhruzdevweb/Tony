@@ -6,6 +6,7 @@ import type { RichMessage } from "./rich";
 import { requireDb } from "./db";
 import { esc, i } from "./html";
 import { splitToday } from "./today";
+import { progress, subtasksFor } from "./subtasks";
 import { finishTask } from "./recurrence";
 import { scheduleReminder } from "./reminders";
 import { getSettings, updateSettings } from "./settings";
@@ -111,6 +112,10 @@ export async function boardView(day: Date): Promise<Board> {
   const { carried, timed, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
 
   const bell = (task: Task) => (task.persistent ? " 🔔" : "");
+  // Each task's parts: "Post stories 0/3", with the parts listed under it.
+  const parts = await subtasksFor([...carried, ...timed, ...done].map((task) => task.id));
+  const count = (task: Task) => (parts.get(task.id)?.length ? ` ${progress(parts.get(task.id)!)}` : "");
+  const partLines = (task: Task) => (parts.get(task.id) ?? []).map((s) => `      ${s.done ? "☑" : "☐"} ${s.done ? `<s>${esc(s.title)}</s>` : esc(s.title)}`);
   // A done task keeps its own time; a repeating one has already rolled to its next date, so it shows when it was done.
   const doneMoment = (task: Task) => {
     const due = task.due_at ? new Date(task.due_at) : undefined;
@@ -119,12 +124,12 @@ export async function boardView(day: Date): Promise<Board> {
   const doneAt = (task: Task) => formatTime(doneMoment(task));
   done.sort((x, y) => doneMoment(x).getTime() - doneMoment(y).getTime());
   const lines = [
-    ...carried.map((task) => {
+    ...carried.flatMap((task) => {
       const at = new Date(task.due_at!);
-      return `☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${bell(task)}`;
+      return [`☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${count(task)}${bell(task)}`, ...partLines(task)];
     }),
-    ...timed.map((task) => `☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${bell(task)}`),
-    ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>`),
+    ...timed.flatMap((task) => [`☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${count(task)}${bell(task)}`, ...partLines(task)]),
+    ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>${count(task)}`),
   ];
   // The first line is what the pinned banner shows, so it is the short one.
   // The pinned banner is a separate one-line message (see postBoard), so the board leads with the date.
@@ -144,11 +149,16 @@ export async function boardView(day: Date): Promise<Board> {
     return `${buttons[n].mark} ${same && at ? `${shortLabel(buttons[n].task.title, BUTTON_ROOM - 6)} ${at}` : labels[n]}`;
   };
   const keyboard = new InlineKeyboard();
-  buttons.forEach(({ task }, n) => {
-    keyboard.text(label(n), `td:${task.id}`);
+  // A task with open parts gets a button per part instead (the task follows when every part is done).
+  const flat = buttons.flatMap(({ task }, n) => {
+    const open = (parts.get(task.id) ?? []).filter((s) => !s.done);
+    return open.length && buttons[n].mark === "☐" ? open.map((s) => ({ text: `☐ ${shortLabel(s.title)}`, data: `st:${s.id}` })) : [{ text: label(n), data: `td:${task.id}` }];
+  }).slice(0, MAX_BUTTONS);
+  flat.forEach((button, n) => {
+    keyboard.text(button.text, button.data);
     if (n % 2 === 1) keyboard.row();
   });
-  if (buttons.length % 2 === 1) keyboard.row();
+  if (flat.length % 2 === 1) keyboard.row();
   // Telegram has no long-press menu on a message, so adding lives in a last row of its own.
   keyboard.text("➕ Add", "td:add");
   if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
@@ -158,25 +168,31 @@ export async function boardView(day: Date): Promise<Board> {
   // The rich form. Native checkboxes show what is done; ticking happens on
   // the buttons below the list, one per open task, because a tap on the
   // checkbox itself is not reported to the bot.
-  const item = (text: string, checked: boolean) => ({
-    blocks: [{ type: "paragraph" as const, text }],
-    has_checkbox: true as const,
-    ...(checked ? { is_checked: true as const } : {}),
-  });
+  type Item = { blocks: RichBlock[]; has_checkbox: true; is_checked?: true };
+  const item = (text: string, checked: boolean, task?: Task): Item => {
+    // A task's parts sit under it as their own checkbox list.
+    const nested = task ? (parts.get(task.id) ?? []) : [];
+    const blocks: RichBlock[] = [{ type: "paragraph", text }];
+    if (nested.length) blocks.push({ type: "list", items: nested.map((s) => ({ blocks: [{ type: "paragraph", text: s.title }], has_checkbox: true as const, ...(s.done ? { is_checked: true as const } : {}) })) } as RichBlock);
+    return { blocks, has_checkbox: true, ...(checked ? { is_checked: true as const } : {}) };
+  };
   const items = [
     ...carried.map((task) => {
       const at = new Date(task.due_at!);
-      return item(`⚠️ ${weekday(at)} ${formatTime(at)} ${task.title}${bell(task)}`, false);
+      return item(`⚠️ ${weekday(at)} ${formatTime(at)} ${task.title}${count(task)}${bell(task)}`, false, task);
     }),
-    ...timed.map((task) => item(`${formatTime(new Date(task.due_at!))} ${task.title}${bell(task)}`, false)),
-    ...done.map((task) => item(`${doneAt(task)} ${task.title}`, true)),
+    ...timed.map((task) => item(`${formatTime(new Date(task.due_at!))} ${task.title}${count(task)}${bell(task)}`, false, task)),
+    ...done.map((task) => item(`${doneAt(task)} ${task.title}${count(task)}`, true)),
   ];
   const openTasks = [...carried, ...timed].slice(0, MAX_BUTTONS);
   const openLabels = openTasks.map((task) => shortLabel(task.title));
-  const tickButtons: RichButton[] = openTasks.map((task, n) => {
+  const tickButtons: RichButton[] = openTasks.flatMap((task, n): RichButton[] => {
+    // A task with open parts: a ✓ per part; ticking the last one asks about the task.
+    const open = (parts.get(task.id) ?? []).filter((s) => !s.done);
+    if (open.length) return open.map((s) => ({ text: `✓ ${shortLabel(s.title)}`, callback_data: `st:${s.id}` }));
     const same = openLabels.filter((other) => other === openLabels[n]).length > 1;
-    return { text: `✓ ${same ? `${shortLabel(task.title, BUTTON_ROOM - 6)} ${formatTime(new Date(task.due_at!))}` : openLabels[n]}`, callback_data: `td:${task.id}` };
-  });
+    return [{ text: `✓ ${same ? `${shortLabel(task.title, BUTTON_ROOM - 6)} ${formatTime(new Date(task.due_at!))}` : openLabels[n]}`, callback_data: `td:${task.id}` }];
+  }).slice(0, MAX_BUTTONS);
   const rows: RichBlock[] = [];
   for (let n = 0; n < tickButtons.length; n += 2) rows.push({ type: "buttons", buttons: tickButtons.slice(n, n + 2) });
   const lastRow: RichButton[] = [{ text: "➕ Add", callback_data: "td:add" }];

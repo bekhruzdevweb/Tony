@@ -1,6 +1,7 @@
 import "server-only";
 import { buildPlan } from "../planner";
 import { dayFromText } from "../schedule";
+import { progress, subtasksFor } from "../subtasks";
 import { clashSentence, clashesWith, confirmationFor, freeOptions, isLinkTask, latestMessage, needsDeepModel, nextFreeSlot, recentReminderNote, type DoneAction } from "./checks";
 import { env } from "../env";
 import { formatTime, localDate, parseLocalDateTime } from "../time";
@@ -81,6 +82,7 @@ async function loadContext() {
     waiting: recentNote(settings.data as { pending_note: string | null; pending_note_at: string | null } | null),
     habits,
     prayers: prayers || undefined,
+    subtasks: await subtasksFor(openTasks.map((task) => task.id)),
   };
 }
 
@@ -114,6 +116,8 @@ export async function think(
   fetched?: { url: string; title: string }[];
   /** A clash the changes created, for [Move …] [Keep both] buttons. */
   clash?: Clash;
+  /** Every part of this task was just ticked: ask before completing it. */
+  askComplete?: { taskId: number; title: string };
 }> {
   const { channel = "telegram", now = new Date(), context: note } = options;
   const tools: string[] = [];
@@ -151,6 +155,7 @@ export async function think(
   const changes = new Map<number, { tool: DoneAction["tool"]; reminder_at?: string }>();
   const saved: string[] = [];
   let failed = false;
+  let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answer = await chat({ system, messages, tools: TOOLS, web: true, model });
@@ -191,7 +196,11 @@ export async function think(
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
             const reminderAt = (outcome as { reminder_at?: unknown }).reminder_at;
-            changes.set(touchedId, { tool: call.function.name as DoneAction["tool"], ...(typeof reminderAt === "string" ? { reminder_at: reminderAt } : {}) });
+            const tool = call.function.name as DoneAction["tool"];
+            // A task added with its parts in the same turn stays an "add".
+            if (!(tool === "subtask" && changes.has(touchedId))) changes.set(touchedId, { tool, ...(typeof reminderAt === "string" ? { reminder_at: reminderAt } : {}) });
+            // Every part ticked: ask before marking the task itself done.
+            if (call.function.name === "subtask" && (outcome as { all_done?: unknown }).all_done === true) askComplete = { taskId: touchedId, title: String((outcome as { task?: unknown }).task ?? "") };
           }
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
@@ -254,14 +263,18 @@ export async function think(
         return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched };
       }
     }
+    const parts = await subtasksFor([...changes.keys()]);
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
-      return task ? [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}) }] : [];
+      const list = parts.get(id);
+      return task ? [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...(list?.length ? { parts: progress(list) } : {}) }] : [];
     });
     const confirmation = done.length ? confirmationFor(done, now) : "";
     // If something failed, the model's own words explain it; the confirmation shows what did happen.
     reply = [failed && reply ? reply : undefined, confirmation].filter(Boolean).join("\n\n");
     clash = await findClash([...stored.values()], now);
+    if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
+    if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
     if (clash) reply = `${reply}\n\n⚠️ Sir, ${clash.sentence}${clash.suggestAt ? ": move one?" : "."}`;
   }
   if (saved.length > 0) {
@@ -274,10 +287,10 @@ export async function think(
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete };
 }
 
-const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder"]);
+const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask"]);
 
 /** A clash a change created, and where the changed task could go instead. */
 export type Clash = { taskId: number; title: string; sentence: string; suggestAt?: Date };

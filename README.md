@@ -326,7 +326,7 @@ and light tasks from the afternoon, with a 10-minute gap between things.
   20:00, or under two free hours left) `/plan` plans tomorrow and says so;
   a full day rolls on to the next. Overdue tasks get slots, and any it
   cannot place get **→ Tomorrow** / **Drop** and **Move all to tomorrow**.
-- Migrations `0018_plan_lead.sql` and `0019_task_drafts.sql`.
+- Migrations `0018_plan_lead.sql` and `0019_task_drafts.sql`; subtasks need `0020_subtasks.sql`.
 
 **Tony's replies.** Everything the brain says in Telegram is a rich
 message written in Telegram's rich markdown. The system prompt tells
@@ -462,6 +462,24 @@ fallback off). Orpheus takes bracketed vocal directions, added only to what
 is sent to it: `[calm]` from 21:00 to 07:00, `[cheerful]` for the morning
 brief and a task just completed. ElevenLabs is never sent one, and anything
 in square brackets is removed from the words before they go to it.
+
+### Subtasks
+
+A task can have parts. When a request lists them ("stories about the app,
+the club and the grammar series", "presentation: slides, examples, quiz"),
+Tony saves them as subtasks of the task, not as notes, and keeps every
+detail you gave in the first message without adding any of his own. Say
+"I finished the slides" and he ticks that part.
+
+- The `/today` board and reminders show the progress ("Post stories 1/3")
+  with the parts listed under the task, and a ✓ button for each open part.
+- When the last part is ticked, Tony asks before marking the task itself
+  done: [✓ Mark done] [Not yet].
+- In the app, parts sit under their task with their own circles, the
+  progress next to the date, and "+ Add subtask" (also in the long-press
+  menu).
+- Lists already written in a task's notes were moved into subtasks once,
+  on the first tick after this change.
 
 ## Tony's brain
 

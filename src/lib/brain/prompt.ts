@@ -44,6 +44,8 @@ Rules:
 - A photo or file he asks for is sent by calling media find; never say "here it is" yourself. If nothing matches, say so.
 - Never state a time or claim a change yourself: after your tool calls, Tony confirms what is really stored. If a tool fails, say plainly what did not happen.
 - Moving or rescheduling a task (later, another day, "remind me again in 20 minutes") is update_task with the new due_at, not a new task and not an extra reminder. set_reminder is only for an extra heads-up before the task's own time.
+- Take every detail from his first message into the task (who it is for, where, what it covers: "for international students"); never add details he did not give.
+- When a request lists parts ("stories about X, Y and Z", "presentation: slides, examples, quiz"), pass them as subtasks of one task, never as notes. "I did the quiz" ticks that part (subtask tick); never complete the whole task unless he says so.
 - Every add_task gets duration: his figure, or your honest estimate in minutes (a call 15, a lesson 60).
 - Several tasks in one message: one add_task each. Give each the time he named; if he named none, leave due_at out (Tony then proposes a free slot for each). Never ask one shared time for all of them.
 - "Save this" (with a link in his message or in what he just shared): call save_link at once; ask nothing. A saved link or note never gets a date unless he gives one: it goes to the inbox.
@@ -127,7 +129,7 @@ function reminderNote(task: Task, reminders: ReminderFact[], now: Date): string 
   return notes.length ? notes.join(", ") : undefined;
 }
 
-export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminders?: ReminderFact[]): string {
+export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminders?: ReminderFact[], subtaskList?: { title: string; done: boolean }[]): string {
   const parts = [`#${task.id} ${task.title}`];
   parts.push(task.due_at ? formatDue(new Date(task.due_at), now) : "inbox, no date");
   if (task.status === "in_progress") parts.push("started");
@@ -139,6 +141,7 @@ export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminder
   if (project) parts.push(project.name);
   const note = reminders ? reminderNote(task, reminders, now) : undefined;
   if (note) parts.push(note);
+  if (subtaskList?.length) parts.push(`parts ${subtaskList.filter((s) => s.done).length}/${subtaskList.length}: ${subtaskList.map((s) => `${s.done ? "☑" : "☐"} ${s.title}`).join("; ")}`);
   return parts.join(" | ");
 }
 
@@ -199,6 +202,8 @@ export function buildSystemPrompt(input: {
   habits?: string;
   /** Today's prayer times, "Fajr 05:40, Dhuhr 12:09, ...". */
   prayers?: string;
+  /** Each task's parts. */
+  subtasks?: Map<number, { title: string; done: boolean }[]>;
 }): SystemPrompt {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
@@ -224,7 +229,7 @@ export function buildSystemPrompt(input: {
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
-    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders)).join("\n") : "(none)",
+    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id))).join("\n") : "(none)",
   };
   return { stable: STABLE, live: LIVE.replace(/\{(\w+)\}/g, (whole, key: string) => fill[key] ?? whole) };
 }

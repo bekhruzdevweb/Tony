@@ -3,6 +3,7 @@ import type { AppMemory, AppMessage, AppPlan, AppProject, AppState } from "./app
 import { getBot } from "./bot";
 import { requireDb } from "./db";
 import { mediaForApp } from "./media";
+import { subtasksFor } from "./subtasks";
 import { env } from "./env";
 import { getClockStatus, getSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
@@ -31,6 +32,7 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
   const shown = [...(open.data as Task[]), ...(closed.data as Task[])];
   // Attachments are a nicety: if they cannot be read, the tasks still load.
   const media = await mediaForApp(shown.map((task) => task.id), now).catch((error) => (console.error("App media failed:", error), []));
+  const parts = await subtasksFor(shown.map((task) => task.id));
 
   const bot = getBot();
   let botUsername: string | null = null;
@@ -47,6 +49,7 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
     now: now.toISOString(),
     tasks: shown,
     media,
+    subtasks: [...parts.values()].flat(),
     projects: projects.data as AppProject[],
     memory: memory.data as AppMemory[],
     messages: (messages.data as AppMessage[]).reverse(),

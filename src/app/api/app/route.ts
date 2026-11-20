@@ -7,6 +7,7 @@ import { refreshBoard } from "@/lib/today-board";
 import { think } from "@/lib/brain";
 import { runTool } from "@/lib/brain/tools";
 import { rescheduleOverdue } from "@/lib/reschedule";
+import { addSubtasks, allDone, removeSubtask, setSubtaskDone } from "@/lib/subtasks";
 import { requireDb } from "@/lib/db";
 import { logMessage } from "@/lib/messages";
 import { applyPlan, buildPlan, dismissPlan } from "@/lib/planner";
@@ -131,6 +132,24 @@ export async function POST(request: Request) {
           else patch.persistent_schedule = [...new Set(steps)].sort((a, b) => a - b);
         }
         if (!problem && Object.keys(patch).length > 0) await updateSettings(patch);
+        break;
+      }
+
+      // A task's parts, from the app: add, tick or untick, remove. Plain code.
+      case "add_subtask": {
+        const title = typeof body.title === "string" ? body.title.trim() : "";
+        if (!title || !Number.isFinite(Number(body.task_id))) problem = "A part needs a title";
+        else await addSubtasks(Number(body.task_id), [title]);
+        break;
+      }
+      case "tick_subtask": {
+        const result = await setSubtaskDone(Number(body.id), body.done !== false);
+        if (!result) problem = "That part is gone";
+        else if (body.done !== false && allDone(result.subtasks)) reply = "Every part is done, sir. Tick the task itself when you are ready.";
+        break;
+      }
+      case "remove_subtask": {
+        await removeSubtask(Number(body.id));
         break;
       }
 

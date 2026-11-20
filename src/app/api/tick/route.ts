@@ -4,6 +4,7 @@ import { getBot } from "@/lib/bot";
 import { runBriefs } from "@/lib/briefs";
 import { runCoach } from "@/lib/coach";
 import { ensurePrayers } from "@/lib/prayer";
+import { moveNoteListsOnce } from "@/lib/subtasks";
 import { runSuggestions } from "@/lib/suggest";
 import { runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
         await runCoach(bot, chatId, settings, now).catch((error) => console.error("Coach failed:", error));
       },
     });
+    // Once: lists written into tasks' notes become subtasks.
+    await moveNoteListsOnce().catch((error) => console.error("Moving note lists failed:", error));
     // Prayer times: once a day from 00:05 (a failed fetch is tried again next minute).
     await ensurePrayers().catch((error) => console.error("Prayer times failed:", error));
     // A reminder, a brief or a rolled-over task may have changed today's list.

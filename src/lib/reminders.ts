@@ -7,6 +7,7 @@ import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { isFreeAt } from "./brain/checks";
+import { progress, subtasksFor } from "./subtasks";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
@@ -247,6 +248,11 @@ export async function runTick(
     // A "Move to" offer is only made for a time that is actually free.
     const isFree = chained && attempt === 2 ? await freeTimes(task.id) : undefined;
     const message = prayer ? prayerReminder(task, reminder.kind === "extra") : chained ? persistentReminder(task, attempt, now, nextAt, isFree) : dueReminder(task);
+    // A task with parts: "Post stories 1/3" and the parts still to do.
+    if (!prayer) {
+      const list = (await subtasksFor([task.id])).get(task.id) ?? [];
+      if (list.length) message.text = `${message.text}\n${i(`${progress(list)} done`)}\n${list.map((s) => `${s.done ? "☑" : "☐"} ${esc(s.title)}`).join("\n")}`;
+    }
     // Only the first reminder carries the attachment; later nudges are plain text.
     const attached = attempt === 0 ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;

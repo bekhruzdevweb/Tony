@@ -109,6 +109,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
 
   // Row actions (hover on a wide screen, long-press on a phone): plain updates, no AI.
   const [rowMenu, setRowMenu] = useState<Task | null>(null);
+  const [addingPart, setAddingPart] = useState<number | null>(null);
   useEffect(() => (rowMenu ? pushBack(() => setRowMenu(null)) : undefined), [rowMenu]);
   const redate = useCallback(
     (task: Task, choice: "today" | "tomorrow" | "next-week" | "none") => {
@@ -136,6 +137,16 @@ export function TonyApp({ initial }: { initial: AppState }) {
       haptic("tap");
       setRowMenu(task);
     },
+    parts: (taskId) => state.subtasks.filter((part) => part.task_id === taskId).sort((a, b) => a.position - b.position || a.id - b.id),
+    tickPart: (part) => {
+      haptic(part.done ? "tap" : "success");
+      void act("tick_subtask", { id: part.id, done: !part.done }, (s) => ({ ...s, subtasks: s.subtasks.map((p) => (p.id === part.id ? { ...p, done: !part.done } : p)) })).then((result) => {
+        if (result.ok && result.reply) say(result.reply);
+      });
+    },
+    addPart: (taskId, title) => void act("add_subtask", { task_id: taskId, title }),
+    adding: addingPart,
+    setAdding: setAddingPart,
   };
 
   const reschedule = async (to: "today" | "tomorrow") => {
@@ -246,6 +257,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
           onClose={() => setRowMenu(null)}
           onEdit={() => (setRowMenu(null), setSheet({ task: rowMenu }))}
           onComment={() => (setRowMenu(null), setSheet({ task: rowMenu, focus: "notes" }))}
+          onAddPart={() => (setRowMenu(null), setAddingPart(rowMenu.id))}
           onDate={(choice) => (setRowMenu(null), redate(rowMenu, choice))}
           onPriority={(p) => (setRowMenu(null), actions.priority(rowMenu, p))}
           onDelete={() => (setRowMenu(null), actions.remove(rowMenu))}
@@ -314,11 +326,12 @@ function RowMenu(props: {
   onClose: () => void;
   onEdit: () => void;
   onComment: () => void;
+  onAddPart: () => void;
   onDate: (choice: "today" | "tomorrow" | "next-week" | "none") => void;
   onPriority: (priority: number) => void;
   onDelete: () => void;
 }) {
-  const { task, onClose, onEdit, onComment, onDate, onPriority, onDelete } = props;
+  const { task, onClose, onEdit, onComment, onAddPart, onDate, onPriority, onDelete } = props;
   const item = "flex h-11 w-full items-center gap-3 px-4 text-left text-[15px] hover:bg-surface";
   return (
     <div className="fade-in fixed inset-0 z-40 flex items-end justify-center bg-black/40 md:items-center" onClick={onClose}>
@@ -329,6 +342,9 @@ function RowMenu(props: {
         </button>
         <button type="button" className={item} onClick={onComment}>
           <span className="text-secondary">{Icon.comment}</span>Comment
+        </button>
+        <button type="button" className={item} onClick={onAddPart}>
+          <span className="w-[18px] text-center text-secondary">+</span>Add subtask
         </button>
         <div className="border-t border-hairline px-4 pt-3 pb-1 text-[12px] font-semibold text-secondary">Date</div>
         <div className="grid grid-cols-4 gap-1 px-3 pb-2">
