@@ -19,7 +19,18 @@ const AFTERNOON_HOUR = 13;
 
 export type Interval = { start: number; end: number };
 export type Busy = { due_at: string | null; duration_minutes?: number | null; kind?: string | null; status?: string };
-export type ToPlace = { id: number; title: string; minutes: number; priority: number; deep: boolean; prefer?: Date };
+export type ToPlace = {
+  id: number;
+  title: string;
+  minutes: number;
+  priority: number;
+  deep: boolean;
+  prefer?: Date;
+  /** Where it belongs, tried first: around his usual time, its own hours in his routine. */
+  within?: Interval[];
+  /** Closed to it: his teaching hours, for anything but a class. */
+  avoid?: Interval[];
+};
 export type DayWindow = { start: Date; end: Date };
 
 /** A task's length when he gave none: a sensible guess from its title. */
@@ -82,14 +93,25 @@ export function placeAll(items: ToPlace[], busy: Interval[], windows: DayWindow[
   const left: number[] = [];
   const order = [...items].sort((a, b) => a.priority - b.priority || Number(b.deep) - Number(a.deep) || b.minutes - a.minutes);
   for (const item of order) {
+    const blocked = item.avoid?.length ? [...taken, ...item.avoid] : taken;
     let at: number | undefined;
-    if (item.prefer && windows.some((window) => fits(item.prefer!.getTime(), item.minutes, taken, window, earliest.getTime()))) at = item.prefer.getTime();
+    if (item.prefer && windows.some((window) => fits(item.prefer!.getTime(), item.minutes, blocked, window, earliest.getTime()))) at = item.prefer.getTime();
+    // Where his routine says it belongs, if there is room there.
+    for (const range of item.within ?? []) {
+      if (at !== undefined) break;
+      for (const window of windows) {
+        const inside = { start: new Date(Math.max(window.start.getTime(), range.start)), end: new Date(Math.min(window.end.getTime(), range.end)) };
+        if (inside.end.getTime() <= inside.start.getTime()) continue;
+        at = firstFit(inside.start.getTime(), item.minutes, blocked, inside, earliest.getTime());
+        if (at !== undefined) break;
+      }
+    }
     for (const window of windows) {
       if (at !== undefined) break;
       const afternoon = new Date(window.start.getTime());
       const local = new Date(afternoon.getTime() + 5 * 60 * 60_000).toISOString().slice(0, 10);
       const from = item.deep ? window.start.getTime() : new Date(`${local}T${String(AFTERNOON_HOUR).padStart(2, "0")}:00:00+05:00`).getTime();
-      at = firstFit(from, item.minutes, taken, window, earliest.getTime()) ?? firstFit(window.start.getTime(), item.minutes, taken, window, earliest.getTime());
+      at = firstFit(from, item.minutes, blocked, window, earliest.getTime()) ?? firstFit(window.start.getTime(), item.minutes, blocked, window, earliest.getTime());
     }
     if (at === undefined) {
       left.push(item.id);

@@ -1,4 +1,5 @@
 import { markdownToPlain } from "@/lib/rich";
+import { formatTime } from "@/lib/time";
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
@@ -73,12 +74,15 @@ export async function POST(request: Request) {
         const replies: string[] = [];
         for (const item of await handleMessage(text, { channel: "app" })) {
           if (item.kind === "clean") replies.push("The chat in Telegram is cleaned with /clean, sir.");
-          else if (item.kind === "failed") replies.push(item.reply);
+          else if (item.kind === "failed" || item.kind === "link") replies.push(markdownToPlain(item.reply));
           else {
             const thought = item.thought;
             // The app has no buttons in Chat: a plan waits under Plans, and options are listed.
             if (thought.planId !== undefined) replies.push("I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.");
             else if (thought.choices) replies.push(`${thought.choices.question} (${thought.choices.options.join(" / ")})`);
+            // No buttons in the app's chat: the free slots are named, and a proposal waits for his "yes".
+            else if (thought.slot?.kind === "ask") replies.push(`${markdownToPlain(thought.reply)} (${thought.slot.options.map((option) => formatTime(option)).join(" / ")})`);
+            else if (thought.slot?.kind === "propose" || thought.proposal) replies.push(`${markdownToPlain(thought.reply)} Say "yes" and it's done.`);
             // The app's chat shows plain text: the rich markdown is flattened (lists stay one per line).
             else replies.push(markdownToPlain(thought.reply));
           }

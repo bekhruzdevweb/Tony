@@ -17,6 +17,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Built, awaiting your check |
 | 8 | Live week | Not started |
 | R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Built, awaiting your check |
+| D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Built, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -513,6 +514,64 @@ that broke it.
    (read from the migrations). The model is scripted to repeat its real
    mistakes. `npm run build` runs every test first (`prebuild`), so a failing
    case stops the deploy.
+
+## How Tony decides
+
+**Your routine** is one profile (`/routine` shows it): when you wake and sleep,
+your hours for teaching, content, coding and workouts, your free days, and your
+prayer times (always kept clear, ±15 minutes). Tell Tony in your own words ("I
+teach Mon–Fri 14:00–18:00", "content 10–12", "Sunday is my free day") and he
+saves it. When you move a task to a time yourself (in words, with a button, or
+in the app), he learns that this kind of task belongs around that time. Kinds
+are content, coding, teaching, lesson prep, watching and reading, workouts,
+errands, and other.
+
+**Decide or ask:**
+- **You gave a time:** it is used exactly and never questioned. If it overlaps
+  something, Tony says so ("⚠️ Workout and the Zoom tutorial are both at 18:00")
+  and offers [Move … 19:15] [Keep both]. He never asks.
+- **No time, no day:** the task goes to the Inbox. No time is proposed unless
+  you ask.
+- **A day but no time:**
+  - If your routine clearly fits, Tony proposes one slot: "I'll put **Post
+    stories** tomorrow at **10:00**, your content time." [✓ 10:00]
+    [✏️ Change]. A routine clearly fits when you named part of the day ("Sunday
+    evening"), you usually do this kind of task at a certain time, or it has
+    its own hours in your routine.
+  - If not, he asks once, with 2–3 real free slots as buttons.
+  - If the model writes a time you never gave, it is removed in code and the
+    rule above applies.
+- **Several tasks for one day:** one plan in one message, [✓ Looks good]
+  [✏️ Change].
+- **Never two things in one slot:** every task blocks its whole duration, with
+  10 minutes kept clear around it. This covers his proposals, the buttons, the
+  planner, the "Move to" times on reminders and the overdue suggestions.
+- **Today, Tomorrow and This weekend buttons:** the task keeps its own time if
+  that is free; otherwise your routine decides.
+
+**Style:** one short message per request, at most one question. When Tony is
+unsure what you want, he says what he will do ("I'll remove **buy notebook**.")
+with [✓ Do it] [✏️ Change]. ✓ runs it in plain code and confirms it from what
+is stored.
+
+**Check-ins:** "Remind me if I don't check it for 2 days" makes a check-in. It
+goes out only if the task really sat untouched that long, with [✓ Done]
+[Tomorrow] [Drop], and comes back every 2 days. If you touched the task, it
+waits 2 days from then. At night it waits for the morning.
+
+**Links:**
+- A link you send with a task, or in the message just before it, goes into
+  the task's notes. A title that says nothing ("Watch the video") gets the
+  page's title.
+- The confirmation says so: "✓ **Watch: …** → Mon **10:00** · 🔗 link saved".
+- Tony never asks whether to attach a link you sent.
+- "Send me the video" or "what was the link?" is answered with the link itself,
+  at once, in plain code.
+
+Migration `0021_routine.sql` adds the routine profile and check-ins. Your waking
+day is copied from your quiet hours, and workouts are set to 18:00–20:00 (from
+"I work out in the evenings" and "work out at 6 pm"). Everything else starts
+unset until you tell Tony.
 
 ## Tony's brain
 

@@ -1,0 +1,86 @@
+/**
+ * Links he sends: the pure rules (no database), tested in tests/links.test.ts.
+ *
+ * - A link sent with a task, or just before it, goes into that task's notes,
+ *   and the confirmation says so ("🔗 link saved").
+ * - Tony never asks whether to attach a link he just sent.
+ * - "Send me the video" is answered with the link, at once.
+ */
+
+/** "Send me the video", "can u send it even now the link o podcast", "what was the link?" */
+export function asksForLink(text: string): boolean {
+  return (
+    // Asked of Tony ("send me…", "send it…", "resend the link"), not a task ("send the video to Aziz").
+    /\b(send|give|show|share|paste|forward|drop)\s+(me|it|them|us)\b[^.?!]{0,40}\b(links?|urls?|videos?|podcasts?|reels?|course|masterclass|articles?)\b/i.test(text) ||
+    /\bresend\b[^.?!]{0,25}\b(links?|urls?|videos?|podcasts?|reels?)\b/i.test(text) ||
+    /\b(what|where)('?s| is| was)\b[^.?!]{0,25}\b(link|url)\b/i.test(text)
+  );
+}
+
+/** A reply that asks whether to attach a link or file instead of doing it ("Shall I add the link to the notes…?"). */
+export function asksToAttachLink(reply: string): boolean {
+  const plain = reply.replace(/[*_`]/g, "");
+  return (
+    /\b(add|attach|put|keep|save|include|store)\b[^.?!]{0,60}\b(link|url|screenshot)s?\b[^.?!]*\?/i.test(plain) ||
+    /\bwhich\b[^.?!]{0,30}\b(attach|link)\b[^.?!]*\?/i.test(plain) ||
+    /^\s*attach\b[^.?!]*\?/im.test(plain)
+  );
+}
+
+/** His words point at something he just sent ("watch this video", "remind me about it", "save that link"). */
+export function refersToLink(text: string): boolean {
+  return /\b(watch|read|listen|video|link|reel|podcast|post|course|masterclass|article|episode)\b|\b(this|that) one\b/i.test(text);
+}
+
+/** A title that says nothing about the page ("Watch the video", "Read this"): it gets the page's own title. */
+export function isGenericTitle(title: string): boolean {
+  return /^(watch|read|listen to|check|check out|open|see|view|look at)(\s+(this|the|that|a|my|his))?(\s+(youtube\s+)?(video|link|reel|podcast|post|article|page|course|masterclass|clip|one|episode))?(\s+(later|again|tomorrow|today|on \w+))?$/i.test(title.trim());
+}
+
+/** "Watch" for videos and reels, "Read" for everything else. */
+export function verbFor(url: string): "Watch" | "Read" {
+  return /youtu\.?be|vimeo\.com|instagram\.com\/(reel|tv|p)\/|tiktok\.com|twitch\.tv|\/video/i.test(url) ? "Watch" : "Read";
+}
+
+/** A task's title for a link: his own if it says something, else "Watch: <page title>". */
+export function titleForLink(title: string, url: string, pageTitle?: string): string {
+  // A stand-in like "YouTube video" says no more than his own words.
+  if (!isGenericTitle(title) || !pageTitle?.trim() || /^(youtube video|instagram (reel|post)|telegram post)$/i.test(pageTitle.trim())) return title;
+  const clean = pageTitle.replace(/\s*[-|·]\s*(YouTube|Instagram|TikTok)\s*$/i, "").trim();
+  return `${verbFor(url)}: ${clean}`.slice(0, 120);
+}
+
+export type LinkCandidate = { url: string; title: string; context: string; at: number };
+
+const STOP = new Set(
+  "send give show share paste forward drop resend please just check again even now once more what where was is the that this those these link links url urls video videos podcast podcasts reel reels about which told everything want need tony sir".split(
+    " ",
+  ),
+);
+const stems = (text: string) => new Set((text.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter((word) => !STOP.has(word)).map((word) => word.slice(0, 5)));
+
+/**
+ * The links he most likely means, best first: by the words he used (the
+ * title and what was said around the link), then by the kind he named
+ * (video, reel, podcast), then the newest.
+ */
+export function rankLinks(request: string, candidates: LinkCandidate[]): (LinkCandidate & { points: number })[] {
+  const wanted = stems(request);
+  const lower = request.toLowerCase();
+  const score = (candidate: LinkCandidate) => {
+    const have = stems(`${candidate.title} ${candidate.context}`);
+    let points = [...wanted].filter((stem) => have.has(stem)).length * 3;
+    if (/\b(video|watch)\b/.test(lower) && verbFor(candidate.url) === "Watch") points += 1;
+    if (/\breel\b/.test(lower) && /instagram\.com\/reel/i.test(candidate.url)) points += 2;
+    if (/\bpodcast\b/.test(lower) && /podcast/i.test(`${candidate.title} ${candidate.context}`)) points += 2;
+    return points;
+  };
+  const unique = new Map<string, LinkCandidate & { points: number }>();
+  for (const candidate of candidates) {
+    const points = score(candidate);
+    const known = unique.get(candidate.url);
+    // The same link seen twice keeps its best description and its newest time.
+    if (!known || points > known.points || (points === known.points && candidate.at > known.at)) unique.set(candidate.url, { ...candidate, points, at: Math.max(candidate.at, known?.at ?? 0) });
+  }
+  return [...unique.values()].sort((a, b) => b.points - a.points || b.at - a.at);
+}

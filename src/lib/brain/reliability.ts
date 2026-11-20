@@ -206,7 +206,7 @@ export function linksIn(text: string): string[] {
 
 /** Words that carry no detail of their own: requests, times, filler. */
 const FILLER = new Set(
-  "remind reminder please tony jarvis also okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please".split(
+  "remind reminder please tony jarvis also maybe upcoming next dont didnt check touch thist task tasks inbox okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please".split(
     " ",
   ),
 );
@@ -229,11 +229,21 @@ export function lostDetails(message: string, saved: string[]): string[] {
  * What to add to a new task's notes so nothing he said is lost: any link not
  * yet kept, and his own words when two or more details were dropped.
  */
+/** His words to Tony about how to handle the task ("put this task to inbox", "remind me if I don't check it for 2 days") are not details of the task. */
+export function withoutInstructions(message: string): string {
+  return message
+    .replace(/\b(?:and\s+)?(?:please\s+)?remind me if i\b[^.?!]*?\b(?:days?|weeks?)\b/gi, " ")
+    .replace(/\b(?:please\s+)?(?:put|add|save|keep|move)\s+(?:this|thist|it|that)?\s*(?:task\s+)?(?:to|in|into|on)\s+(?:the\s+|my\s+)?(?:inbox|list)\b/gi, " ")
+    .replace(/\b(?:can|could|would) you\b|\b(?:i want|i need) you to\b|\bremind me (?:to|about|of)\b|\bschedule (?:it|this|that)\b|\bsave (?:it|this|that) as a task\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function notesToKeep(message: string, saved: { title: string; notes: string | null; parts?: string[] }[]): string | undefined {
   const all = saved.map((task) => [task.title, task.notes ?? "", ...(task.parts ?? [])].join(" "));
   const missingLinks = linksIn(message).filter((url) => !all.some((text) => text.includes(url)));
   const words = message.replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
-  const quote = lostDetails(message, all).length >= 2 && words.length > 0 ? `From your message: "${words}"` : undefined;
+  const quote = lostDetails(withoutInstructions(message), all).length >= 2 && words.length > 0 ? `From your message: "${words}"` : undefined;
   const lines = [...missingLinks, quote].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;
 }

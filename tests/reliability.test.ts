@@ -127,6 +127,9 @@ describe("4. Every link and detail from the first message", () => {
     expect(notesToKeep(said, [{ title: "Make a presentation", notes: null }])).toBe(`From your message: "${said}"`);
     expect(notesToKeep(said, [{ title: "English File Elementary presentation", notes: "For the student from New York" }])).toBeUndefined();
   });
+  it("his instructions to Tony are not details (23:17: 'put thist task to inbox and remind me if i dont check it for 2 days')", () => {
+    expect(notesToKeep("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", [{ title: "Buy a zippered shirt", notes: "Zamokli ko'ynak olish" }])).toBeUndefined();
+  });
   it("counts parts as kept (stories about the app, the club and the grammar series)", () => {
     const said = "post stories about the new app I'm building, the upcoming speaking club and the grammar series";
     expect(notesToKeep(said, [{ title: "Post stories", notes: null, parts: ["the new app he's building", "the upcoming speaking club", "the grammar series"] }])).toBeUndefined();

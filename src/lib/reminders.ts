@@ -2,13 +2,15 @@ import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
-import { esc, i, plain } from "./html";
+import { b, esc, i, plain } from "./html";
 import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
-import { isFreeAt } from "./brain/checks";
+import { busyAround, getRoutine } from "./routine";
+import { checkInDue, checkInTime } from "./routine-rules";
+import { estimateMinutes } from "./schedule";
 import { progress, subtasksFor } from "./subtasks";
-import { dueReminder, persistentReminder } from "./reminder-messages";
+import { data, dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, inWindow, toWholeMinute } from "./time";
@@ -23,6 +25,8 @@ export type Reminder = {
   telegram_message_id: number | null;
   sent_at: string | null;
   claimed_at: string | null;
+  /** A check-in ("remind me if I don't check it for N days"): N. */
+  every_days?: number | null;
 };
 
 /** Spec: at most 6 unprompted messages per hour in total. */
@@ -178,11 +182,28 @@ export async function runTick(
       continue;
     }
 
-    // An extra reminder (set_reminder) is a single message, never a chain.
-    const chained = task.persistent && reminder.kind !== "extra";
+    // A check-in ("remind me if I don't check it for N days") goes out only if the task really sat
+    // untouched that long; if he touched it, it waits N days from then. At night it waits for the morning.
+    const checkIn = reminder.kind === "stale";
+    if (checkIn) {
+      const routine = await getRoutine();
+      const everyDays = reminder.every_days ?? 0;
+      const due = everyDays > 0 ? checkInDue({ now, updatedAt: new Date(task.updated_at), everyDays, routine }) : ({ send: true } as const);
+      const later = !due.send ? due.next : quiet(now) ? checkInTime(now, 0, routine) : undefined;
+      if (later && later.getTime() > now.getTime()) {
+        const moved = await db.from("reminders").update({ fire_at: later.toISOString(), claimed_at: null }).eq("id", reminder.id).eq("state", "scheduled");
+        fail("runTick: check-in", moved.error);
+        result.deferred++;
+        continue;
+      }
+    }
+
+    // An extra reminder (set_reminder) and a check-in are single messages, never a chain.
+    const chained = task.persistent && reminder.kind !== "extra" && !checkIn;
     const offsets = chained ? chainOffsets(task, settings) : [0];
     const attempt = Math.min(reminder.attempt, offsets.length - 1);
-    const isFollowUp = reminder.attempt > 0 || (reminder.kind !== "due" && reminder.kind !== "extra");
+    // A check-in is not a follow-up: it is never dropped for quiet hours or the daily cap, only delayed.
+    const isFollowUp = reminder.attempt > 0 || (reminder.kind !== "due" && reminder.kind !== "extra" && !checkIn);
     // The moment this persistent reminder began, so later steps keep their
     // planned times even when a message goes out a minute late.
     const base = addMinutes(new Date(reminder.fire_at), -offsets[attempt]);
@@ -246,8 +267,14 @@ export async function runTick(
     // A prayer: a calm line and one button, a heads-up 10 minutes before (silent) and one at the time.
     const prayer = isPrayer(task);
     // A "Move to" offer is only made for a time that is actually free.
-    const isFree = chained && attempt === 2 ? await freeTimes(task.id) : undefined;
-    const message = prayer ? prayerReminder(task, reminder.kind === "extra") : chained ? persistentReminder(task, attempt, now, nextAt, isFree) : dueReminder(task);
+    const isFree = chained && attempt === 2 ? await freeTimes(task) : undefined;
+    const message = prayer
+      ? prayerReminder(task, reminder.kind === "extra")
+      : checkIn
+        ? checkInMessage(task, reminder.every_days ?? Math.max(1, Math.round((now.getTime() - new Date(task.updated_at).getTime()) / (24 * 60 * 60_000))))
+        : chained
+          ? persistentReminder(task, attempt, now, nextAt, isFree)
+          : dueReminder(task);
     // A task with parts: "Post stories 1/3" and the parts still to do.
     if (!prayer) {
       const list = (await subtasksFor([task.id])).get(task.id) ?? [];
@@ -289,7 +316,13 @@ export async function runTick(
     fail("runTick: mark sent", saved.error);
     await logMessage("tony", plain(message.text));
     // Tracked, so it is removed once the task is done, skipped or moved.
-    await track(messageId, "reminder", { taskId: task.id });
+    await track(messageId, checkIn ? "stale" : "reminder", { taskId: task.id });
+    // The next check-in, N days on, for as long as the task sits untouched.
+    if (checkIn && (reminder.every_days ?? 0) > 0) {
+      const next = checkInTime(now, reminder.every_days!, await getRoutine());
+      const queued = await db.from("reminders").insert({ task_id: task.id, fire_at: next.toISOString(), kind: "stale", attempt: 0, every_days: reminder.every_days });
+      fail("runTick: next check-in", queued.error);
+    }
     // The final call: two nudges of a persistent reminder went unanswered, so the third is also said aloud
     // (within the day's voice limit, and only while this tick has time to spare).
     if (chained && attempt === 2 && Date.now() - started < TICK_BUDGET_MS / 2) {
@@ -306,10 +339,20 @@ export async function runTick(
 }
 
 /** A check for free times against the open, timed tasks (other than this one). */
-async function freeTimes(taskId: number): Promise<(at: Date) => boolean> {
-  const { data } = await requireDb().from("tasks").select().in("status", OPEN_STATUSES).not("due_at", "is", null);
-  const tasks = (data ?? []) as Task[];
-  return (at: Date) => isFreeAt(at, tasks, taskId);
+async function freeTimes(task: Task): Promise<(at: Date) => boolean> {
+  // Free for the task's whole length, ten minutes clear of anything else (prayers ±15 minutes).
+  const busy = await busyAround(new Date(), [task.id]).catch(() => []);
+  const length = (task.duration_minutes || estimateMinutes(task.title)) * 60_000;
+  const gap = 10 * 60_000;
+  return (at: Date) => busy.every((other) => at.getTime() + length + gap <= other.start || at.getTime() >= other.end + gap);
+}
+
+/** A check-in: the task has sat untouched; [✓ Done] [Tomorrow] [Drop]. */
+function checkInMessage(task: Task, days: number): { text: string; keyboard?: InlineKeyboard } {
+  return {
+    text: `📥 Sir, ${b(task.title)} has sat untouched for ${days} ${days === 1 ? "day" : "days"}.`,
+    keyboard: new InlineKeyboard().text("✓ Done", data("done", task.id)).text("Tomorrow", data("tomorrow", task.id)).text("Drop", data("drop", task.id)),
+  };
 }
 
 /** A prayer's reminder: "🕌 Asr in 10 minutes · 15:20", then "🕌 Asr · 15:20" with [✓ Prayed]. */

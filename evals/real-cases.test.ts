@@ -34,6 +34,8 @@ vi.mock("../src/lib/brain/model", async (original) => ({
 
 const { handleMessage, UNAVAILABLE } = await import("../src/lib/brain/handle");
 const { transcribeAudio } = await import("../src/lib/voice");
+const { placeTask, runProposal } = await import("../src/lib/slots");
+const { runTick } = await import("../src/lib/reminders");
 
 // ── helpers ──────────────────────────────────────────────────────────────
 let callId = 0;
@@ -55,7 +57,7 @@ function task(row: Record<string, unknown>) {
 const tasks = () => state.db.rows("tasks") as Record<string, unknown>[];
 const byTitle = (title: string) => tasks().find((row) => row.title === title)!;
 const replies = (handled: Awaited<ReturnType<typeof handleMessage>>) =>
-  handled.map((item) => (item.kind === "thought" ? item.thought.reply : item.kind === "failed" ? item.reply : "[clean]"));
+  handled.map((item) => (item.kind === "thought" ? item.thought.reply : item.kind === "failed" || item.kind === "link" ? item.reply : "[clean]"));
 
 async function run(message: string, now: string, script: Step[]) {
   vi.setSystemTime(at(now));
@@ -66,13 +68,18 @@ async function run(message: string, now: string, script: Step[]) {
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
+  // No real network in the evals: a page's title comes from this stand-in.
+  vi.stubGlobal("fetch", async () => new Response(`<html><head><meta property="og:title" content="Stand-in page title"></head></html>`, { status: 200, headers: { "content-type": "text/html" } }));
   state.db = createFakeDb();
   state.db.insert("settings", {});
   for (const name of ["Teaching", "Content", "Health", "Personal"]) state.db.insert("projects", { name });
   state.calls = [];
   state.script = [];
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 // ── 1. Verify after write; replies only from verified results ───────────
 describe("1. Replies come only from verified writes", () => {
@@ -259,10 +266,13 @@ describe("6. Act first: inbox, his times, one question", () => {
     const presentation = byTitle("English File Elementary presentation");
     expect(presentation.status).toBe("inbox");
     expect(presentation.due_at).toBeNull();
-    expect(result.replies[0]).not.toMatch(/\?/);
-    // He named a day: a [Find a time] offer, nothing placed by itself.
+    // He named a day but no time, and nothing in his routine says when he prepares lessons:
+    // one question, with real free slots tomorrow as buttons. Nothing placed by itself.
     const thought = result.handled[0].kind === "thought" ? result.handled[0].thought : undefined;
-    expect(thought?.slotOffer).toEqual({ day: "2026-11-21", taskIds: [presentation.id] });
+    expect(thought?.slot?.kind).toBe("ask");
+    expect(thought?.slot?.taskId).toBe(presentation.id);
+    expect(result.replies[0].match(/\?/g)).toHaveLength(1);
+    expect(result.replies[0]).not.toMatch(/inbox/);
     expect(thought?.planId).toBeUndefined();
   });
 
@@ -306,5 +316,248 @@ describe("6. Act first: inbox, his times, one question", () => {
   it("15:39 'what can u do' is a question, never a task", async () => {
     await run("what can u do", "2026-11-20T15:39", [says("I can handle most of your day, sir: tasks, reminders, plans and voice notes.")]);
     expect(tasks()).toHaveLength(0);
+  });
+});
+
+// ── Phase: how Tony decides (20 Nov, 23:14–23:39) ────────────────────────
+const thoughtOf = (result: Awaited<ReturnType<typeof run>>, index = 0) => {
+  const item = result.handled[index];
+  return item.kind === "thought" ? item.thought : undefined;
+};
+const hhmm = (iso: unknown) => (typeof iso === "string" ? local(iso)!.slice(11) : null);
+const said = (role: "user" | "tony", text: string, when: string) => state.db.insert("messages", { role, text, channel: "telegram", created_at: at(when).toISOString() });
+const routineRow = (patch: Record<string, unknown>) => state.db.insert("routine", { id: true, ...patch });
+const linkOffer = (url: string, title: string, when: string) => state.db.insert("offers", { kind: "link", payload: { url, title, summary: "" }, created_at: at(when).toISOString() });
+
+describe("Decide vs ask: a day without a time", () => {
+  it("content tomorrow, with content hours: ONE slot proposed in them, [✓] places it", async () => {
+    routineRow({ content: "10:00–12:00" });
+    const result = await run("I need to post stories tomorrow", "2026-11-20T21:00", [tools(["add_task", { title: "Post stories", day: "2026-11-21" }])]);
+    const thought = thoughtOf(result)!;
+    expect(thought.slot).toMatchObject({ kind: "propose", why: "your content time" });
+    expect(result.replies[0]).toMatch(/^I'll put \*\*Post stories\*\* tomorrow at \*\*10:00\*\*, your content time\.$/);
+    expect(result.replies[0]).not.toMatch(/inbox/);
+    // Nothing is placed until he taps ✓.
+    expect(byTitle("Post stories").due_at).toBeNull();
+    const tapped = await placeTask(thought.slot!.taskId, (thought.slot as { at: Date }).at);
+    expect(hhmm(byTitle("Post stories").due_at)).toBe("10:00");
+    expect(tapped.text).toMatch(/Post stories.*10:00/);
+  });
+
+  it("23:20 'schedule it for upcoming Sunday afternoon or noon': the model's 13:00 is not his; noon is proposed", async () => {
+    const result = await run(
+      "Also, can you plan adding new features to my Telegram chatbox agent? Like features like tracking habits and new organization methods. And we can schedule it for upcoming Sunday afternoon or noon.",
+      "2026-11-20T23:20",
+      [tools(["add_task", { title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00", notes: "Tracking habits and new organization methods" }])],
+    );
+    expect(byTitle("Plan new chatbot agent features").due_at).toBeNull();
+    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", day: "2026-11-22", why: "around noon, as you said" });
+    expect(hhmm((thoughtOf(result)!.slot as { at: Date }).at.toISOString())).toBe("12:00");
+  });
+
+  it("23:20 'launch a course … upcoming Sunday. Maybe Sunday evening.': an evening slot, his words kept", async () => {
+    const result = await run(
+      "Also remind me to launch a course for level beginner students and elementary level students upcoming Sunday. Maybe Sunday evening.",
+      "2026-11-20T23:20",
+      [tools(["add_task", { title: "Launch beginner and elementary course", due_at: "2026-11-22T18:00" }])],
+    );
+    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", day: "2026-11-22", why: "in the evening, as you said" });
+    expect(result.replies[0]).not.toMatch(/inbox/);
+  });
+
+  it("23:38 'save it as a task for me to watch in the Monday': no invented 15:00; his usual time for watching, with the link", async () => {
+    routineRow({ learned: { learn: [1260, 1260, 1275] } });
+    said("user", "https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU", "2026-11-20T23:38");
+    linkOffer("https://youtu.be/CN8c1edTCew?si=0iSbYmp_MFmdO_ZU", "Head of Instagram Reveals How the Top 1% Actually Work With AI", "2026-11-20T23:38");
+    said("tony", "This is a YouTube video titled \"Head of Instagram Reveals How the Top 1% Actually Work With AI\", sir.", "2026-11-20T23:38");
+    const result = await run("I want you to save it as a task for me to watch in the Monday.", "2026-11-20T23:38", [
+      tools(["add_task", { title: "Watch: Mosseri AI setup", due_at: "2026-11-23T15:00" }]),
+    ]);
+    const task = byTitle("Watch: Mosseri AI setup");
+    expect(task.due_at).toBeNull();
+    expect(task.notes).toContain("https://youtu.be/CN8c1edTCew");
+    expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", why: "you usually watch and read around 21:00" });
+    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(result.replies[0]).not.toMatch(/15:00/);
+  });
+
+  it("not sure: ONE question with 2–3 real free slots that fit his routine (never in teaching hours, never on top of a task)", async () => {
+    routineRow({ teaching: "Mon–Fri 14:00–18:00" });
+    task({ title: "Watch: Instagram Masterclass", due_at: "2026-11-23T10:00", duration_minutes: 240 });
+    const result = await run("add coding the bot features on Monday", "2026-11-20T23:40", [tools(["add_task", { title: "Code the bot features", day: "2026-11-23", duration: 90 }])]);
+    const slot = thoughtOf(result)?.slot;
+    expect(slot?.kind).toBe("ask");
+    const options = (slot as { options: Date[] }).options;
+    expect(options.length).toBeGreaterThanOrEqual(2);
+    expect(options.length).toBeLessThanOrEqual(3);
+    for (const option of options) {
+      const start = option.getTime();
+      const end = start + 90 * 60_000;
+      // Clear of the masterclass (10:00–14:00) and of teaching (14:00–18:00), each with its gap.
+      expect(end <= at("2026-11-23T09:50").getTime() || start >= at("2026-11-23T18:10").getTime()).toBe(true);
+    }
+    expect(result.replies[0].match(/\?/g)).toHaveLength(1);
+  });
+
+  it("learns from his moves: two content tasks moved to the morning, the next one is proposed there, in a free slot", async () => {
+    const stories = task({ title: "Posting stories on Instagram", due_at: "2026-11-21T12:00", duration_minutes: 15 });
+    const reel = task({ title: "Posting reel on Instagram", due_at: "2026-11-21T15:00", duration_minutes: 60 });
+    await run("move posting stories to 10:00", "2026-11-20T21:00", [tools(["update_task", { id: stories.id, due_at: "2026-11-21T10:00" }])]);
+    await run("and the reel to 10:30", "2026-11-20T21:01", [tools(["update_task", { id: reel.id, due_at: "2026-11-21T10:30" }])]);
+    expect((state.db.rows("routine")[0].learned as Record<string, number[]>).content).toEqual([600, 630]);
+    const result = await run("post a story about the speaking club tomorrow", "2026-11-20T21:02", [
+      tools(["add_task", { title: "Post a story about the speaking club", day: "2026-11-21", duration: 15 }]),
+    ]);
+    const slot = thoughtOf(result)?.slot as { kind: string; at: Date; why: string };
+    expect(slot.kind).toBe("propose");
+    expect(slot.why).toBe("you usually make content around 10:15");
+    // 10:00–10:15 and 10:30–11:30 are taken: the nearest free start that fits, never on top of them.
+    expect(hhmm(slot.at.toISOString())).toBe("09:30");
+  });
+});
+
+describe("Decide vs ask: his time is final, and never questioned", () => {
+  it("'work out at 6 pm' on top of the Zoom tutorial: kept at 18:00, the clash stated, a free time offered", async () => {
+    task({ title: "Shoot app tutorial on Zoom", due_at: "2026-11-21T18:00", duration_minutes: 60 });
+    const result = await run("tomorrow remind me to work out at 6 pm", "2026-11-20T21:00", [tools(["add_task", { title: "Workout", due_at: "2026-11-21T18:00", persistent: true }])]);
+    expect(hhmm(byTitle("Workout").due_at)).toBe("18:00");
+    expect(result.replies[0]).toMatch(/⚠️ .*18:00\./);
+    expect(result.replies[0]).not.toMatch(/\?/);
+    expect(hhmm(thoughtOf(result)?.clash?.suggestAt?.toISOString())).toBe("19:15");
+  });
+});
+
+describe("Style: say what you'll do, [✓] [✏️]", () => {
+  it("23:28 'Buying a notebook removes this task.': a proposal, not 'mark done or delete?'; ✓ does it in code", async () => {
+    const notebook = task({ title: "buy notebook", due_at: "2026-11-21T11:00" });
+    const result = await run("Buying a notebook removes this task.", "2026-11-20T23:28", [
+      tools(["propose", { say: "I'll remove **buy notebook**.", tool: "update_task", args: { id: notebook.id, status: "dropped" } }]),
+    ]);
+    const thought = thoughtOf(result)!;
+    expect(result.replies[0]).toBe("I'll remove **buy notebook**.");
+    expect(thought.proposal?.offerId).toBeGreaterThan(0);
+    expect(byTitle("buy notebook").status).toBe("todo");
+    const done = await runProposal(thought.proposal!.offerId);
+    expect(byTitle("buy notebook").status).toBe("dropped");
+    expect(done).toBe("✓ **buy notebook** removed, sir.");
+    expect(await runProposal(thought.proposal!.offerId)).toBe("Already settled, sir.");
+  });
+
+  it("'I teach Mon-Fri from 2 to 6' goes into his routine, read back", async () => {
+    const result = await run("I teach Mon-Fri from 2 to 6", "2026-11-20T21:00", [tools(["routine", { field: "teaching", value: "Mon-Fri 14:00-18:00" }])]);
+    expect(state.db.rows("routine")[0].teaching).toBe("Mon–Fri 14:00–18:00");
+    expect(result.replies[0]).toContain("🗓 Teaching: Mon–Fri 14:00–18:00");
+  });
+});
+
+describe("Check-ins: 'remind me if I don't check it for 2 days' (23:17, ignored)", () => {
+  const fakeBot = () => {
+    const sent: { text: string; buttons: string[] }[] = [];
+    const bot = {
+      api: {
+        sendMessage: async (_chat: number, text: string, extra?: { reply_markup?: { inline_keyboard?: { text: string }[][] } }) => {
+          sent.push({ text, buttons: (extra?.reply_markup?.inline_keyboard ?? []).flat().map((button) => button.text) });
+          return { message_id: 900 + sent.length };
+        },
+      },
+    };
+    return { bot: bot as unknown as Parameters<typeof runTick>[0], sent };
+  };
+
+  it("inbox, no proposed plan, and a check-in in two days (moved out of the night)", async () => {
+    const result = await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:17", [
+      tools(["add_task", { title: "Buy a zippered shirt", notes: "Zamokli ko'ynak olish" }]),
+    ]);
+    const shirt = byTitle("Buy a zippered shirt");
+    expect(shirt.status).toBe("inbox");
+    expect(state.db.rows("plans")).toHaveLength(0);
+    expect(thoughtOf(result)?.slot).toBeUndefined();
+    const checkIn = state.db.rows("reminders").find((row) => row.task_id === shirt.id && row.kind === "stale")!;
+    expect(checkIn.every_days).toBe(2);
+    expect(local(checkIn.fire_at)).toBe("2026-11-23T10:00");
+    expect(result.replies[0]).toContain("🔔 check-in after 2 untouched days");
+  });
+
+  it("fires only if untouched: sent with [✓ Done] [Tomorrow] [Drop], and comes back two days later", async () => {
+    await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:17", [
+      tools(["add_task", { title: "Buy a zippered shirt" }]),
+    ]);
+    vi.setSystemTime(at("2026-11-23T10:00"));
+    const { bot, sent } = fakeBot();
+    await runTick(bot, 42, new Date());
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("Buy a zippered shirt</b> has sat untouched for 2 days");
+    expect(sent[0].buttons).toEqual(["✓ Done", "Tomorrow", "Drop"]);
+    const next = state.db.rows("reminders").filter((row) => row.kind === "stale" && row.state === "scheduled");
+    expect(next.map((row) => local(row.fire_at))).toEqual(["2026-11-25T10:00"]);
+  });
+
+  it("touched in between: no message; it waits two days from the touch", async () => {
+    await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:17", [
+      tools(["add_task", { title: "Buy a zippered shirt" }]),
+    ]);
+    vi.setSystemTime(at("2026-11-22T12:00"));
+    await state.db.client.from("tasks").update({ notes: "the black one" }).eq("id", byTitle("Buy a zippered shirt").id);
+    vi.setSystemTime(at("2026-11-23T10:00"));
+    const { bot, sent } = fakeBot();
+    await runTick(bot, 42, new Date());
+    expect(sent).toHaveLength(0);
+    const waiting = state.db.rows("reminders").find((row) => row.kind === "stale" && row.state === "scheduled")!;
+    expect(local(waiting.fire_at)).toBe("2026-11-24T12:00");
+  });
+});
+
+describe("Links", () => {
+  it("23:22 a link, then 'Remind me to watch this video in the upcoming Monday.': link in notes, a real title, shown in the reply; no invented 10:00", async () => {
+    said("user", "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi", "2026-11-20T23:22");
+    linkOffer("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi", "THE Instagram Masterclass: How To Grow in 2027", "2026-11-20T23:22");
+    said("tony", "I couldn't open that video, sir, so I can't tell you what it covers.", "2026-11-20T23:22");
+    const result = await run("Remind me to watch this video in the upcoming Monday.", "2026-11-20T23:22", [tools(["add_task", { title: "Watch the video", due_at: "2026-11-23T10:00" }])]);
+    const video = tasks().find((row) => String(row.title).startsWith("Watch: "))!;
+    expect(video.title).toBe("Watch: THE Instagram Masterclass: How To Grow in 2027");
+    expect(video.notes).toContain("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi");
+    expect(video.due_at).toBeNull();
+    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(thoughtOf(result)?.slot?.kind).toBe("ask");
+    expect(result.replies[0].match(/\?/g)).toHaveLength(1);
+  });
+
+  it("23:23 'Did you keep it with its link?': the model asks 'Shall I add the link…?'; Tony adds it instead and says so", async () => {
+    said("user", "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi", "2026-11-20T23:22");
+    vi.setSystemTime(at("2026-11-20T23:23"));
+    task({ title: "Watch the video", due_at: "2026-11-23T10:00" });
+    const result = await run("Did you keep it with its link or just watch the video?", "2026-11-20T23:23", [says("Shall I add the link to the notes of that task, sir?")]);
+    expect(byTitle("Watch the video").notes).toContain("https://youtu.be/SaiTtbRJwic");
+    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(result.replies[0]).not.toMatch(/\?/);
+  });
+
+  it("23:25 'send me the video to just to check': the link itself, at once, no model call", async () => {
+    task({ title: "Watch: Instagram Masterclass (Brock Johnson)", due_at: "2026-11-23T10:00", notes: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi" });
+    const result = await run("send me the video to just to check", "2026-11-20T23:25", []);
+    expect(result.handled[0].kind).toBe("link");
+    expect(result.replies[0]).toContain("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi");
+    // No question to him (the "?" inside the link does not count).
+    expect(result.replies[0].replace(/https?:\/\/\S+/g, "")).not.toMatch(/\?/);
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it("a link from four messages ago is not attached to an unrelated task (rig, 21 Nov: the YouTube link landed on 'Buy a zippered shirt')", async () => {
+    said("user", "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi", "2026-11-20T23:22");
+    said("tony", "A masterclass on Instagram growth, sir.", "2026-11-20T23:22");
+    said("user", "send me tasks for tomorrow", "2026-11-20T23:28");
+    said("tony", "Nine tomorrow, sir.", "2026-11-20T23:28");
+    await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:30", [
+      tools(["add_task", { title: "Buy a zippered shirt", notes: "Zamokli ko'ynak olish" }]),
+    ]);
+    expect(byTitle("Buy a zippered shirt").notes).toBe("Zamokli ko'ynak olish");
+  });
+
+  it("a link sent with the task: kept in its notes and shown ('✓ Watch: … → Mon 10:00 · 🔗 link saved')", async () => {
+    const result = await run("https://youtu.be/CN8c1edTCew watch this on Monday at 10", "2026-11-20T23:40", [tools(["add_task", { title: "Watch this video", due_at: "2026-11-23T10:00" }])]);
+    const video = tasks()[0];
+    expect(video.notes).toContain("https://youtu.be/CN8c1edTCew");
+    expect(video.title).toBe("Watch: Stand-in page title");
+    expect(result.replies[0]).toMatch(/✓ \*\*Watch: Stand-in page title\*\* → Mon 23 Nov \*\*10:00\*\* · 🔗 link saved, sir\./);
   });
 });

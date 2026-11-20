@@ -37,7 +37,27 @@ export type DoneAction = {
   reminder_at?: string;
   /** Its parts' progress, "2/3", when it has subtasks. */
   parts?: string;
+  /** A link was saved in its notes this time. */
+  link?: boolean;
+  /** Words saved in its notes this time (shown short). */
+  note?: string;
+  /** A check-in comes after this many untouched days. */
+  checkIn?: number;
 };
+
+/** What was saved alongside a change: " · 0/3 parts · 🔗 link saved · 📝 For the student from New York · 🔔 check-in after 2 untouched days". */
+export function savedMarks(action: Pick<DoneAction, "parts" | "link" | "note" | "checkIn">, withParts = true): string {
+  const note = action.note?.replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  return [
+    withParts && action.parts ? `${action.parts} parts` : undefined,
+    action.link ? "🔗 link saved" : undefined,
+    note ? `📝 ${note.length > 60 ? `${note.slice(0, 57)}…` : note}` : undefined,
+    action.checkIn ? `🔔 check-in after ${action.checkIn} untouched ${action.checkIn === 1 ? "day" : "days"}` : undefined,
+  ]
+    .filter(Boolean)
+    .map((mark) => ` · ${mark}`)
+    .join("");
+}
 
 /**
  * The confirmation, built from what is really stored, never from what the
@@ -45,7 +65,7 @@ export type DoneAction = {
  * requests gets each one listed.
  */
 export function confirmationFor(actions: DoneAction[], now: Date): string {
-  const line = (action: DoneAction) => `${baseLine(action)}${action.parts && action.tool !== "subtask" ? ` · ${action.parts} parts` : ""}`;
+  const line = (action: DoneAction) => `${baseLine(action)}${savedMarks(action, action.tool !== "subtask")}`;
   const baseLine = (action: DoneAction) => {
     const title = `**${action.title}**`;
     if (action.tool === "complete_task" || action.status === "done") return `✓ ${title} done`;

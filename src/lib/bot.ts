@@ -31,12 +31,17 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
+import { boldTimes, editRich, markdownToHtml, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
-import { claimsSent } from "./brain/checks";
+import { claimsSent, givesTime } from "./brain/checks";
 import { CLEANED, handleMessage, type Thought } from "./brain/handle";
+import { choicesFor, getRoutine } from "./routine";
+import { routineLines } from "./routine-rules";
+import { placeTask, runProposal } from "./slots";
+import { isCapture as wantsSomething } from "./brain/reliability";
+import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
-import { addMinutes, formatDue, formatTime, localDate, parseLocalDateTime, toWholeMinute } from "./time";
+import { addMinutes, formatTime, parseLocalDateTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
@@ -252,6 +257,24 @@ export function getBot(): Bot | undefined {
     await retire({ kinds: ["cmd:voice"] });
     const sent = await ctx.reply(`Voice: ${state.mode}. ${what}`);
     await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+  });
+
+  // /routine: his routine as Tony uses it. Plain code. He changes it by telling Tony ("I teach Mon–Fri 14–18").
+  tasks.command("routine", async (ctx) => {
+    const routine = await getRoutine();
+    await retire({ kinds: ["cmd:routine"] });
+    const lines = routineLines(routine).map((line) => {
+      const [name, ...rest] = line.split(": ");
+      return `- **${name}**: ${rest.join(": ")}`;
+    });
+    const text = [
+      "**Your routine, sir**, as I use it for every time I choose:",
+      ...lines,
+      "",
+      "_Tell me to change any of it: \"I teach Mon–Fri 14:00–18:00\", \"content 10–12\", \"Sunday is my free day\". When you move a task, I learn the time you prefer for that kind of task._",
+    ].join("\n");
+    const sent = await sendMarkdown(bot, ctx.chat.id, text);
+    await track(sent, "cmd:routine", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
   });
 
   tasks.command("inbox", async (ctx) => {
@@ -493,7 +516,68 @@ export function getBot(): Bot | undefined {
       return;
     }
 
-    // [🧭 Find a time] under new inbox tasks: free slots on the day he named, shown with Looks good / Change. Plain code.
+    // Tony's slot for a day he named ("sl:..."): ✓ takes it, a time he picks is his, ✏️ shows the free ones. Plain code.
+    if (payload.startsWith("sl:")) {
+      const [, action, id, value] = payload.split(":");
+      const taskId = Number(id);
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      const showOutcome = async (text: string, keyboard?: InlineKeyboard) => {
+        const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
+        if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
+        await logMessage("tony", text);
+      };
+      if (action === "ok" || action === "at") {
+        // His ✓ on Tony's slot is a yes; a slot he picked himself also teaches Tony his preferred time.
+        const result = await placeTask(taskId, new Date(Number(value) * 60_000), { learn: action === "at" });
+        await showOutcome(result.text);
+        return;
+      }
+      if (action === "edit") {
+        const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+        const task = found.data as Task | null;
+        if (!task) return showOutcome("That task no longer exists, sir.");
+        const options = await choicesFor(task, parseLocalDateTime(`${value}T12:00`)!, new Date());
+        const keyboard = new InlineKeyboard();
+        for (const option of options) keyboard.text(formatTime(option), `sl:at:${taskId}:${Math.round(option.getTime() / 60_000)}`);
+        keyboard.row().text("✏️ Other time", `sl:other:${taskId}:${value}`);
+        await showOutcome(options.length ? `**${task.title}**: these are free that day, sir.` : `**${task.title}**: nothing else is free that day, sir.`, keyboard);
+        return;
+      }
+      if (action === "other") {
+        const found = await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle();
+        const title = (found.data as { title?: string } | null)?.title ?? "the task";
+        await updateSettings({ pending_note: `He is choosing a time for task #${taskId} "${title}" on ${value}. His next message gives it: set it with update_task.`, pending_note_at: new Date().toISOString() });
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+        await say(ctx, `What time for ${b(title)}, sir?`, { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        return;
+      }
+      return;
+    }
+
+    // Tony's proposal ("pa:..."): ✓ carries it out in plain code; ✏️ lets him say otherwise.
+    if (payload.startsWith("pa:")) {
+      const [, action, id] = payload.split(":");
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      if (action === "ok") {
+        const text = await runProposal(Number(id));
+        const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text))) : false;
+        if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, boldTimes(text));
+        await logMessage("tony", text);
+        return;
+      }
+      if (action === "edit") {
+        const found = await requireDb().from("offers").select("payload").eq("id", Number(id)).maybeSingle();
+        const said = (found.data as { payload?: { say?: string } } | null)?.payload?.say ?? "your proposal";
+        await requireDb().from("offers").update({ used_at: new Date().toISOString(), used_as: "changed" }).eq("id", Number(id));
+        await updateSettings({ pending_note: `He tapped Change on your proposal: "${said}". His next message says what he wants instead.`, pending_note_at: new Date().toISOString() });
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+        await say(ctx, "What should I do instead, sir?", { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        return;
+      }
+      return;
+    }
+
+    // [🧭 Find a time] under new inbox tasks (older messages): free slots on the day he named. Plain code.
     const slot = /^slot:(\d{4}-\d{2}-\d{2}):([\d,]+)$/.exec(payload);
     if (slot) {
       await ctx.answerCallbackQuery().catch(() => undefined);
@@ -684,6 +768,12 @@ export function getBot(): Bot | undefined {
         replies.push(CLEANED);
         continue;
       }
+      if (item.kind === "link") {
+        // "Send me the video": the link, at once.
+        if (ctx.chat) await sendMarkdown(bot, ctx.chat.id, item.reply);
+        replies.push(item.reply);
+        continue;
+      }
       if (item.kind === "failed") {
         // Nothing was saved: his words are never turned into a task on the model's absence.
         const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
@@ -744,13 +834,19 @@ export function getBot(): Bot | undefined {
       let keyboard = await offerButtons(offerIds ?? [], options.link, fetched ?? [], reply);
       // Every part ticked: [✓ Mark done] [Not yet], never done without asking.
       if (thought.askComplete) keyboard = completeKeyboard(thought.askComplete.taskId);
-      // New inbox tasks for a day he named: [🧭 Find a time] offers slots; nothing moves without his tap.
-      if (thought.slotOffer && !clash) {
-        keyboard ??= new InlineKeyboard();
-        const label = thought.slotOffer.day === localDate(addMinutes(new Date(), 24 * 60)) ? "tomorrow" : thought.slotOffer.day === localDate(new Date()) ? "today" : formatDue(parseLocalDateTime(`${thought.slotOffer.day}T12:00`)!).replace(/\s*\d{2}:\d{2}$/, "");
-        const data = `slot:${thought.slotOffer.day}:${thought.slotOffer.taskIds.join(",")}`;
-        if (data.length <= 64) keyboard.text(`🧭 Find a time ${label}`, data);
+      // A day he named without a time: [✓ 10:00] [✏️ Change] for the one slot Tony proposes, or the free slots to choose from.
+      const slot = thought.slot;
+      if (slot?.kind === "propose") {
+        keyboard = new InlineKeyboard()
+          .text(`✓ ${formatTime(slot.at)}`, `sl:ok:${slot.taskId}:${Math.round(slot.at.getTime() / 60_000)}`)
+          .text("✏️ Change", `sl:edit:${slot.taskId}:${slot.day}`);
+      } else if (slot?.kind === "ask") {
+        keyboard = new InlineKeyboard();
+        for (const option of slot.options) keyboard.text(formatTime(option), `sl:at:${slot.taskId}:${Math.round(option.getTime() / 60_000)}`);
+        keyboard.row().text("✏️ Other time", `sl:other:${slot.taskId}:${slot.day}`);
       }
+      // "I'll remove Buy notebook": [✓] does it in plain code, [✏️] lets him say otherwise.
+      if (thought.proposal) keyboard = new InlineKeyboard().text("✓ Do it", `pa:ok:${thought.proposal.offerId}`).text("✏️ Change", `pa:edit:${thought.proposal.offerId}`);
       // A clash the change created: move it to the next free hour, or keep both. Plain code.
       if (clash) {
         keyboard ??= new InlineKeyboard();
@@ -880,7 +976,10 @@ export function getBot(): Bot | undefined {
     if (ctx.message.forward_origin) return shareItem(ctx);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     // A link: Tony reads the page and sums it up; Save and Task buttons come under the summary.
-    const link = /https?:\/\/[^\s<>"]+/i.exec(text)?.[0]?.replace(/[).,!?]+$/, "");
+    const found = /https?:\/\/[^\s<>"]+/i.exec(text)?.[0]?.replace(/[).,!?]+$/, "");
+    // A link with a request ("remind me to watch this on Monday") is a task: the link goes into its notes.
+    const rest = found ? text.replace(found, " ").trim() : "";
+    const link = found && !(wantsSomething(rest) || givesTime(rest) || dayFromText(rest, new Date())) ? found : undefined;
     const { reply } = await answer(ctx, text, link ? {
       link,
       note: `He sent a link: ${link}. Read it with web_fetch and sum it up: one line on what it is, then the key points as a short list. If he also asked something about it, answer that. Do not add a task or save anything yourself: Save and Task buttons are shown under your reply.`,

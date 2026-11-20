@@ -1,7 +1,7 @@
 import "server-only";
 import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
-import { clashSentence, clashesWith, confirmationFor, freeOptions, isLinkTask, latestMessage, needsDeepModel, nextFreeSlot, recentReminderNote, type DoneAction } from "./checks";
+import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction } from "./checks";
 import { env } from "../env";
 import { formatTime, localDate, parseLocalDateTime } from "../time";
 import { habitsForPrompt } from "../coach";
@@ -11,7 +11,12 @@ import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
-import { asksForTime, claimsAction, isCapture, notesToKeep, oneQuestion, unsaved, withoutClaims } from "./reliability";
+import { asksForTime, claimsAction, isCapture, linksIn, notesToKeep, oneQuestion, unsaved, withoutClaims } from "./reliability";
+import { buildPlan } from "../planner";
+import { decideFor, getRoutine, nearestFreeFor } from "../routine";
+import { partsOfDay, routineLines } from "../routine-rules";
+import { asksToAttachLink, isGenericTitle, refersToLink, titleForLink } from "../link-rules";
+import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
 
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
@@ -43,12 +48,13 @@ function recentNote(row: { pending_note: string | null; pending_note_at: string 
 
 async function loadContext() {
   const db = requireDb();
-  const [memory, tasks, projects, settings, habits] = await Promise.all([
+  const [memory, tasks, projects, settings, habits, routine] = await Promise.all([
     db.from("memory").select("id, fact").order("id"),
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(60),
     db.from("projects").select("id, name").order("sort_order"),
     db.from("settings").select("last_shared_text, last_shared_at, pending_note, pending_note_at").limit(1).maybeSingle(),
     habitsForPrompt(),
+    getRoutine(),
   ]);
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
@@ -83,6 +89,7 @@ async function loadContext() {
     habits,
     prayers: prayers || undefined,
     subtasks: await subtasksFor(openTasks.map((task) => task.id)),
+    routine: routineLines(routine).join(" · "),
   };
 }
 
@@ -126,8 +133,10 @@ export async function think(
   clash?: Clash;
   /** Every part of this task was just ticked: ask before completing it. */
   askComplete?: { taskId: number; title: string };
-  /** New inbox tasks for a day he named: offered a [Find a time] button, never placed without his tap. */
-  slotOffer?: { day: string; taskIds: number[] };
+  /** A day he named without a time: the one slot Tony proposes ([✓] [✏️]), or the free slots to choose from. */
+  slot?: Slot;
+  /** Something Tony will do once he taps ✓ ("I'll remove Buy notebook"). */
+  proposal?: { offerId: number; say: string };
 }> {
   const { channel = "telegram", now = new Date(), context: note, part } = options;
   const tools: string[] = [];
@@ -147,6 +156,9 @@ export async function think(
   if (!options.logged) await logMessage("user", part?.full ?? text, channel);
 
   const system = buildSystemPrompt({ now, ...context, message: text });
+  // What he may be answering: Tony's last message and the post he shared. A time there is one he can say "yes" to.
+  const lastTony = [...history].reverse().find((m) => m.role === "tony")?.text ?? "";
+  const heard = [lastTony, context.shared?.text].filter(Boolean).join("\n");
   // "This one" with nothing replied to: the reminder sent in the last 15 minutes.
   const recent = await recentReminders(now);
   const partNote = part
@@ -173,6 +185,11 @@ export async function think(
   const forgotten: { id: number; fact: string }[] = [];
   // Asked once to save instead of asking for a time he never offered.
   let nudged = false;
+  // Tasks for a day he named without a time; check-ins he asked for; routine he told; an action to confirm.
+  const dayOnly = new Map<number, string>();
+  const checkIns = new Map<number, number>();
+  const routineSet: { field: string; value: string | null }[] = [];
+  let proposal: { offerId: number; say: string } | undefined;
   let failed = false;
   let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
@@ -204,7 +221,7 @@ export async function think(
       let result: unknown;
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        const outcome = await runTool(call.function.name, args, now, text);
+        const outcome = await runTool(call.function.name, args, now, text, heard);
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
@@ -223,6 +240,13 @@ export async function think(
           if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) remembered.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { fact?: unknown }).fact ?? "") });
           if (call.function.name === "forget" && Number.isFinite(Number((outcome as { id?: unknown }).id))) forgotten.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { forgot?: unknown }).forgot ?? "") });
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
+          const dayAsked = (outcome as { day_only?: unknown }).day_only;
+          if (typeof dayAsked === "string" && Number.isFinite(touchedId)) dayOnly.set(touchedId, dayAsked);
+          const checkIn = (outcome as { check_in?: { days?: unknown } }).check_in;
+          if (checkIn && Number.isFinite(touchedId)) checkIns.set(touchedId, Number(checkIn.days));
+          const told = (outcome as { routine?: { field: string; value: string | null } }).routine;
+          if (call.function.name === "routine" && told) routineSet.push(told);
+          if (call.function.name === "propose") proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
             const reminderAt = (outcome as { reminder_at?: unknown }).reminder_at;
             const tool = call.function.name as DoneAction["tool"];
@@ -267,21 +291,66 @@ export async function think(
       reply = tidyReply(choices.question, [...taskIds]) || choices.question;
       break;
     }
+    // He confirms with ✓ or changes it with ✏️; the words are the proposal itself.
+    if (proposal) {
+      reply = tidyReply(proposal.say, [...taskIds]) || proposal.say;
+      break;
+    }
     // Done in one model call: the confirmation is built below from the database.
-    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || prepared)) {
+    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || prepared)) {
       if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
     }
   }
 
+  // He asked whether a link was kept, and the model asks back instead of keeping it: Tony keeps it.
+  if (changes.size === 0 && !proposal && reply && asksToAttachLink(reply)) {
+    const link = await recentLink(now, history, { minutes: 120 });
+    const { data } = await requireDb()
+      .from("tasks")
+      .select()
+      .in("status", OPEN_STATUSES)
+      .is("kind", null)
+      .gte("updated_at", new Date(now.getTime() - 30 * 60_000).toISOString())
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    const target = ((data ?? []) as Task[])[0];
+    if (link && target) {
+      const notes = (target.notes ?? "").includes(link.url) ? target.notes : [target.notes, link.url].filter(Boolean).join("\n");
+      await requireDb().from("tasks").update({ notes }).eq("id", target.id);
+      changes.set(target.id, { tool: "update_task", wrote: { notes: link.url } });
+      reply = undefined;
+    }
+  }
+
   // The confirmation: what is really stored now, one line per change, read back after every write.
   let clash: Clash | undefined;
-  let slotOffer: { day: string; taskIds: number[] } | undefined;
+  let slot: Slot | undefined;
   const problems: string[] = [];
   if (changes.size > 0) {
     const db = requireDb();
-    // Nothing he said is lost: links and details missing from the new tasks go into their notes.
+    // A link he sent with this task, or just before it, goes into its notes; a title that says nothing gets the page's.
     const added = [...changes].filter(([, change]) => change.tool === "add_task").map(([id]) => id);
+    if (added.length === 1) {
+      const row = ((await db.from("tasks").select().eq("id", added[0]).maybeSingle()).data ?? undefined) as Task | undefined;
+      const own = linksIn(text)[0];
+      const earlier = own || !refersToLink(text) ? undefined : await recentLink(now, history, { lastOnly: true });
+      const url = own ?? earlier?.url;
+      if (row && url) {
+        const patch: Partial<Task> = {};
+        if (!(row.notes ?? "").includes(url)) patch.notes = [row.notes, url].filter(Boolean).join("\n");
+        if (isGenericTitle(row.title)) {
+          const better = titleForLink(row.title, url, earlier?.title ?? (await pageTitle(url)));
+          if (better !== row.title) patch.title = better;
+        }
+        if (Object.keys(patch).length > 0) {
+          await db.from("tasks").update(patch).eq("id", row.id);
+          const change = changes.get(row.id)!;
+          change.wrote = { ...change.wrote, ...(patch.notes ? { notes: url } : {}), ...(patch.title ? { title: patch.title } : {}) };
+        }
+      }
+    }
+    // Nothing he said is lost: links and details missing from the new tasks go into their notes.
     if (added.length > 0) {
       const rows = ((await db.from("tasks").select().in("id", added)).data ?? []) as Task[];
       const partsOf = await subtasksFor(added);
@@ -291,7 +360,7 @@ export async function think(
           const notes = [row.notes, keep].filter(Boolean).join("\n");
           await db.from("tasks").update({ notes }).eq("id", row.id);
           const change = changes.get(row.id)!;
-          change.wrote = { ...change.wrote, notes: keep };
+          change.wrote = { ...change.wrote, notes: [change.wrote?.notes, keep].filter(Boolean).join("\n") };
         }
       }
     }
@@ -300,7 +369,12 @@ export async function think(
     const FIELD: Record<string, string> = { due_at: "time", notes: "notes", title: "title", status: "status", duration_minutes: "length", project_id: "project", priority: "priority" };
     for (const [id, change] of changes) {
       const task = stored.get(id);
-      const missing = change.wrote ? unsaved(task as unknown as Record<string, unknown> | undefined, change.wrote) : task ? [] : ["the task"];
+      // Notes written in two steps are read back piece by piece.
+      const wrote = change.wrote ? { ...change.wrote } : undefined;
+      const noteParts = typeof wrote?.notes === "string" ? (wrote.notes as string).split("\n").filter(Boolean) : [];
+      if (wrote) delete wrote.notes;
+      const missing = wrote ? unsaved(task as unknown as Record<string, unknown> | undefined, wrote) : task ? [] : ["the task"];
+      if (task && noteParts.some((piece) => !(task.notes ?? "").includes(piece))) missing.push("notes");
       if (missing.length) problems.push(`⚠️ ${task ? `**${task.title}**: the ${missing.map((field) => FIELD[field] ?? field).join(" and ")} did not save` : "One change did not save"}, sir.`);
       // A heads-up is confirmed only if it is really waiting to go out.
       if (change.reminder_at && task) {
@@ -310,26 +384,83 @@ export async function think(
           delete change.reminder_at;
         }
       }
+      // So is a check-in.
+      if (checkIns.has(id) && task) {
+        const waiting = await db.from("reminders").select("id").eq("task_id", id).eq("kind", "stale").eq("state", "scheduled").limit(1);
+        if ((waiting.data ?? []).length === 0) {
+          problems.push(`⚠️ The check-in for **${task.title}** did not save, sir.`);
+          checkIns.delete(id);
+        }
+      }
     }
-    // New tasks with no time stay in the inbox. If he named a day, a [Find a time] button offers slots; nothing moves without his tap.
-    const undated = [...changes]
-      .filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !isLinkTask(stored.get(id)!.title, stored.get(id)!.notes))
-      .map(([id]) => id);
-    const day = undated.length > 0 && planId === undefined ? (dayFromText(text, now) ?? (part ? dayFromText(part.full, now) : undefined)) : undefined;
-    if (day) slotOffer = { day: localDate(day), taskIds: undated };
+    // What was saved with each change, for its line: parts, a link, notes, a check-in.
     const parts = await subtasksFor([...changes.keys()]);
+    const marks = (id: number) => {
+      const wroteNotes = String(changes.get(id)?.wrote?.notes ?? "");
+      const list = parts.get(id);
+      return {
+        ...(list?.length ? { parts: progress(list) } : {}),
+        ...(/https?:\/\//.test(wroteNotes) ? { link: true } : {}),
+        ...(wroteNotes.replace(/https?:\/\/\S+/g, "").replace(/^From your message: /m, "").trim() ? { note: wroteNotes.split("\n").find((line) => line.trim() && !/^https?:\/\//.test(line.trim()))?.replace(/^From your message: /, "") } : {}),
+        ...(checkIns.has(id) ? { checkIn: checkIns.get(id) } : {}),
+      };
+    };
+
+    // A day he named without a time: one slot that fits his routine ([✓] [✏️]), or two or three to choose from.
+    // New tasks with no time and no day stay in the inbox, and no time is proposed.
+    const named = new Map(dayOnly);
+    const undated = [...changes].filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !named.has(id)).map(([id]) => id);
+    const spokenDay = undated.length > 0 && planId === undefined ? (dayFromText(text, now) ?? (part ? dayFromText(part.full, now) : undefined)) : undefined;
+    if (spokenDay) for (const id of undated) named.set(id, localDate(spokenDay));
+    for (const [id] of named) if (!stored.get(id) || !OPEN_STATUSES.includes(stored.get(id)!.status)) named.delete(id);
+    const decided = new Set<number>();
+    const slotLines: string[] = [];
+    if (named.size >= 2 && planId === undefined) {
+      // Several at once: one plan, one message, [✓ Looks good] [✏️ Change].
+      const day = parseLocalDateTime(`${[...named.values()][0]}T12:00`)!;
+      const plan = await buildPlan({ scope: "day", now, taskIds: [...named.keys()], day, lead: "Here's what I'll do, sir:" }).catch((error) => (console.error("Plan for new tasks failed:", error), undefined));
+      if (plan && "plan" in plan) {
+        planId = plan.plan.id;
+        reply = "Here is what I propose, sir.";
+        await logMessage("tony", reply, channel);
+        return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched };
+      }
+    } else if (named.size === 1) {
+      const [[id, day]] = [...named];
+      const task = stored.get(id)!;
+      const decision = await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text));
+      const label = dayLabel(day, now);
+      const extra = savedMarks(marks(id));
+      decided.add(id);
+      if (decision.decision === "propose") {
+        slot = { kind: "propose", taskId: id, title: task.title, day, at: decision.at, why: decision.why };
+        slotLines.push(`I'll put **${task.title}** ${label.when} at **${formatTime(decision.at)}**, ${decision.why}${extra}.`);
+      } else if (decision.decision === "ask") {
+        slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options };
+        slotLines.push(`**${task.title}**${extra}. When ${label.when}, sir?`);
+      } else {
+        slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
+      }
+    }
+
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
-      const list = parts.get(id);
-      return task ? [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...(list?.length ? { parts: progress(list) } : {}) }] : [];
+      if (!task || decided.has(id)) return [];
+      return [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...marks(id) }];
     });
     const confirmation = done.length ? confirmationFor(done, now) : "";
     // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
-    reply = [failed && reply ? withoutClaims(reply) : undefined, confirmation, ...problems].filter(Boolean).join("\n\n");
-    clash = await findClash([...stored.values()], now);
+    reply = [failed && reply ? withoutClaims(reply) : undefined, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
+    clash = await findClash([...stored.values()].filter((task) => !decided.has(task.id)), now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
-    if (clash) reply = `${reply}\n\n⚠️ Sir, ${clash.sentence}${clash.suggestAt ? ": move one?" : "."}`;
+    // A clash is stated, never asked about: the buttons offer the move.
+    if (clash) reply = `${reply}\n\n⚠️ ${clash.sentence}.`;
+  }
+  if (routineSet.length > 0) {
+    const label: Record<string, string> = { wake: "Wake", sleep: "Sleep", teaching: "Teaching", content: "Content", coding: "Coding", workout: "Workout", free_days: "Free days" };
+    const lines = routineSet.map((item) => `🗓 ${label[item.field] ?? item.field}: ${item.value ?? "not set"}`).join("\n");
+    reply = reply && changes.size > 0 ? `${reply}\n${lines}` : `${lines}\nNoted in your routine, sir.`;
   }
   if (saved.length > 0) {
     // Read back: a bookmark is confirmed only once it is in memory.
@@ -349,7 +480,7 @@ export async function think(
     reply = reply ? `${withoutClaims(reply) || ""}\n${lines}`.trim() : lines;
   }
   // Nothing was written, yet the words say it was: those words go.
-  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || tools.includes("media") || tools.includes("offer_task");
+  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || proposal !== undefined || tools.includes("media") || tools.includes("offer_task");
   if (!wroteSomething && reply && claimsAction(reply)) reply = withoutClaims(reply) || "Nothing has been changed yet, sir. Could you say that once more?";
   // One question at most.
   if (reply) reply = oneQuestion(reply);
@@ -359,11 +490,24 @@ export async function think(
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slotOffer };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal };
+}
+
+/** A day he named, without a time: Tony proposes one slot, or offers a few. */
+export type Slot =
+  | { kind: "propose"; taskId: number; title: string; day: string; at: Date; why: string }
+  | { kind: "ask"; taskId: number; title: string; day: string; options: Date[] };
+
+/** A day in words: `when` reads "today", "tomorrow" or "on Mon 23 Nov"; `plain` is "Today", "Tomorrow", "Mon 23 Nov". */
+export function dayLabel(day: string, now: Date): { when: string; plain: string } {
+  if (day === localDate(now)) return { when: "today", plain: "Today" };
+  if (day === localDate(new Date(now.getTime() + 24 * 60 * 60_000))) return { when: "tomorrow", plain: "Tomorrow" };
+  const name = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", weekday: "short", day: "numeric", month: "short" }).format(parseLocalDateTime(`${day}T12:00`)!).replace(",", "");
+  return { when: `on ${name}`, plain: name };
 }
 
 /** Tools that write: their success is read back from the database before it is confirmed. */
-const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link"]);
+const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine"]);
 
 const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask"]);
 
@@ -380,8 +524,10 @@ async function findClash(changed: Task[], now: Date): Promise<Clash | undefined>
   for (const task of timed) {
     const clashing = clashesWith(task, others);
     if (clashing.length === 0) continue;
-    const latest = parseLocalDateTime(`${localDate(new Date(task.due_at!))}T23:00`)!;
-    return { taskId: task.id, title: task.title, sentence: clashSentence(clashing[0], task), suggestAt: nextFreeSlot(task, others, latest) };
+    // The nearest time that is really free for its whole length, in his waking hours and out of his teaching hours.
+    const free = await nearestFreeFor(task, new Date(task.due_at!), now).catch(() => undefined);
+    const suggestAt = free && free.getTime() !== new Date(task.due_at!).getTime() ? free : undefined;
+    return { taskId: task.id, title: task.title, sentence: clashSentence(clashing[0], task), suggestAt };
   }
   return undefined;
 }

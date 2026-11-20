@@ -10,6 +10,7 @@ export const COMMANDS = [
   { command: "prayer", description: "Prayer times: /prayer on, off, hanafi or standard" },
   { command: "location", description: "Where prayer times are for (e.g. /location Xonqa tumani)" },
   { command: "voice", description: "When I speak: /voice on, off or auto" },
+  { command: "routine", description: "Your routine: the hours I use to choose times" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
   { command: "ping", description: "Check that Tony is awake" },
@@ -22,12 +23,14 @@ export const HELP = [
   "• \"Move the slides to tomorrow at 9\", \"I've done the reading\", \"drop the notebook\".",
   "• \"What's left today?\"",
   "• \"I work out in the evenings\" and I shall remember it.",
+  "• \"I teach Mon–Fri 14:00–18:00\", \"content 10–12\": your routine (/routine), which I use for every time I choose.",
+  "• \"Remind me if I don't check it for 2 days\": a check-in if a task sits untouched.",
   "Reply to one of my reminders and I know which task you mean.",
   "Forward me a post or send a photo and I shall read it and offer to make it a task.",
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today (or /list)  /tomorrow  /plan  /inbox  /prayer  /voice  /clean  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /routine  /prayer  /voice  /clean  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */

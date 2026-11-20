@@ -9,6 +9,8 @@ import { scheduleReminder } from "./reminders";
 import { getSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, localDate, parseClock, parseLocalDateTime, TIMEZONE } from "./time";
+import { getRoutine } from "./routine";
+import { blockedRanges, kindOf, preferredRanges, routineLines } from "./routine-rules";
 
 /**
  * Tony's planner. Given what is waiting (overdue and inbox tasks), what is
@@ -242,20 +244,23 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   const db = requireDb();
   const now = options.now ?? new Date();
   const first = options.day ?? now;
-  const settings = await getSettings();
+  const routine = await getRoutine();
   const days = Array.from({ length: options.scope === "week" ? 7 : 1 }, (_, n) => addMinutes(first, n * 24 * 60));
-  // His waking day: from the end of quiet hours to their start (07:00 to 23:00).
-  const windows = days.map((day) => dayWindow(day, settings.quiet_start, settings.quiet_end));
+  // His waking day, from his routine (07:00 to 23:00 unless he said otherwise).
+  const windows = days.map((day) => dayWindow(day, routine.sleep, routine.wake));
   const earliest = snap(addMinutes(now, 15));
 
-  const [taskRows, memoryRows] = await Promise.all([
+  const [taskRows, memoryRows, projectRows] = await Promise.all([
     // Drafts (tasks he just gave, not yet confirmed) are included only when planning those.
     db.from("tasks").select().in("status", options.taskIds ? [...OPEN_STATUSES, "draft"] : OPEN_STATUSES).limit(500),
     db.from("memory").select("fact").order("id"),
+    db.from("projects").select("id, name"),
   ]);
+  const projectName = new Map(((projectRows.data ?? []) as { id: number; name: string }[]).map((project) => [project.id, project.name]));
   if (taskRows.error || memoryRows.error) throw new Error(`buildPlan: ${(taskRows.error ?? memoryRows.error)!.message}`);
   const tasks = taskRows.data as Task[];
-  const memory = (memoryRows.data as { fact: string }[]).map((row) => row.fact);
+  // What the planner knows of his days: his routine first, then what he has told Tony.
+  const memory = [...routineLines(routine).map((line) => `Routine: ${line}`), ...(memoryRows.data as { fact: string }[]).map((row) => row.fact)];
 
   // Fixed: anything that already has a time still ahead in the days being planned.
   const horizonEnd = dayBounds(days[days.length - 1]).end.getTime();
@@ -305,7 +310,18 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
       continue;
     }
     const minutes = task.duration_minutes || estimateMinutes(task.title);
-    toPlace.push({ id: task.id, title: task.title, minutes, priority: task.priority, deep: isDeep(task.title, minutes, task.priority), prefer: proposal?.at });
+    // His routine: where this kind of task belongs (his usual time, its own hours), and his teaching hours kept clear.
+    const kind = kindOf(task.title, task.project_id ? projectName.get(task.project_id) : undefined);
+    toPlace.push({
+      id: task.id,
+      title: task.title,
+      minutes,
+      priority: task.priority,
+      deep: isDeep(task.title, minutes, task.priority),
+      prefer: proposal?.at,
+      within: days.flatMap((day) => preferredRanges(routine, kind, day)),
+      avoid: days.flatMap((day) => blockedRanges(routine, kind, day)),
+    });
   }
   const placement = placeAll(toPlace, busyTime, windows, earliest);
   for (const { id, at } of placement.placed) {
@@ -518,35 +534,4 @@ export async function applyPlan(planId: number, now = new Date()): Promise<{ pla
   }
   await savePlan(plan.id, { status: "applied", applied_at: now.toISOString() });
   return { plan: { ...plan, status: "applied", applied_at: now.toISOString() }, applied };
-}
-
-/**
- * One concrete slot for one task, for an unprompted suggestion: where a
- * habit points if he has told Tony one, otherwise the next free hour today.
- * Rule-based, so a suggestion costs no model call.
- */
-export async function suggestSlot(task: Task, now = new Date()): Promise<{ at: Date; reason: string } | undefined> {
-  const db = requireDb();
-  const settings = await getSettings();
-  const window = windowOf(now, settings.quiet_start);
-  const earliest = snap(addMinutes(now, 30));
-  const [fixedRows, memoryRows] = await Promise.all([
-    db.from("tasks").select().in("status", OPEN_STATUSES).gte("due_at", dayBounds(now).start.toISOString()).lt("due_at", dayBounds(now).end.toISOString()),
-    db.from("memory").select("fact").order("id"),
-  ]);
-  if (fixedRows.error || memoryRows.error) throw new Error(`suggestSlot: ${(fixedRows.error ?? memoryRows.error)!.message}`);
-  const today = (fixedRows.data as Task[]).filter((other) => other.id !== task.id);
-  const busy: Busy[] = today.filter((other) => new Date(other.due_at!).getTime() >= now.getTime() - BLOCK_MINUTES * MINUTE).map((other) => ({ at: new Date(other.due_at!), title: other.title }));
-
-  const habit = habitFor(task.title, (memoryRows.data as { fact: string }[]).map((row) => row.fact));
-  const wanted = habit ? addMinutes(dayBounds(now).start, habit.minute) : undefined;
-  if (habit && wanted && wanted.getTime() >= earliest.getTime()) {
-    const at = nextFree(wanted, busy, [window], earliest);
-    if (at && at.getTime() - wanted.getTime() <= 90 * MINUTE) return { at, reason: `you told me "${habit.fact}"` };
-  }
-  const at = nextFree(earliest, busy, [window], earliest);
-  if (!at) return undefined;
-  // "You're free after the club": name what comes just before the slot, if anything today does.
-  const before = today.filter((other) => new Date(other.due_at!).getTime() < at.getTime()).sort((x, y) => y.due_at!.localeCompare(x.due_at!))[0];
-  return { at, reason: before && at.getTime() - new Date(before.due_at!).getTime() <= 3 * 60 * MINUTE ? `you are free after ${before.title}` : `you have a free hour at ${formatTime(at)}` };
 }

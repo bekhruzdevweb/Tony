@@ -2,6 +2,8 @@ import "server-only";
 import { asksToClean } from "./checks";
 import { think } from "./index";
 import { splitIntents } from "./reliability";
+import { asksForLink } from "../link-rules";
+import { linkReply } from "../links";
 import { logMessage, type Channel } from "../messages";
 
 export type Thought = Awaited<ReturnType<typeof think>>;
@@ -9,6 +11,8 @@ export type Thought = Awaited<ReturnType<typeof think>>;
 /** One request from his message, and how it was handled. */
 export type Handled =
   | { text: string; kind: "clean" }
+  /** "Send me the video": the link itself, found in plain code. */
+  | { text: string; kind: "link"; reply: string }
   | { text: string; kind: "thought"; thought: Thought }
   | { text: string; kind: "failed"; reply: string };
 
@@ -43,6 +47,16 @@ export async function handleMessage(
       await logMessage("tony", CLEANED, channel).catch(() => undefined);
       handled.push({ text: part, kind: "clean" });
       continue;
+    }
+    // "Send me the video": answered with the link at once (photos and files go to the brain, which sends the originals).
+    if (asksForLink(part) && !/\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|voice ?notes?)\b/i.test(part)) {
+      const reply = await linkReply(part, clock()).catch((error) => (console.error("Link lookup failed:", error), undefined));
+      if (reply) {
+        if (handled.length === 0 && index === 0) await logMessage("user", text, channel).catch(() => undefined);
+        await logMessage("tony", reply, channel).catch(() => undefined);
+        handled.push({ text: part, kind: "link", reply });
+        continue;
+      }
     }
     const piece = parts.length > 1 ? { index, total: parts.length, full: text } : undefined;
     // His message is logged by the first request only (or by a clean before it), and not again on a retry.

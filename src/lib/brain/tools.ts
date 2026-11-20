@@ -12,7 +12,10 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
-import { heldToGivenTime } from "./reliability";
+import { givenTimes, heldToGivenTime, type GivenTime } from "./reliability";
+import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
+import { getRoutine, recordMove, setRoutineField } from "../routine";
+import { localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
 const TIME = "YYYY-MM-DDTHH:MM";
@@ -31,6 +34,8 @@ const taskFields = {
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
   notes: { type: "string", description: "Description: links, details, anything that would make the title long." },
   duration: { type: "integer", description: "Minutes it takes: his figure, or your estimate" },
+  day: { type: "string", description: "YYYY-MM-DD: a day he named WITHOUT a time. Leave due_at out; Tony picks or offers the time from his routine." },
+  nudge_after_days: { type: "integer", description: "\"Remind me if I don't check it for N days\": N. A check-in comes if the task sits untouched that long." },
 };
 
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
@@ -99,6 +104,23 @@ export const TOOLS: ToolDefinition[] = [
     { url: { type: "string" }, title: { type: "string", description: "Only if you know the page's real title" } },
     [],
   ),
+  tool(
+    "routine",
+    "Save part of his routine when he tells it: his hours for teaching, content, coding or workouts (\"Mon-Fri 14:00-18:00\", \"10:00-12:00\"), when he wakes or sleeps (\"07:00\"), his free days (\"Sun\"). Every scheduling decision uses it. Never guess it.",
+    { field: { type: "string", enum: [...ROUTINE_FIELDS] }, value: { type: "string", description: "As he said it, e.g. \"Mon-Fri 14:00-18:00\", \"none\" to clear" } },
+    ["field", "value"],
+  ),
+  // Instead of a question he may not follow: say what will happen; he taps ✓ (done in code) or ✏️.
+  tool(
+    "propose",
+    "When you are not sure what he wants, say what you will do and let him confirm with ✓ or change it with ✏️, instead of asking him a question. Nothing changes until he taps ✓.",
+    {
+      say: { type: "string", description: "What you will do, in one short sentence: \"I'll remove **Buy notebook**.\"" },
+      tool: { type: "string", enum: ["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember"] },
+      args: { type: "object", description: "The arguments for that tool, exactly as you would call it." },
+    },
+    ["say", "tool", "args"],
+  ),
   // Talk mode: suggests a task without creating it. He gets a [➕ Make this a task] button; only his tap creates it.
   tool(
     "offer_task",
@@ -135,6 +157,9 @@ export const TOOLS: ToolDefinition[] = [
     ["question", "options"],
   ),
 ];
+
+/** What Tony may propose and do on his ✓. */
+const PROPOSABLE = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember"]);
 
 /** Whether his words name this task (a shared word of five letters or more, by its first five). */
 const mentions = (said: string, title: string) => {
@@ -176,9 +201,28 @@ async function loadTask(id: unknown): Promise<Task | undefined> {
 }
 
 /** Reads the fields shared by add_task and update_task into a row patch. */
-async function readFields(args: Args, now: Date, said?: string): Promise<{ patch: Partial<Task>; dueAt?: Date } | { error: string }> {
+/** Whether the model's time is one of the times in these words. */
+const matchesTime = (times: GivenTime[], at: Date) =>
+  times.some((time) => ("at" in time ? Math.abs(time.at.getTime() - at.getTime()) <= 2 * 60_000 : time.minutes.includes(minuteOfDay(at))));
+
+/** Where the words a time may come from: his message, and what he is answering (Tony's last message, a post he shared). */
+export type Heard = {
+  said?: string;
+  heard?: string;
+  /** His time is applied to this task (his words are about it), correcting the model's. */
+  hold?: boolean;
+};
+
+async function readFields(
+  args: Args,
+  now: Date,
+  words: Heard = {},
+  existingDue?: string | null,
+): Promise<{ patch: Partial<Task>; dueAt?: Date; dayOnly?: string } | { error: string }> {
   const patch: Partial<Task> = {};
   let dueAt: Date | undefined;
+  let dayOnly: string | undefined;
+  const { said, heard, hold = true } = words;
 
   if (typeof args.notes === "string") patch.notes = args.notes.trim() || null;
   if (typeof args.title === "string" && args.title.trim()) {
@@ -221,14 +265,43 @@ async function readFields(args: Args, now: Date, said?: string): Promise<{ patch
     const parsed = parseLocalDateTime(args.due_at);
     if (!parsed) return { error: `could not read due_at "${args.due_at}"; use YYYY-MM-DDTHH:MM` };
     dueAt = toWholeMinute(parsed);
-    // The time he named is final: if the model picked another, his stands.
-    if (said) dueAt = heldToGivenTime(dueAt, said, now) ?? dueAt;
-    if (dueAt.getTime() < now.getTime() - 60_000) {
+    if (said !== undefined) {
+      const his = givenTimes(said, now);
+      if (his.length === 1 && hold) {
+        // The time he named is final: if the model picked another, his stands.
+        dueAt = heldToGivenTime(dueAt, said, now) ?? dueAt;
+      } else if (his.length === 0) {
+        // He gave no time. The model's time stands only if it is the one he is answering
+        // ("Shall I set it for 20:00?" "Yes") or the task's own time on another day.
+        const answering = matchesTime(givenTimes(heard ?? "", now), dueAt);
+        const sameTime = existingDue ? minuteOfDay(new Date(existingDue)) === minuteOfDay(dueAt) : false;
+        if (!answering && !sameTime) {
+          dayOnly = localDate(dueAt);
+          dueAt = undefined;
+        }
+      }
+    }
+    if (dueAt && dueAt.getTime() < now.getTime() - 60_000) {
       return { error: `${formatDue(dueAt, now)} has already passed (now is ${formatDue(now, now)}). Ask him which time he means.` };
     }
-    patch.due_at = dueAt.toISOString();
+    if (dueAt) patch.due_at = dueAt.toISOString();
   }
-  return { patch, dueAt };
+  // A day he named without a time: Tony decides or asks, from his routine.
+  if (!dueAt && !dayOnly && typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day.trim())) dayOnly = args.day.trim();
+  if (dayOnly && dayOnly < localDate(now)) return { error: `${dayOnly} has already passed. Ask him which day he means.` };
+  return { patch, dueAt, dayOnly };
+}
+
+/** "Remind me if I don't check it for N days": a check-in that waits for N untouched days. Returns when it is due. */
+async function addCheckIn(taskId: number, args: Args, said: string | undefined, now: Date): Promise<{ days: number; at: string } | undefined> {
+  const days = Number(args.nudge_after_days) > 0 ? Math.min(60, Math.round(Number(args.nudge_after_days))) : said ? checkInDays(said) : undefined;
+  if (!days) return undefined;
+  const db = requireDb();
+  await db.from("reminders").update({ state: "cancelled" }).eq("task_id", taskId).eq("kind", "stale").eq("state", "scheduled");
+  const at = checkInTime(now, days, await getRoutine());
+  const { error } = await db.from("reminders").insert({ task_id: taskId, fire_at: at.toISOString(), kind: "stale", attempt: 0, every_days: days });
+  check("check-in", error);
+  return { days, at: at.toISOString() };
 }
 
 /** Links the last thing he shared to a task, if asked to and there is one. Returns a note for the model. */
@@ -245,11 +318,11 @@ async function attachShared(args: Args, taskId: number): Promise<string | undefi
 }
 
 /** Runs one tool call. Problems come back as { ok: false }, so the model can tell the user. */
-export async function runTool(name: string, args: Args, now = new Date(), said?: string): Promise<Result> {
+export async function runTool(name: string, args: Args, now = new Date(), said?: string, heard?: string): Promise<Result> {
   const db = requireDb();
   switch (name) {
     case "add_task": {
-      const fields = await readFields(args, now, said);
+      const fields = await readFields(args, now, { said, heard });
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
       // A saved link or note gets no date unless his own words gave one: it goes to the inbox.
@@ -282,17 +355,27 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const parts = Array.isArray(args.subtasks) ? args.subtasks.map(String).filter((t) => t.trim()) : [];
       if (parts.length) await addSubtasks(task.id, parts);
       const attached = await attachShared(args, task.id);
+      const checkIn = await addCheckIn(task.id, args, said, now);
       // What was meant to be written, so it is read back before Tony confirms it.
-      return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), wrote: written(fields.patch), ...(attached ? { attached } : {}) };
+      return {
+        ok: true,
+        task_id: task.id,
+        task: taskLine(task, await loadProjects(), now),
+        wrote: written(fields.patch),
+        ...(fields.dayOnly ? { day_only: fields.dayOnly, note: "No time was set: Tony offers one from his routine. Say nothing about a time." } : {}),
+        ...(checkIn ? { check_in: checkIn } : {}),
+        ...(attached ? { attached } : {}),
+      };
     }
 
     case "update_task": {
       const task = await loadTask(args.id);
       if (!task) return fail(`no task #${args.id}`);
-      // His time holds for the task his words are about ("move IELTS prep to 10:00"), not for another one he moved alongside.
-      const fields = await readFields(args, now, said && mentions(said, task.title) ? said : undefined);
+      // His time holds for the task his words are about ("move IELTS prep to 10:00"), not for another one moved alongside.
+      const fields = await readFields(args, now, { said, heard, hold: said !== undefined && mentions(said, task.title) }, task.due_at);
       if ("error" in fields) return fail(fields.error);
       const patch = fields.patch;
+      const checkInWanted = Number(args.nudge_after_days) > 0 || (said ? checkInDays(said) !== undefined : false);
 
       const status = typeof args.status === "string" ? args.status : undefined;
       if (status && !["todo", "dropped", "skipped"].includes(status)) return fail("status must be todo, dropped or skipped");
@@ -311,8 +394,17 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       } else if (status === "todo") {
         patch.status = task.due_at ? "todo" : "inbox";
       }
-      if (Object.keys(patch).length === 0 && args.attach_shared === true) {
-        return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), attached: await attachShared(args, task.id) };
+      if (Object.keys(patch).length === 0 && (args.attach_shared === true || fields.dayOnly || checkInWanted)) {
+        const attached = args.attach_shared === true ? await attachShared(args, task.id) : undefined;
+        const checkIn = await addCheckIn(task.id, args, said, now);
+        return {
+          ok: true,
+          task_id: task.id,
+          task: taskLine(task, await loadProjects(), now),
+          ...(fields.dayOnly ? { day_only: fields.dayOnly, note: "No time was set: Tony offers one from his routine. Say nothing about a time." } : {}),
+          ...(checkIn ? { check_in: checkIn } : {}),
+          ...(attached ? { attached } : {}),
+        };
       }
       if (Object.keys(patch).length === 0) return fail("nothing to change");
 
@@ -322,8 +414,20 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
 
       if (!OPEN_STATUSES.includes(updated.status) || args.clear_due === true) await settleReminders(task.id);
       else if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
+      // He moved it to a time of his own: Tony learns where this kind of task belongs.
+      if (fields.dueAt && (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(fields.dueAt))) await recordMove(updated, fields.dueAt);
       const attached = await attachShared(args, task.id);
-      return { ok: true, task_id: task.id, task: taskLine(updated, await loadProjects(), now), status: updated.status, wrote: written(patch), ...(attached ? { attached } : {}) };
+      const checkIn = OPEN_STATUSES.includes(updated.status) ? await addCheckIn(task.id, args, said, now) : undefined;
+      return {
+        ok: true,
+        task_id: task.id,
+        task: taskLine(updated, await loadProjects(), now),
+        status: updated.status,
+        wrote: written(patch),
+        ...(fields.dayOnly ? { day_only: fields.dayOnly } : {}),
+        ...(checkIn ? { check_in: checkIn } : {}),
+        ...(attached ? { attached } : {}),
+      };
     }
 
     case "complete_task": {
@@ -378,11 +482,16 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const at = toWholeMinute(parsed);
       if (at.getTime() < now.getTime() - 60_000) return fail(`${formatDue(at, now)} has already passed`);
       const decision = decideReminder(task.due_at ? new Date(task.due_at) : null, at);
+      // Moving the task needs a time from him; with only a day, Tony decides or asks from his routine.
+      if (decision === "move" && said !== undefined && givenTimes(said, now).length === 0 && !matchesTime(givenTimes(heard ?? "", now), at) && !(task.due_at && minuteOfDay(new Date(task.due_at)) === minuteOfDay(at))) {
+        return { ok: true, task_id: task.id, task: task.title, day_only: localDate(at), note: "No time was set: Tony offers one from his routine. Say nothing about a time." };
+      }
       if (decision === "move") {
         // A reminder after the task's time (or for an undated task) is a reschedule: the task itself moves.
         const moved = await db.from("tasks").update({ due_at: at.toISOString(), status: task.status === "inbox" ? "todo" : task.status }).eq("id", task.id);
         check("set_reminder", moved.error);
         await scheduleReminder(task.id, at);
+        if (!task.due_at || minuteOfDay(new Date(task.due_at)) !== minuteOfDay(at)) await recordMove(task, at);
         return { ok: true, task_id: task.id, task: task.title, moved_to: formatDue(at, now), wrote: { due_at: at.toISOString() } };
       }
       if (decision === "same") return { ok: true, task_id: task.id, task: task.title, note: "it is already set for that time" };
@@ -445,6 +554,21 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         check("save_link", error);
       }
       return { ok: true, saved: title, url };
+    }
+
+    case "routine": {
+      const result = await setRoutineField(String(args.field ?? ""), String(args.value ?? ""));
+      return result.ok ? { ok: true, routine: { field: result.field, value: result.value } } : fail(result.error);
+    }
+
+    case "propose": {
+      const say = typeof args.say === "string" ? args.say.trim().slice(0, 300) : "";
+      const toolName = String(args.tool ?? "");
+      const toolArgs = args.args && typeof args.args === "object" && !Array.isArray(args.args) ? (args.args as Args) : undefined;
+      if (!say || !toolArgs || !PROPOSABLE.has(toolName)) return fail("propose needs say, a tool (add_task, update_task, complete_task, set_reminder, subtask, remember) and its args");
+      const { data, error } = await db.from("offers").insert({ kind: "action", payload: { say, tool: toolName, args: toolArgs, said: said ?? null, heard: heard ?? null } }).select("id").single();
+      check("propose", error);
+      return { ok: true, proposal_id: (data as { id: number }).id, say };
     }
 
     case "offer_task": {

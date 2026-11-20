@@ -6,7 +6,8 @@ import { scheduleReminder, settleReminders } from "./reminders";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { b } from "./html";
 import { finishTask } from "./recurrence";
-import { addMinutes, dayBounds, formatTime, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
+import { addMinutes, formatTime, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
+import { recordMove, timeOnDay } from "./routine";
 
 const weekdayOf = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short" }).format(at);
 
@@ -57,30 +58,21 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       await settleReminders(task.id);
       return { text: `Dropped, sir. ${b(task.title)} is off the list.`, keyboard: null };
 
-    // "Put it on today": at its usual time if that is still ahead today,
-    // otherwise the next full hour that is at least half an hour away.
-    case "today": {
-      const { start, end } = dayBounds(now);
-      const hour = 60 * 60_000;
-      let at = new Date(Math.ceil((now.getTime() + hour / 2) / hour) * hour);
-      // Late in the evening that hour is already tomorrow; then simply soon.
-      if (at.getTime() >= end.getTime()) at = toWholeMinute(addMinutes(now, 15));
-      if (task.due_at) {
-        const usual = new Date(start.getTime() + minuteOfDay(new Date(task.due_at)) * 60_000);
-        if (usual.getTime() > now.getTime()) at = usual;
-      }
-      await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
-      await scheduleReminder(task.id, at);
-      return { text: `On today's list at ${b(formatTime(at))}, sir.`, keyboard: null };
-    }
-
-    // Saturday at 10:00 (the coming one).
+    // "Today", "This weekend": on that day at its own time if that is free, otherwise where his routine
+    // puts this kind of task, never on top of something else.
+    case "today":
     case "weekend": {
-      let at = parseLocalDateTime(`${localDate(now)}T10:00`)!;
-      for (let i = 0; i < 8 && (weekdayOf(at) !== "Sat" || at.getTime() <= now.getTime()); i++) at = addMinutes(at, 24 * 60);
-      await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
-      await scheduleReminder(task.id, at);
-      return { text: `Set for ${b(`Saturday at ${formatTime(at)}`)}, sir.`, keyboard: null };
+      let day = now;
+      if (action === "weekend") {
+        day = parseLocalDateTime(`${localDate(now)}T12:00`)!;
+        for (let i = 0; i < 8 && (weekdayOf(day) !== "Sat" || localDate(day) === localDate(now)); i++) day = addMinutes(day, 24 * 60);
+      }
+      const slot = await timeOnDay(task, day, now);
+      const name = action === "today" ? "today" : "Saturday";
+      if (!slot) return { text: `${name === "today" ? "Today" : "Saturday"} is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
+      await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo" });
+      await scheduleReminder(task.id, slot.at);
+      return { text: `${b(task.title)}: ${name} at ${b(formatTime(slot.at))}${slot.why ? `, ${slot.why}` : ""}, sir.`, keyboard: null };
     }
 
     case "snooze": {
@@ -96,16 +88,18 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       }
       await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
       await scheduleReminder(task.id, at);
+      // He chose this time himself: Tony learns where this kind of task belongs.
+      await recordMove(task, at);
       return { text: `Moved to ${b(formatTime(at))}, sir.`, keyboard: null };
     }
 
     case "tomorrow": {
-      // Tomorrow's date, at the task's own time of day (09:00 for an undated task).
-      const time = task.due_at ? formatTime(new Date(task.due_at)) : "09:00";
-      const at = parseLocalDateTime(`${localDate(addMinutes(now, 24 * 60))}T${time}`)!;
-      await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
-      await scheduleReminder(task.id, at);
-      return { text: `Moved to ${b(`tomorrow at ${formatTime(at)}`)}, sir.`, keyboard: null };
+      // Tomorrow at its own time of day if that is free; otherwise (or for an undated task) where his routine puts it.
+      const slot = await timeOnDay(task, addMinutes(now, 24 * 60), now);
+      if (!slot) return { text: `Tomorrow is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
+      await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo" });
+      await scheduleReminder(task.id, slot.at);
+      return { text: `Moved to ${b(`tomorrow at ${formatTime(slot.at)}`)}${slot.why ? `, ${slot.why}` : ""}, sir.`, keyboard: null };
     }
 
     case "resched":

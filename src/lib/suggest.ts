@@ -5,7 +5,7 @@ import { requireDb } from "./db";
 import { env } from "./env";
 import { b, esc, plain } from "./html";
 import { logMessage } from "./messages";
-import { suggestSlot } from "./planner";
+import { timeOnDay } from "./routine";
 import { data } from "./reminder-messages";
 import { HOURLY_MESSAGE_CAP } from "./reminders";
 import type { Settings } from "./settings";
@@ -13,10 +13,12 @@ import { OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, inWindow, minuteOfDay } from "./time";
 
 /**
- * Tony's unprompted suggestions. When a task is overdue, or the next hour
- * or two is free and something waits in the inbox, he proposes one concrete
- * slot himself ("You are free after the club. Reading at 21:00?") with
- * buttons. At most three a day, never two within two hours, never at night.
+ * Tony's unprompted suggestions. When a task is overdue, he says where he
+ * will put it ("I'll put it at 21:00, your workout time") and offers
+ * [✓ 21:00] [Tomorrow] [Drop] [Other…]; the time comes from his routine and
+ * is free for the task's whole length. Inbox items (no time, no day) are
+ * never given a time he did not ask for. At most three a day, never two
+ * within two hours, never at night.
  */
 export const MAX_SUGGESTIONS_PER_DAY = 3;
 const MIN_GAP_MINUTES = 120;
@@ -24,7 +26,6 @@ const MIN_GAP_MINUTES = 120;
 const OVERDUE_MINUTES = 45;
 const MINUTE = 60_000;
 
-const sentence = (text: string) => text[0].toUpperCase() + text.slice(1);
 
 export async function runSuggestions(bot: Bot, chatId: number, settings: Settings, now = new Date()): Promise<number> {
   // Looked at every quarter of an hour, which is often enough and keeps the minute tick light.
@@ -58,28 +59,23 @@ export async function runSuggestions(bot: Bot, chatId: number, settings: Setting
   const overdue = tasks
     .filter((task) => fresh(task) && task.due_at && now.getTime() - new Date(task.due_at).getTime() > OVERDUE_MINUTES * MINUTE && !hasReminder.has(task.id))
     .sort((x, y) => x.priority - y.priority || x.due_at!.localeCompare(y.due_at!))[0];
-  // Otherwise, once a day, the oldest inbox item, if the coming hours are free.
-  const gapUsed = made.some((row) => tasks.find((task) => task.id === Number(row.task_id))?.status === "inbox");
-  const inbox = overdue || gapUsed ? undefined : tasks.filter((task) => fresh(task) && task.status === "inbox").sort((x, y) => x.priority - y.priority || x.created_at.localeCompare(y.created_at))[0];
-  const task = overdue ?? inbox;
+  // Inbox items are never offered a time he did not ask for.
+  const task = overdue;
   if (!task) return 0;
 
-  const slot = await suggestSlot(task, now);
-  if (!slot) return 0;
-  // An inbox item is only raised for a gap that is close: free now, not free tonight.
-  if (!overdue && slot.at.getTime() - now.getTime() > 90 * MINUTE) return 0;
+  // Today, at its own time of day if that is still ahead and free, else where his routine puts it.
+  const slot = await timeOnDay(task, now, now);
+  if (!slot || slot.at.getTime() <= now.getTime()) return 0;
 
   const time = formatTime(slot.at, settings.timezone);
-  const html = overdue
-    ? `💡 Sir, ${b(task.title)} is still open. ${esc(sentence(slot.reason))}: shall I put it at ${b(time)}?`
-    : `💡 Sir, ${esc(slot.reason)}. ${b(task.title)} at ${b(time)}?`;
-  // Guessable answers as buttons, and a way out for anything else.
+  const html = `💡 Sir, ${b(task.title)} is still open. I'll put it at ${b(time)}${slot.why ? `, ${esc(slot.why)}` : ""}.`;
+  // ✓ takes it; the others are the ways out.
   const keyboard = new InlineKeyboard()
-    .text(`Yes, ${time}`, data("move", task.id, Math.round(slot.at.getTime() / MINUTE)))
+    .text(`✓ ${time}`, data("move", task.id, Math.round(slot.at.getTime() / MINUTE)))
     .text("Tomorrow", data("tomorrow", task.id))
     .row()
-    .text(overdue ? "Drop it" : "Not today", overdue ? data("drop", task.id) : `sg:no:${task.id}`)
-    .text("Other…", `oth:${task.id}`);
+    .text("Drop it", data("drop", task.id))
+    .text("✏️ Other…", `oth:${task.id}`);
 
   await retire({ kinds: ["prompt"], taskId: task.id }, now);
   const messageId = await sendHtml(bot, chatId, html, { keyboard, silent: !overdue && task.priority === 4 });
