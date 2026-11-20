@@ -130,6 +130,12 @@ describe("Day but no time: ALWAYS asked, 2–3 real free slots, best first with 
     // Every option has a reason he can read; the first is the best.
     expect(decision.options[0].why).toBeTruthy();
   });
+  it("the others come from other parts of the day (rig, 21 Nov: 07:00 and 09:00 were both offered)", () => {
+    const busy = [{ ...block("2026-11-23T10:00", 240), title: "Watch: Instagram Masterclass" }];
+    const decision = asked(decideSlot({ minutes: 30, kind: "watch", day: monday, now: NOW, routine: routine({ learned: { watch: [1230, 1230] } }), busy }));
+    expect(decision.options.map((option) => hhmm(option.at))).toEqual(["20:30", "07:00", "14:15"]);
+    expect(decision.options[2].why).toBe("right after **Watch: Instagram Masterclass** ends");
+  });
   it("options are at least 90 minutes apart, inside his waking day, and never in the past", () => {
     const tonight = at("2026-11-20T19:00");
     const decision = asked(decideSlot({ minutes: 30, kind: "other", day: tonight, now: tonight, routine: routine(), busy: [] }));

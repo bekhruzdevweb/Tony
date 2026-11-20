@@ -587,7 +587,7 @@ export function getBot(): Bot | undefined {
         const title = (found.data as { title?: string } | null)?.title ?? "the task";
         await setPendingSlot({ task_id: taskId, day: value });
         await updateSettings({ pending_note: `He is choosing a time for task #${taskId} "${title}" on ${value}. His next message gives it: set it with update_task.`, pending_note_at: new Date().toISOString() });
-        const waiting = `✏️ **${title}**, ${dayLabel(value, new Date()).plain.replace(/,$/, "")}: type the time.`;
+        const waiting = `✏️ **${title}** ${dayLabel(value, new Date()).when.replace(/,$/, "")}: type the time.`;
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(waiting)) : false;
         if (!edited) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
         return;

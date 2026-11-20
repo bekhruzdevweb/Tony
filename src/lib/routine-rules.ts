@@ -457,8 +457,16 @@ export function rankSlots(input: SlotInput, starts = freeStarts(input)): SlotOpt
     fallback = "the first free time";
   }
 
+  // The others: the first free time in each other part of the day (morning, afternoon, evening), then any; 90 minutes apart.
+  const firstInParts = [
+    [0, 12 * 60],
+    [12 * 60, 17 * 60],
+    [17 * 60, 2 * DAY_MINUTES],
+  ]
+    .map(([from, to]) => starts.find((start) => minuteOf(start) >= from && minuteOf(start) < to))
+    .filter((start): start is number => start !== undefined);
   const chosen = [best];
-  for (const start of [...spreadSlots(starts, midnight, 6), ...starts]) {
+  for (const start of [...firstInParts, ...starts]) {
     if (chosen.length >= 3) break;
     if (chosen.every((other) => Math.abs(other - start) >= APART * MINUTE)) chosen.push(start);
   }
