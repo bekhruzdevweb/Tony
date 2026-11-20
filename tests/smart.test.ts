@@ -10,6 +10,7 @@ import {
   freeTimeText,
   groupBursts,
   isFreeTimeRequest,
+  isRuleRequest,
   mergeable,
   missedToday,
   pickFreeItem,
@@ -49,6 +50,12 @@ describe("b) Situation rules", () => {
     expect(ruleHints("I'm tired, don't want to work out", [rule]).map((r) => r.id)).toEqual([1]);
     expect(ruleHints("what's my workout tomorrow?", [rule])).toEqual([]);
     expect(ruleHints("I'm tired of grammar", [rule])).toEqual([]);
+  });
+  it("'when I'm not motivated…, send me this video' is a rule to keep; 'If you remember…, can you send it to me' is a request (15:41)", () => {
+    expect(isRuleRequest("when I'm not motivated to work out, send me this video")).toBe(true);
+    expect(isRuleRequest("if I skip the gym for 2 days, send me the clip")).toBe(true);
+    expect(isRuleRequest("If you remember I sent you a one-post like add this feature to my website, can you send it to me with this image?")).toBe(false);
+    expect(isRuleRequest("send me that video")).toBe(false);
   });
   it("'show my rules' and its variants, never 'rules for the club'", () => {
     for (const text of ["show my rules", "my rules", "rules", "what are my rules?", "list my rules"]) expect(asksForRules(text)).toBe(true);

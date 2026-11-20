@@ -113,7 +113,8 @@ export async function budgetWarnings(now = new Date()): Promise<string[]> {
 export async function runBackup(now = new Date()): Promise<boolean> {
   const db = requireDb();
   const [tasks, memory, library, media] = await Promise.all([
-    db.from("tasks").select().neq("kind", "prayer").limit(5000),
+    // (Ordinary tasks have no kind: "kind is not prayer" must keep them.)
+    db.from("tasks").select().or("kind.is.null,kind.neq.prayer").limit(5000),
     db.from("memory").select().limit(2000),
     db.from("library").select().limit(5000),
     db.from("media").select("id, kind, file_id, caption, description, note, task_id, created_at").limit(5000),

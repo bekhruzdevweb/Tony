@@ -827,13 +827,15 @@ describe("Phase 1 · memory: only facts he stated", () => {
     expect(result.replies[0]).toContain("📝 Remembered: Lives in Chorazm Honka");
   });
 
-  it("the Save button keeps the link and its title, never Tony's reply (rows 5 and 7)", async () => {
+  it("the Save button keeps the link and its title, never Tony's reply (rows 5 and 7); since phase b, in the library, not memory", async () => {
     const offer = state.db.insert("offers", {
       kind: "link",
       payload: { url: "https://www.youtube.com/watch?v=Ch4Sl0POBhU", title: "How to Build a Personal Brand (Full Course)", summary: "This is Caleb Ralston's 6 h 22 min course, sir." },
     });
     await useOffer("s", Number(offer.id), at("2026-11-20T23:07"));
-    expect(state.db.rows("memory").map((row) => row.fact)).toEqual(["Saved link: How to Build a Personal Brand (Full Course) (https://www.youtube.com/watch?v=Ch4Sl0POBhU)"]);
+    expect(state.db.rows("memory")).toHaveLength(0);
+    expect(state.db.rows("library").map((row) => [row.title, row.url])).toEqual([["How to Build a Personal Brand (Full Course)", "https://www.youtube.com/watch?v=Ch4Sl0POBhU"]]);
+    expect(JSON.stringify(state.db.rows("library"))).not.toMatch(/Caleb Ralston's 6 h/);
   });
 
   it("/memory lists what Tony keeps and forgets one on a tap", async () => {

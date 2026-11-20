@@ -1,5 +1,6 @@
 import "server-only";
 import { requireDb } from "./db";
+import { saveToLibrary } from "./library";
 import { addScheduledTask } from "./reminders";
 import { addInboxTask } from "./tasks";
 import { formatDue } from "./time";
@@ -41,11 +42,10 @@ export async function useOffer(how: string, id: number, now = new Date()): Promi
       toast = `Added to the inbox: ${title}.`;
     }
   } else if (offer.kind === "link" && how === "s") {
-    // The link and its title only: Tony's own summary is never stored as if it were about him (memory rows 5 and 7).
-    const fact = `Saved link: ${offer.payload.title ?? offer.payload.url} (${offer.payload.url})`.slice(0, 300);
-    const { error } = await db.from("memory").insert({ fact, source: "link" });
-    if (error) throw new Error(`useOffer: ${error.message}`);
-    toast = "Saved, sir. Ask me for it any time.";
+    // Into his library (phase b), with its title: never into memory, which holds facts about him (memory rows 5, 7, 8).
+    const saved = await saveToLibrary({ kind: "link", url: offer.payload.url, title: offer.payload.title ?? null, source: "saved" });
+    if (saved === undefined) throw new Error("useOffer: the link could not be saved");
+    toast = "Saved to your library, sir. Ask me for it any time.";
   } else if (offer.kind === "link" && how === "k") {
     const title = `Read: ${offer.payload.title ?? offer.payload.url}`.slice(0, 200);
     const task = await addInboxTask(title);

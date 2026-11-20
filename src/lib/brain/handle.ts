@@ -13,7 +13,7 @@ import { findInLibrary } from "../library";
 import { itemLabel } from "../library-rules";
 import { rulesView } from "../rules";
 import { suggestFreeTime } from "../free-time";
-import { asksForRules, saysFree } from "../smart-rules";
+import { asksForRules, isRuleRequest, saysFree } from "../smart-rules";
 import { requireDb } from "../db";
 
 export type Thought = Awaited<ReturnType<typeof think>>;
@@ -131,9 +131,11 @@ export async function handleMessage(
       handled.push({ text: part, kind: "undo" });
       continue;
     }
+    // "When I'm not motivated…, send me this video" is a rule to keep (the brain saves it), never "send it now".
+    const conditional = isRuleRequest(part);
     // "Send me that photo": the original, at once. A video counts only if a saved video matches; otherwise it is a link.
     const wantsFile = /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?)\b/i.test(part);
-    if (asksForMedia(part) && (wantsFile || /\bvideos?\b/i.test(part))) {
+    if (!conditional && asksForMedia(part) && (wantsFile || /\bvideos?\b/i.test(part))) {
       const found = await findMedia(part, 3, clock()).catch((error) => (console.error("Media lookup failed:", error), []));
       const usable = wantsFile ? found : found.filter((item) => item.kind === "video" || item.kind === "animation");
       if (usable.length > 0) {
@@ -143,7 +145,7 @@ export async function handleMessage(
       }
     }
     // "Send me the video": answered with the link at once.
-    if (asksForLink(part) && !wantsFile) {
+    if (!conditional && asksForLink(part) && !wantsFile) {
       const reply = await linkReply(part, clock()).catch((error) => (console.error("Link lookup failed:", error), undefined));
       if (reply) {
         await logHis();
@@ -153,7 +155,7 @@ export async function handleMessage(
       }
     }
     // Nothing recent fits: his library, everything he ever sent ("that Instagram video", "the photo I sent yesterday").
-    if (asksForMedia(part) || asksForLink(part)) {
+    if (!conditional && (asksForMedia(part) || asksForLink(part))) {
       const found = await findInLibrary(part, clock()).catch(() => ({}) as Awaited<ReturnType<typeof findInLibrary>>);
       if (found.found) {
         await logHis();
