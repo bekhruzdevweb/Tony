@@ -16,8 +16,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 6 | The app (PWA): Today, Inbox, Upcoming, Projects, task sheet, Chat, Settings | Passed |
 | 7 | Briefs, missed tasks, memory; repeating tasks roll forward | Built, awaiting your check |
 | 8 | Live week | Not started |
-| R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Built, awaiting your check |
-| D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Built, awaiting your check |
+| R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Passed |
+| D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Passed |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
