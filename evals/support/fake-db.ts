@@ -176,11 +176,31 @@ export function createFakeDb(migrations = join(__dirname, "../../supabase/migrat
   const clash = (t: Table, row: Row, keys?: string[][]) =>
     t.rows.find((other) => (keys ?? t.unique).some((cols) => cols.every((c) => row[c] !== null && row[c] !== undefined && compare(other[c], String(row[c])) === 0)));
 
+  /**
+   * The tasks_history trigger (migration 0022), as Postgres runs it: every
+   * change to a task is recorded, except prayers, drafts and saves that
+   * changed nothing but updated_at.
+   */
+  const recordHistory = (name: string, action: "insert" | "update" | "delete", before: Row | null, after: Row | null) => {
+    if (name !== "tasks" || !tables.has("task_history")) return;
+    const row = (after ?? before)!;
+    if (row.kind === "prayer") return;
+    if (action === "insert" && after?.status === "draft") return;
+    if (action === "update" && before?.status === "draft" && after?.status === "draft") return;
+    if (action === "delete" && before?.status === "draft") return;
+    if (action === "update") {
+      const strip = (value: Row) => JSON.stringify({ ...value, updated_at: undefined });
+      if (strip(before!) === strip(after!)) return;
+    }
+    insert("task_history", { task_id: row.id, action, before: before ? { ...before } : null, after: after ? { ...after } : null });
+  };
+
   const insert = (name: string, row: Row): Row => {
     const t = need(name);
     const full = fill(t, row);
     if (clash(t, full)) throw Object.assign(new Error("duplicate key value violates unique constraint"), { status: 409, code: "23505" });
     t.rows.push(full);
+    recordHistory(name, "insert", null, full);
     return full;
   };
 
@@ -273,8 +293,10 @@ export function createFakeDb(migrations = join(__dirname, "../../supabase/migrat
         for (const fault of faults) if (fault.table === name) for (const field of fault.drop) delete patch[field];
         rows = matching();
         for (const row of rows) {
+          const before = { ...row };
           Object.assign(row, patch);
           if (t.columns.has("updated_at") && !("updated_at" in patch)) row.updated_at = new Date().toISOString();
+          recordHistory(name, "update", before, { ...row });
         }
         if (!prefer.includes("return=representation")) return new Response(null, { status: 204 });
         return single(rows.map(embed), headers, json);
@@ -282,6 +304,7 @@ export function createFakeDb(migrations = join(__dirname, "../../supabase/migrat
       if (method === "DELETE") {
         rows = matching();
         t.rows = t.rows.filter((row) => !rows.includes(row));
+        for (const row of rows) recordHistory(name, "delete", row, null);
         // "on delete cascade" for the tables that hang off tasks.
         if (name === "tasks") {
           const gone = new Set(rows.map((row) => row.id));

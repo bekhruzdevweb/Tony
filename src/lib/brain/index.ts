@@ -3,7 +3,8 @@ import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
 import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction } from "./checks";
 import { env } from "../env";
-import { formatTime, localDate, parseLocalDateTime } from "../time";
+import { formatDay, formatTime, localDate, parseLocalDateTime, relativeDay } from "../time";
+import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
 import { logMessage, recentMessages, type Channel } from "../messages";
@@ -11,7 +12,7 @@ import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
-import { asksForTime, claimsAction, isCapture, linksIn, notesToKeep, oneQuestion, unsaved, withoutClaims } from "./reliability";
+import { asksForTime, claimsAction, isCapture, linksIn, notesToKeep, oneQuestion, unsaved, withoutClaims, withoutInternals, withoutSendClaims } from "./reliability";
 import { buildPlan } from "../planner";
 import { decideFor, getRoutine, nearestFreeFor } from "../routine";
 import { partsOfDay, routineLines } from "../routine-rules";
@@ -90,6 +91,8 @@ async function loadContext() {
     prayers: prayers || undefined,
     subtasks: await subtasksFor(openTasks.map((task) => task.id)),
     routine: routineLines(routine).join(" · "),
+    // What is attached to each open task, so Tony can say what a task holds.
+    media: await attachmentCounts(openTasks.map((task) => task.id)),
   };
 }
 
@@ -159,6 +162,8 @@ export async function think(
   // What he may be answering: Tony's last message and the post he shared. A time there is one he can say "yes" to.
   const lastTony = [...history].reverse().find((m) => m.role === "tony")?.text ?? "";
   const heard = [lastTony, context.shared?.text].filter(Boolean).join("\n");
+  // What he himself said lately: the only source of facts to remember.
+  const his = [part?.full ?? text, ...history.filter((m) => m.role === "user").slice(-2).map((m) => m.text)].join("\n");
   // "This one" with nothing replied to: the reminder sent in the last 15 minutes.
   const recent = await recentReminders(now);
   const partNote = part
@@ -221,7 +226,7 @@ export async function think(
       let result: unknown;
       try {
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        const outcome = await runTool(call.function.name, args, now, text, heard);
+        const outcome = await runTool(call.function.name, args, now, text, heard, his);
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
@@ -301,6 +306,14 @@ export async function think(
       if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
     }
+  }
+
+  // The model's own words, before any receipt is added. Nothing about tools, filters or errors;
+  // and "Here it is, sir" only when something is really being sent.
+  if (reply) {
+    const plain = withoutInternals(reply);
+    const honest = mediaIds?.length ? plain : withoutSendClaims(plain);
+    if (honest !== reply) reply = honest || (honest === plain ? undefined : "I couldn't find that one, sir.");
   }
 
   // He asked whether a link was kept, and the model asks back instead of keeping it: Tony keeps it.
@@ -393,14 +406,15 @@ export async function think(
         }
       }
     }
-    // What was saved with each change, for its line: parts, a link, notes, a check-in.
-    const parts = await subtasksFor([...changes.keys()]);
+    // What each task holds, for its receipt: parts, a link, photos and files (read back), notes written now, a check-in.
+    const [parts, attached] = await Promise.all([subtasksFor([...changes.keys()]), attachmentCounts([...changes.keys()])]);
     const marks = (id: number) => {
       const wroteNotes = String(changes.get(id)?.wrote?.notes ?? "");
       const list = parts.get(id);
       return {
         ...(list?.length ? { parts: progress(list) } : {}),
-        ...(/https?:\/\//.test(wroteNotes) ? { link: true } : {}),
+        ...(/https?:\/\//.test(stored.get(id)?.notes ?? "") ? { link: true } : {}),
+        ...(attached.has(id) ? { media: attached.get(id) } : {}),
         ...(wroteNotes.replace(/https?:\/\/\S+/g, "").replace(/^From your message: /m, "").trim() ? { note: wroteNotes.split("\n").find((line) => line.trim() && !/^https?:\/\//.test(line.trim()))?.replace(/^From your message: /, "") } : {}),
         ...(checkIns.has(id) ? { checkIn: checkIns.get(id) } : {}),
       };
@@ -437,7 +451,7 @@ export async function think(
         slotLines.push(`I'll put **${task.title}** ${label.when} at **${formatTime(decision.at)}**, ${decision.why}${extra}.`);
       } else if (decision.decision === "ask") {
         slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options };
-        slotLines.push(`**${task.title}**${extra}. When ${label.when}, sir?`);
+        slotLines.push(`**${task.title}**${extra}. When ${label.when.replace(/,$/, "")}, sir?`);
       } else {
         slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
       }
@@ -498,12 +512,18 @@ export type Slot =
   | { kind: "propose"; taskId: number; title: string; day: string; at: Date; why: string }
   | { kind: "ask"; taskId: number; title: string; day: string; options: Date[] };
 
-/** A day in words: `when` reads "today", "tomorrow" or "on Mon 23 Nov"; `plain` is "Today", "Tomorrow", "Mon 23 Nov". */
+/**
+ * A day in words, always with its weekday and date, "today" and "tomorrow"
+ * by the day he is living (after midnight, the coming morning is "tomorrow"):
+ * `when` reads "tomorrow, Sat 21 Nov," or "on Mon 23 Nov"; `plain` reads
+ * "Tomorrow, Sat 21 Nov," or "Mon 23 Nov".
+ */
 export function dayLabel(day: string, now: Date): { when: string; plain: string } {
-  if (day === localDate(now)) return { when: "today", plain: "Today" };
-  if (day === localDate(new Date(now.getTime() + 24 * 60 * 60_000))) return { when: "tomorrow", plain: "Tomorrow" };
-  const name = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", weekday: "short", day: "numeric", month: "short" }).format(parseLocalDateTime(`${day}T12:00`)!).replace(",", "");
-  return { when: `on ${name}`, plain: name };
+  const noon = parseLocalDateTime(`${day}T12:00`)!;
+  const name = formatDay(noon, now);
+  const relative = relativeDay(noon, now);
+  if (!relative) return { when: `on ${name}`, plain: name };
+  return { when: `${relative}, ${name},`, plain: `${relative[0].toUpperCase()}${relative.slice(1)}, ${name},` };
 }
 
 /** Tools that write: their success is read back from the database before it is confirmed. */

@@ -128,8 +128,10 @@ export function placeAll(items: ToPlace[], busy: Interval[], windows: DayWindow[
 export function dayFromText(text: string, now: Date): Date | undefined {
   const t = text.toLowerCase();
   const plus = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60_000);
-  if (/\bday after tomorrow\b/.test(t)) return plus(2);
-  if (/\btomorrow\b/.test(t)) return plus(1);
+  // Between midnight and 05:00 he has not slept yet: "tomorrow" is the coming morning's date.
+  const tomorrow = new Date(now.getTime() + 5 * 60 * 60_000).getUTCHours() < 5 ? 0 : 1;
+  if (/\bday after (tomorrow|tmrw?|tomm?orr?ow)\b/.test(t)) return plus(tomorrow + 1);
+  if (/\b(tomorrow|tmrw?|tomm?orr?ow)\b/.test(t)) return plus(tomorrow);
   if (/\b(today|tonight|this (morning|afternoon|evening))\b/.test(t)) return now;
   const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const named = names.findIndex((name) => new RegExp(`\\b${name}\\b`).test(t));

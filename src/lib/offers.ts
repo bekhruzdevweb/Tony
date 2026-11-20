@@ -41,7 +41,8 @@ export async function useOffer(how: string, id: number, now = new Date()): Promi
       toast = `Added to the inbox: ${title}.`;
     }
   } else if (offer.kind === "link" && how === "s") {
-    const fact = `Saved link: ${offer.payload.title ?? offer.payload.url} (${offer.payload.url})${offer.payload.summary ? `. ${offer.payload.summary}` : ""}`.slice(0, 300);
+    // The link and its title only: Tony's own summary is never stored as if it were about him (memory rows 5 and 7).
+    const fact = `Saved link: ${offer.payload.title ?? offer.payload.url} (${offer.payload.url})`.slice(0, 300);
     const { error } = await db.from("memory").insert({ fact, source: "link" });
     if (error) throw new Error(`useOffer: ${error.message}`);
     toast = "Saved, sir. Ask me for it any time.";

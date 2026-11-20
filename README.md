@@ -18,6 +18,10 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 8 | Live week | Not started |
 | R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Passed |
 | D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Passed |
+| P1 | Reliability II: change history and /undo, notes appended, receipts with attachments, send-now, night rule, memory hygiene and /memory | Built, awaiting your check |
+| P2 | Personality: companion and advisor first, natural replies with a small receipt line | Not started |
+| P3 | Smart context: bursts, library, situation rules, routine, scheduling, Free Time list, follow-ups | Not started |
+| P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Not started |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -514,6 +518,42 @@ that broke it.
    (read from the migrations). The model is scripted to repeat its real
    mistakes. `npm run build` runs every test first (`prebuild`), so a failing
    case stops the deploy.
+
+## Reliability II (Phase 1)
+
+From an audit of 275 real messages and the database. Every rule has a test
+made from the message that broke it; `npm run build` runs them all first.
+
+- **Every write is read back.** Tony re-reads each new task, move, completion,
+  attachment and note before he confirms it, and the reply is built only from
+  what is stored. "Here it is, sir" is said only after Telegram delivers the
+  photo; otherwise those words are removed.
+- **Notes are added to, never replaced.** Task 11 lost its first podcast link
+  this way.
+- **Every change is kept.** The database records each change to a task, made
+  by Tony, a button, the app or the clock, as the row before and after.
+  `/undo` lists the last ten in plain words, each with ↩. A tap puts back
+  exactly what that change changed and leaves later changes alone. Typing
+  "undo that" opens the same list.
+- **Receipts show what a task holds:** "✓ **Watch: …** → Mon 23 Nov,
+  **10:00** · 🔗 link · 🖼 1 photo, sir." Tony's own task list shows notes and
+  attachments too.
+- **"Send me that photo / the video / the link"** is answered in code, at
+  once: the original or the link, never a question about it.
+- **Night rule.** Between 00:00 and 05:00, "tomorrow" (or "tmr") means the day
+  after you sleep. Every confirmation names the weekday and the date ("tomorrow,
+  Sat 21 Nov, 08:30").
+- **When the AI fails twice,** Tony says "I didn't catch that, sir.", saves
+  nothing, and logs the failure (`events`).
+- **Memory holds only what you said.** Tony refuses a "fact" that is not in
+  your own words (a guess, or something from his own reply), and the 💾 Save
+  button stores only a link and its title. `/memory` lists everything he
+  keeps, each with 🗑.
+- **No talk of internals.** Sentences about tools, filters or errors are
+  removed from his replies.
+
+Migration `0022_history.sql` adds `task_history` (with its trigger) and
+`events`.
 
 ## How Tony decides
 

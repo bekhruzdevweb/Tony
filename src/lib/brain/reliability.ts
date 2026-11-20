@@ -263,3 +263,87 @@ export type Transcript = { language: string; text: string; logprob: number };
 export function bestTranscript(readings: Transcript[]): Transcript | undefined {
   return [...readings].filter((reading) => reading.text.trim()).sort((a, b) => b.logprob - a.logprob || b.text.length - a.text.length)[0];
 }
+
+// ── 4. Notes are added to, never replaced ──────────────────────────────
+
+/** A task's notes with new words added: nothing he said before is lost (task 11 lost its first link). */
+export function mergeNotes(existing: string | null | undefined, incoming: string): string {
+  const old = (existing ?? "").trim();
+  const add = incoming.trim();
+  if (!old) return add;
+  if (!add || old.includes(add)) return old;
+  // The model wrote everything again, with something new: keep its fuller version.
+  if (add.includes(old)) return add;
+  return `${old}\n${add}`;
+}
+
+// ── 8. The night: "tomorrow" is the day after he sleeps ────────────────
+
+const DAY_MS = 24 * 60 * 60_000;
+const localYmd = (at: Date) => new Date(at.getTime() + TZ_OFFSET_MS).toISOString().slice(0, 10);
+
+/**
+ * Between 00:00 and 05:00, "tomorrow" means the coming morning. A time the
+ * model put on the next calendar day for "tomorrow" is brought back a day.
+ * Undefined when there is nothing to correct.
+ */
+export function nightTomorrow(due: Date, said: string, now: Date): Date | undefined {
+  if (new Date(now.getTime() + TZ_OFFSET_MS).getUTCHours() >= 5) return undefined;
+  if (!/\b(tomorrow|tmrw?|tomm?orr?ow)\b/i.test(said) || /\bday after\b/i.test(said)) return undefined;
+  if (localYmd(due) !== localYmd(new Date(now.getTime() + DAY_MS))) return undefined;
+  const back = new Date(due.getTime() - DAY_MS);
+  return back.getTime() > now.getTime() ? back : undefined;
+}
+
+// ── 9. Memory: only what he said ───────────────────────────────────────
+
+const FACT_FILLER = new Set(
+  "he his him himself user behruzbek they their them that this these those with from into about should would could always never also likes like prefers prefer wants want lives live works work does doing done have has had been being will shall the and for are was were sir tony".split(" "),
+);
+const factStems = (text: string) => [...new Set((text.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter((word) => !FACT_FILLER.has(word)).map((word) => word.slice(0, 4)))];
+
+/**
+ * Whether a fact is his: most of its words are in what he wrote (in any
+ * form: "works out" meets "work out"). Facts from Tony's own replies, or
+ * guessed ("Khiva area" when he said Khanqa), are not.
+ */
+export function statedByHim(fact: string, hisWords: string): boolean {
+  const wanted = factStems(fact);
+  if (wanted.length === 0) return true;
+  const his = new Set(factStems(hisWords));
+  return wanted.filter((stem) => his.has(stem)).length / wanted.length >= 0.6;
+}
+
+// ── 10. Nothing about Tony's machinery ─────────────────────────────────
+
+const INTERNAL = [
+  /\b(my|the|an?)\s+(overdue\s+|task\s+|list\s+|search\s+|date\s+|day\s+)?filter\b/i,
+  /\b(i have no|i don'?t have (a|any)|there is no|there'?s no|without (a|the))\s+tools?\b/i,
+  /\bmy\s+tools?\b/i,
+  /\b(tool|function|api|lookup|query|search)\s+(calls?|failed|returned|came back|errored|errors?)\b/i,
+  /\b(came back empty|returned (an? )?(error|nothing|empty)|internal error|error code|stack trace)\b/i,
+  /\b(add_task|update_task|complete_task|list_tasks|set_reminder|save_link|offer_task|web_search|web_fetch|runTool)\b/,
+];
+
+/** Each line, split into sentences, kept only where `keep` says so; empty lines dropped. */
+const filterSentences = (reply: string, keep: (sentence: string) => boolean) =>
+  reply
+    .split("\n")
+    .map((line) => line.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim() && keep(sentence)).join(" "))
+    .filter((line) => line.trim())
+    .join("\n")
+    .trim();
+
+/** The reply without sentences about tools, filters or errors (22:38: "The overdue filter came back empty"). */
+export function withoutInternals(reply: string): string {
+  return filterSentences(reply, (sentence) => !INTERNAL.some((pattern) => pattern.test(sentence)));
+}
+
+// ── 1. Never claim a send that did not happen ──────────────────────────
+
+const SEND_CLAIM = /\b(here (it is|is|'s|you go|they are)|attached|i('ve| have) sent|sending (it|you))\b/i;
+
+/** The reply without "Here it is, sir" and the like, for when nothing was sent (15:41, 22:39). */
+export function withoutSendClaims(reply: string): string {
+  return filterSentences(reply, (sentence) => !SEND_CLAIM.test(sentence));
+}

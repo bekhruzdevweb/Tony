@@ -11,6 +11,8 @@ export const COMMANDS = [
   { command: "location", description: "Where prayer times are for (e.g. /location Xonqa tumani)" },
   { command: "voice", description: "When I speak: /voice on, off or auto" },
   { command: "routine", description: "Your routine: the hours I use to choose times" },
+  { command: "undo", description: "The last 10 changes to your tasks, to undo with a tap" },
+  { command: "memory", description: "What I remember about you, to forget with a tap" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
   { command: "ping", description: "Check that Tony is awake" },
@@ -30,7 +32,7 @@ export const HELP = [
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today (or /list)  /tomorrow  /plan  /inbox  /routine  /prayer  /voice  /clean  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /routine  /undo  /memory  /prayer  /voice  /clean  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, and votes in his polls. */

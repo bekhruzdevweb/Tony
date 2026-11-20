@@ -1,6 +1,6 @@
 import "server-only";
 import { requireDb } from "../db";
-import { findMedia, updateMedia } from "../media";
+import { attachmentCounts, findMedia, updateMedia } from "../media";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { getSettings } from "../settings";
@@ -12,10 +12,10 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
-import { givenTimes, heldToGivenTime, type GivenTime } from "./reliability";
+import { givenTimes, heldToGivenTime, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordMove, setRoutineField } from "../routine";
-import { localDate, minuteOfDay } from "../time";
+import { isNight, localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
 const TIME = "YYYY-MM-DDTHH:MM";
@@ -265,6 +265,8 @@ async function readFields(
     const parsed = parseLocalDateTime(args.due_at);
     if (!parsed) return { error: `could not read due_at "${args.due_at}"; use YYYY-MM-DDTHH:MM` };
     dueAt = toWholeMinute(parsed);
+    // After midnight, "tomorrow" is the day after he sleeps: a date the model put a day later comes back.
+    if (said !== undefined) dueAt = nightTomorrow(dueAt, said, now) ?? dueAt;
     if (said !== undefined) {
       const his = givenTimes(said, now);
       if (his.length === 1 && hold) {
@@ -287,7 +289,11 @@ async function readFields(
     if (dueAt) patch.due_at = dueAt.toISOString();
   }
   // A day he named without a time: Tony decides or asks, from his routine.
-  if (!dueAt && !dayOnly && typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day.trim())) dayOnly = args.day.trim();
+  if (!dueAt && !dayOnly && typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day.trim())) {
+    dayOnly = args.day.trim();
+    const night = said !== undefined ? nightTomorrow(parseLocalDateTime(`${dayOnly}T12:00`)!, said, now) : undefined;
+    if (night) dayOnly = localDate(night);
+  }
   if (dayOnly && dayOnly < localDate(now)) return { error: `${dayOnly} has already passed. Ask him which day he means.` };
   return { patch, dueAt, dayOnly };
 }
@@ -314,11 +320,18 @@ async function attachShared(args: Args, taskId: number): Promise<string | undefi
   const kind = (shared.data as { kind?: string } | null)?.kind;
   if (kind === "voice" || kind === "audio") return "nothing was attached: voice notes are not attached to tasks";
   await updateMedia(Number(last_shared_media_id), { task_id: taskId });
+  // Read back: only an attachment that is really there is reported.
+  const back = await requireDb().from("media").select("task_id").eq("id", last_shared_media_id).maybeSingle();
+  if (Number((back.data as { task_id?: unknown } | null)?.task_id) !== taskId) return "nothing was attached: the photo/file could not be linked to the task";
   return "his photo/file is attached; the reminder will send the original back to him";
 }
 
-/** Runs one tool call. Problems come back as { ok: false }, so the model can tell the user. */
-export async function runTool(name: string, args: Args, now = new Date(), said?: string, heard?: string): Promise<Result> {
+/**
+ * Runs one tool call. Problems come back as { ok: false }, so the model can
+ * tell the user. `said` is his message, `heard` what he is answering (Tony's
+ * last message, a shared post), `his` his recent messages (what he himself said).
+ */
+export async function runTool(name: string, args: Args, now = new Date(), said?: string, heard?: string, his?: string): Promise<Result> {
   const db = requireDb();
   switch (name) {
     case "add_task": {
@@ -375,6 +388,12 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const fields = await readFields(args, now, { said, heard, hold: said !== undefined && mentions(said, task.title) }, task.due_at);
       if ("error" in fields) return fail(fields.error);
       const patch = fields.patch;
+      // Notes are added to, never replaced or cleared: nothing he said before is lost.
+      if (patch.notes === null) delete patch.notes;
+      else if (typeof patch.notes === "string") {
+        patch.notes = mergeNotes(task.notes, patch.notes);
+        if (patch.notes === (task.notes ?? "").trim()) delete patch.notes;
+      }
       const checkInWanted = Number(args.nudge_after_days) > 0 || (said ? checkInDays(said) !== undefined : false);
 
       const status = typeof args.status === "string" ? args.status : undefined;
@@ -458,8 +477,9 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
           // Everything past its time (earlier today too); the shared rule below drops started tasks and prayers.
           query = query.lt("due_at", now.toISOString());
         } else {
+          // After midnight his "tomorrow" is the calendar day that has just begun.
           const anchor =
-            day === "today" ? now : day === "tomorrow" ? addMinutes(now, 24 * 60) : parseLocalDateTime(day);
+            day === "today" ? now : day === "tomorrow" ? (isNight(now) ? now : addMinutes(now, 24 * 60)) : parseLocalDateTime(day);
           if (!anchor) return fail(`could not read day "${args.day}"`);
           const bounds = dayBounds(addMinutes(anchor, day.length === 10 ? 12 * 60 : 0));
           query = query.gte("due_at", bounds.start.toISOString()).lt("due_at", bounds.end.toISOString());
@@ -470,7 +490,9 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       check("list_tasks", error);
       const wantOverdue = typeof args.day === "string" && args.day.trim().toLowerCase() === "overdue";
       const tasks = (data as Task[]).filter((t) => t.kind !== "prayer" && (!wantOverdue || isOverdue(t, now)));
-      return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now)) };
+      // Each with its notes, parts and attachments, so Tony can say what a task holds.
+      const [parts, media] = await Promise.all([subtasksFor(tasks.map((t) => t.id)), attachmentCounts(tasks.map((t) => t.id))]);
+      return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now, undefined, parts.get(t.id), media.get(t.id))) };
     }
 
     case "set_reminder": {
@@ -508,6 +530,10 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
     case "remember": {
       const fact = typeof args.fact === "string" ? args.fact.trim().slice(0, 300) : "";
       if (!fact) return fail("fact is required");
+      // Only what he said himself: never Tony's own replies, never a guess ("Khiva area" for Khanqa).
+      if (his !== undefined && !statedByHim(fact, his)) {
+        return fail("Only remember what he said himself, in his own words: most of this fact is not in his messages. Leave it out, or use his words.");
+      }
       // Already known (same words, any case): nothing to add.
       const known = await db.from("memory").select("id, fact").ilike("fact", fact.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(1);
       if (!known.error && (known.data ?? []).length > 0) return { ok: true, id: (known.data as { id: number }[])[0].id, fact, already_known: true };

@@ -113,6 +113,44 @@ export function formatDue(at: Date, now = new Date(), timeZone = TIMEZONE): stri
   return `${label.replace(",", "")} ${time}`;
 }
 
+/** Until this hour he has not slept yet: it is still his previous day. */
+export const NIGHT_END_HOUR = 5;
+
+/** Between midnight and 05:00, when "tomorrow" still means the coming morning's date. */
+export function isNight(at: Date, timeZone = TIMEZONE): boolean {
+  return minuteOfDay(at, timeZone) < NIGHT_END_HOUR * 60;
+}
+
+/** The date of the day he is living: before 05:00 it is still the day before ("2026-11-20" at 00:08 on the 21st). */
+export function hisDate(now: Date, timeZone = TIMEZONE): string {
+  return localDate(isNight(now, timeZone) ? addMinutes(now, -24 * 60) : now, timeZone);
+}
+
+/** "Sat 21 Nov" (with the year only when it is not this one). */
+export function formatDay(at: Date, now = new Date(), timeZone = TIMEZONE): string {
+  const year = localDate(at, timeZone).slice(0, 4) === localDate(now, timeZone).slice(0, 4) ? undefined : "numeric";
+  return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short", year }).format(at).replace(",", "");
+}
+
+/**
+ * "today", "tomorrow" or "tonight" for a moment, by the day he is living (at
+ * 00:08 on Saturday, Saturday morning is "tomorrow"); undefined for other days.
+ */
+export function relativeDay(at: Date, now = new Date(), timeZone = TIMEZONE): "today" | "tomorrow" | "tonight" | undefined {
+  const day = localDate(at, timeZone);
+  if (isNight(now, timeZone) && day === localDate(now, timeZone) && isNight(at, timeZone)) return "tonight";
+  const his = hisDate(now, timeZone);
+  if (day === his) return "today";
+  if (day === localDate(addMinutes(parseLocalDateTime(`${his}T12:00`, timeZone)!, 24 * 60), timeZone)) return "tomorrow";
+  return undefined;
+}
+
+/** "tomorrow, Sat 21 Nov, 08:30" or "Mon 23 Nov, 10:00": every confirmation names the weekday and the date. */
+export function formatWhen(at: Date, now = new Date(), timeZone = TIMEZONE): string {
+  const relative = relativeDay(at, now, timeZone);
+  return `${relative ? `${relative}, ` : ""}${formatDay(at, now, timeZone)}, ${formatTime(at, timeZone)}`;
+}
+
 /** "Thursday 19 November 2026". */
 export function formatLongDate(at: Date, timeZone = TIMEZONE): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "long", day: "numeric", month: "long", year: "numeric" })

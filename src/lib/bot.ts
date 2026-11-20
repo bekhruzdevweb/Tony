@@ -38,7 +38,9 @@ import { CLEANED, handleMessage, type Thought } from "./brain/handle";
 import { choicesFor, getRoutine } from "./routine";
 import { routineLines } from "./routine-rules";
 import { placeTask, runProposal } from "./slots";
-import { isCapture as wantsSomething } from "./brain/reliability";
+import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
+import { recentChanges, undoChange } from "./history";
+import { forgetFact, memoryList } from "./memory";
 import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, parseLocalDateTime, toWholeMinute } from "./time";
@@ -257,6 +259,19 @@ export function getBot(): Bot | undefined {
     await retire({ kinds: ["cmd:voice"] });
     const sent = await ctx.reply(`Voice: ${state.mode}. ${what}`);
     await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+  });
+
+  // /undo: the last ten changes to his tasks, each with ↩. Plain code.
+  tasks.command("undo", async (ctx) => {
+    await showUndo(ctx.chat.id);
+  });
+
+  // /memory: what Tony keeps about him, each with 🗑. Plain code.
+  tasks.command("memory", async (ctx) => {
+    await retire({ kinds: ["cmd:memory"] });
+    const view = await memoryView();
+    const sent = await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.keyboard });
+    await track(sent, "cmd:memory", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
   });
 
   // /routine: his routine as Tony uses it. Plain code. He changes it by telling Tony ("I teach Mon–Fri 14–18").
@@ -513,6 +528,19 @@ export function getBot(): Bot | undefined {
     if (payload === "keep") {
       await ctx.answerCallbackQuery({ text: "Very good, sir." }).catch(() => undefined);
       await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      return;
+    }
+
+    // ↩ on /undo ("un:<change>") and 🗑 on /memory ("mem:<note>"): done in plain code, the list redrawn with the outcome on top.
+    if (payload.startsWith("un:") || payload.startsWith("mem:")) {
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      const undo = payload.startsWith("un:");
+      const id = Number(payload.slice(undo ? 3 : 4));
+      const outcome = undo ? await undoChange(id) : await forgetFact(id);
+      await logMessage("tony", outcome);
+      const view = undo ? await undoView(outcome) : await memoryView(outcome);
+      const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(view.text)), view.keyboard) : false;
+      if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, view.text, { keyboard: view.keyboard });
       return;
     }
 
@@ -774,6 +802,16 @@ export function getBot(): Bot | undefined {
         replies.push(item.reply);
         continue;
       }
+      if (item.kind === "media") {
+        // "Send me that photo": the originals, at once; only what Telegram delivered is reported.
+        replies.push(await sendOriginals(ctx, item.ids));
+        continue;
+      }
+      if (item.kind === "undo") {
+        if (ctx.chat) await showUndo(ctx.chat.id);
+        replies.push("(the last changes, to undo)");
+        continue;
+      }
       if (item.kind === "failed") {
         // Nothing was saved: his words are never turned into a task on the model's absence.
         const deleteAfter = new Date(Date.now() + ERROR_MINUTES * 60_000);
@@ -787,6 +825,60 @@ export function getBot(): Bot | undefined {
       completed ||= result.completed;
     }
     return { reply: replies.join("\n\n"), confirmed, completed };
+  };
+
+  /** Sends saved originals back; says only what Telegram confirmed it delivered. */
+  const sendOriginals = async (ctx: Context, ids: number[]): Promise<string> => {
+    const sent: string[] = [];
+    for (const id of ids) {
+      const item = ctx.chat ? await loadMedia(id) : undefined;
+      if (!item || !ctx.chat) continue;
+      await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
+        () => sent.push(mediaLabel(item)),
+        (error) => console.error("Could not resend media:", error),
+      );
+    }
+    if (sent.length === 0) {
+      const reply = "I couldn't find that one, sir.";
+      await say(ctx, reply, { kind: "error", deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
+      await logMessage("tony", reply);
+      return reply;
+    }
+    const reply = `🖼 Sent: ${sent.join("; ")}`.slice(0, 300);
+    await logMessage("tony", reply);
+    return reply;
+  };
+
+  /** /undo: the last ten changes to his tasks, each with ↩ to put it back. Plain code. */
+  const undoView = async (lead?: string): Promise<{ text: string; keyboard?: InlineKeyboard }> => {
+    const changes = await recentChanges(10);
+    if (changes.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}Nothing left to undo, sir.` };
+    const keyboard = new InlineKeyboard();
+    changes.forEach((change, index) => {
+      keyboard.text(`↩ ${index + 1}`, `un:${change.id}`);
+      if (index % 5 === 4) keyboard.row();
+    });
+    const lines = changes.map((change, index) => `${index + 1}. ${formatTime(new Date(change.at))} · ${change.text}`);
+    return { text: [...(lead ? [lead, ""] : []), "**Last changes**, newest first. Tap a number to undo it:", ...lines].join("\n"), keyboard };
+  };
+  const showUndo = async (chatId: number) => {
+    await retire({ kinds: ["cmd:undo"] });
+    const view = await undoView();
+    const sent = await sendMarkdown(bot, chatId, view.text, { keyboard: view.keyboard });
+    await track(sent, "cmd:undo", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+  };
+
+  /** /memory: what Tony keeps about him, each with 🗑 to forget it. Plain code. */
+  const memoryView = async (lead?: string): Promise<{ text: string; keyboard?: InlineKeyboard }> => {
+    const rows = (await memoryList()).slice(-30);
+    if (rows.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}I keep nothing about you yet, sir.` };
+    const keyboard = new InlineKeyboard();
+    rows.forEach((row, index) => {
+      keyboard.text(`🗑 ${index + 1}`, `mem:${row.id}`);
+      if (index % 5 === 4) keyboard.row();
+    });
+    const lines = rows.map((row, index) => `${index + 1}. ${row.source === "link" ? "🔗 " : ""}${row.fact.length > 140 ? `${row.fact.slice(0, 137)}…` : row.fact}`);
+    return { text: [...(lead ? [lead, ""] : []), "**What I keep about you**, sir. Tap a number to forget it:", ...lines].join("\n"), keyboard };
   };
 
   /** Shows what the brain did for one request: the reply, its buttons, a plan or a question. */
@@ -811,9 +903,9 @@ export function getBot(): Bot | undefined {
           );
         }
       }
-      // "Here it is" is only said if something was really sent.
+      // "Here it is" is only said if something was really sent: otherwise those words go.
       if (mediaSent === 0 && claimsSent(reply) && !tools.includes("save_link")) {
-        reply = asksForMedia(text) ? "I could not find that among your saved photos and files, sir." : reply;
+        reply = withoutSendClaims(reply) || "I couldn't find that one, sir.";
       }
       if (planId !== undefined && ctx.chat) {
         await showPlan(ctx.chat.id, planId);

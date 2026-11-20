@@ -64,8 +64,9 @@ describe('17:31 "Can you remind this one after 20 minutes? And also … barber a
     );
     expect(reply).toContain("Prepare for the lesson");
     expect(reply).toContain("Call the barber");
-    expect(reply).toMatch(/today \*\*17:51\*\*/);
-    expect(reply).toMatch(/tomorrow \*\*08:30\*\*/);
+    // Weekday and date in every confirmation.
+    expect(reply).toMatch(/today, Fri 20 Nov, \*\*17:51\*\*/);
+    expect(reply).toMatch(/tomorrow, Sat 21 Nov, \*\*08:30\*\*/);
   });
   it("sends a message with several requests to the larger model", () => {
     expect(needsDeepModel("Can you remind this one after 20 minutes? And also, tomorrow remind me to call the barber at 8.30 a.m.")).toBe(true);

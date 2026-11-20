@@ -116,12 +116,19 @@ export async function findMedia(query: string, limit = 5, now = new Date()): Pro
   const candidates = ((data ?? []) as Media[]).filter(
     (item) => (voiceAllowed || (item.kind !== "voice" && item.kind !== "audio")) && new Date(item.created_at).getTime() < recent,
   );
+  // The task each one is attached to names it too ("the photo for adding this feature to my website").
+  const taskIds = [...new Set(candidates.map((item) => item.task_id).filter((id): id is number => id !== null))];
+  const titles = new Map<number, string>();
+  if (taskIds.length > 0) {
+    const tasks = await requireDb().from("tasks").select("id, title").in("id", taskIds);
+    for (const row of (tasks.data ?? []) as { id: number; title: string }[]) titles.set(Number(row.id), row.title);
+  }
   // Words are compared by their first five letters, so "ideas" finds "idea".
   const stems = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).map((word) => word.slice(0, 5));
-  const wanted = [...new Set(stems(query))].filter((stem) => !["show", "send", "find", "all", "the", "saved"].includes(stem));
+  const wanted = [...new Set(stems(query))].filter((stem) => !["show", "send", "find", "all", "the", "saved", "this", "with", "you", "can", "rememb", "remem", "sent"].includes(stem));
   const scored = candidates
     .map((item) => {
-      const strong = new Set(stems(`${item.note ?? ""} ${item.caption ?? ""} ${item.kind}`));
+      const strong = new Set(stems(`${item.note ?? ""} ${item.caption ?? ""} ${item.kind} ${item.task_id !== null ? (titles.get(Number(item.task_id)) ?? "") : ""}`));
       const weak = new Set(stems(item.description ?? ""));
       const score = wanted.reduce((sum, stem) => sum + (strong.has(stem) ? 2 : weak.has(stem) ? 1 : 0), 0);
       return { item, score };
@@ -198,4 +205,26 @@ export async function mediaForApp(taskIds: number[], now = new Date()): Promise<
     await db.from("media").update({ signed_url: item.signed_url, signed_until: item.signed_until }).eq("id", item.id);
   }
   return items.map((item) => ({ id: item.id, task_id: item.task_id!, kind: item.kind, url: item.signed_url, caption: item.caption, description: item.description, note: item.note }));
+}
+
+export type AttachmentCount = { photo: number; video: number; file: number };
+
+/** Photos, videos and files attached to each task, for its receipt and for Tony's own list. */
+export async function attachmentCounts(taskIds: number[]): Promise<Map<number, AttachmentCount>> {
+  const counts = new Map<number, AttachmentCount>();
+  if (taskIds.length === 0) return counts;
+  const { data, error } = await requireDb().from("media").select("task_id, kind").in("task_id", taskIds);
+  if (error) {
+    console.error(`attachmentCounts: ${error.message}`);
+    return counts;
+  }
+  for (const row of (data ?? []) as { task_id: number; kind: MediaKind }[]) {
+    const count = counts.get(Number(row.task_id)) ?? { photo: 0, video: 0, file: 0 };
+    if (row.kind === "photo" || row.kind === "animation") count.photo++;
+    else if (row.kind === "video") count.video++;
+    else if (row.kind === "document") count.file++;
+    else continue;
+    counts.set(Number(row.task_id), count);
+  }
+  return counts;
 }

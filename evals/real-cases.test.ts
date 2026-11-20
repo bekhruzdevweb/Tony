@@ -57,7 +57,9 @@ function task(row: Record<string, unknown>) {
 const tasks = () => state.db.rows("tasks") as Record<string, unknown>[];
 const byTitle = (title: string) => tasks().find((row) => row.title === title)!;
 const replies = (handled: Awaited<ReturnType<typeof handleMessage>>) =>
-  handled.map((item) => (item.kind === "thought" ? item.thought.reply : item.kind === "failed" || item.kind === "link" ? item.reply : "[clean]"));
+  handled.map((item) =>
+    item.kind === "thought" ? item.thought.reply : item.kind === "failed" || item.kind === "link" ? item.reply : item.kind === "media" ? `[media ${item.ids.join(",")}]` : `[${item.kind}]`,
+  );
 
 async function run(message: string, now: string, script: Step[]) {
   vi.setSystemTime(at(now));
@@ -170,8 +172,12 @@ describe("3. When the AI fails", () => {
     const before = tasks().length;
     const result = await run("Well, can you schedule them by yourself, like optimize, like depending on their priorities? Yeah.", "2026-11-20T00:01", ["FAIL", "FAIL"]);
     expect(result.replies).toEqual([UNAVAILABLE]);
+    expect(UNAVAILABLE).toBe("I didn't catch that, sir.");
     expect(tasks()).toHaveLength(before);
     expect(state.calls).toHaveLength(2);
+    // Logged, with his words, for the record.
+    const logged = state.db.rows("events").find((row) => row.kind === "ai_failure");
+    expect((logged?.detail as { text?: string } | undefined)?.text).toContain("schedule them by yourself");
   });
 
   it("recovers on the retry", async () => {
@@ -190,7 +196,8 @@ describe("4. Nothing from his first message is lost", () => {
     ]);
     const podcast = byTitle("Watch podcast and take notes");
     expect(podcast.notes).toContain("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi");
-    expect(local(podcast.due_at)).toBe("2026-11-21T14:00");
+    // At 00:59 he had not slept yet: "tmr" is Friday 20 (the night rule), not Saturday.
+    expect(local(podcast.due_at)).toBe("2026-11-20T14:00");
   });
 
   it("22:46 'for the student from New York', 'elementary': kept even when the model's title drops them", async () => {
@@ -335,7 +342,7 @@ describe("Decide vs ask: a day without a time", () => {
     const result = await run("I need to post stories tomorrow", "2026-11-20T21:00", [tools(["add_task", { title: "Post stories", day: "2026-11-21" }])]);
     const thought = thoughtOf(result)!;
     expect(thought.slot).toMatchObject({ kind: "propose", why: "your content time" });
-    expect(result.replies[0]).toMatch(/^I'll put \*\*Post stories\*\* tomorrow at \*\*10:00\*\*, your content time\.$/);
+    expect(result.replies[0]).toMatch(/^I'll put \*\*Post stories\*\* tomorrow, Sat 21 Nov, at \*\*10:00\*\*, your content time\.$/);
     expect(result.replies[0]).not.toMatch(/inbox/);
     // Nothing is placed until he taps ✓.
     expect(byTitle("Post stories").due_at).toBeNull();
@@ -377,7 +384,7 @@ describe("Decide vs ask: a day without a time", () => {
     expect(task.due_at).toBeNull();
     expect(task.notes).toContain("https://youtu.be/CN8c1edTCew");
     expect(thoughtOf(result)?.slot).toMatchObject({ kind: "propose", why: "you usually watch and read around 21:00" });
-    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(result.replies[0]).toContain("🔗 link");
     expect(result.replies[0]).not.toMatch(/15:00/);
   });
 
@@ -517,7 +524,7 @@ describe("Links", () => {
     expect(video.title).toBe("Watch: THE Instagram Masterclass: How To Grow in 2027");
     expect(video.notes).toContain("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi");
     expect(video.due_at).toBeNull();
-    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(result.replies[0]).toContain("🔗 link");
     expect(thoughtOf(result)?.slot?.kind).toBe("ask");
     expect(result.replies[0].match(/\?/g)).toHaveLength(1);
   });
@@ -528,7 +535,7 @@ describe("Links", () => {
     task({ title: "Watch the video", due_at: "2026-11-23T10:00" });
     const result = await run("Did you keep it with its link or just watch the video?", "2026-11-20T23:23", [says("Shall I add the link to the notes of that task, sir?")]);
     expect(byTitle("Watch the video").notes).toContain("https://youtu.be/SaiTtbRJwic");
-    expect(result.replies[0]).toContain("🔗 link saved");
+    expect(result.replies[0]).toContain("🔗 link");
     expect(result.replies[0]).not.toMatch(/\?/);
   });
 
@@ -553,11 +560,147 @@ describe("Links", () => {
     expect(byTitle("Buy a zippered shirt").notes).toBe("Zamokli ko'ynak olish");
   });
 
-  it("a link sent with the task: kept in its notes and shown ('✓ Watch: … → Mon 10:00 · 🔗 link saved')", async () => {
+  it("a link sent with the task: kept in its notes and shown ('✓ Watch: … → Mon 23 Nov, 10:00 · 🔗 link')", async () => {
     const result = await run("https://youtu.be/CN8c1edTCew watch this on Monday at 10", "2026-11-20T23:40", [tools(["add_task", { title: "Watch this video", due_at: "2026-11-23T10:00" }])]);
     const video = tasks()[0];
     expect(video.notes).toContain("https://youtu.be/CN8c1edTCew");
     expect(video.title).toBe("Watch: Stand-in page title");
-    expect(result.replies[0]).toMatch(/✓ \*\*Watch: Stand-in page title\*\* → Mon 23 Nov \*\*10:00\*\* · 🔗 link saved, sir\./);
+    expect(result.replies[0]).toMatch(/✓ \*\*Watch: Stand-in page title\*\* → Mon 23 Nov, \*\*10:00\*\* · 🔗 link, sir\./);
+  });
+});
+
+// ── Phase 1, round two (275 messages audited, 21 Nov) ────────────────────
+const { recentChanges, undoChange } = await import("../src/lib/history");
+const { memoryList, forgetFact } = await import("../src/lib/memory");
+const { useOffer } = await import("../src/lib/offers");
+const media = (row: Record<string, unknown>) => state.db.insert("media", { file_id: `FILE_${state.db.rows("media").length + 1}`, ...row });
+const FIRST_LINK = "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi";
+const SECOND_LINK = "https://www.youtube.com/watch?v=Ch4Sl0POBhU (Caleb Ralston, How to Build a Personal Brand, 6h 22min)";
+
+describe("Phase 1 · sends: the original at once, never a claim without it", () => {
+  it("15:41 'can you send it to me with this image?': the website-feature screenshot goes out at once, no model call", async () => {
+    const website = task({ title: "Add this feature to website", status: "done", due_at: "2026-11-20T09:30" });
+    const photo = media({ kind: "photo", task_id: website.id, description: "Abdulla Jabborow\nKUNLIK ME'YOR 4 100 kuniga kkal\nShows: a nutrition app screen with daily targets", created_at: at("2026-11-20T02:58").toISOString() });
+    const result = await run("If you remember I sent you a one-post like add this feature to my website, can you send it to me with this image?", "2026-11-20T15:41", []);
+    expect(result.handled[0]).toMatchObject({ kind: "media", ids: [photo.id] });
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it("22:39 'where it is picture tho?' with nothing sent: 'Here it is, sir' is never said", async () => {
+    const result = await run("where it is picture tho?", "2026-11-20T22:39", [says("Here it is, sir, the picture about adding a feature to your website.")]);
+    expect(result.replies[0]).not.toMatch(/here it is/i);
+  });
+});
+
+describe("Phase 1 · notes appended, history kept, /undo", () => {
+  it("23:08 'it is the podcast which i should wtch': the new link is added, the first one kept (task 11 lost it)", async () => {
+    const podcast = task({ title: "Watch podcast and take notes", due_at: "2026-11-21T14:00", notes: FIRST_LINK });
+    const result = await run("it is the podcast which i should wtch the one i told", "2026-11-20T23:08", [tools(["update_task", { id: podcast.id, notes: SECOND_LINK }])]);
+    const notes = String(byTitle("Watch podcast and take notes").notes);
+    expect(notes).toContain(FIRST_LINK);
+    expect(notes).toContain("https://www.youtube.com/watch?v=Ch4Sl0POBhU");
+    expect(result.replies[0]).toContain("🔗 link");
+  });
+
+  it("/undo lists the last changes in his words and puts one back exactly", async () => {
+    const podcast = task({ title: "Watch podcast and take notes", due_at: "2026-11-21T14:00", notes: FIRST_LINK });
+    await run("it is the podcast which i should wtch the one i told", "2026-11-20T23:08", [tools(["update_task", { id: podcast.id, notes: SECOND_LINK }])]);
+    await run("move the podcast to Monday at 10", "2026-11-20T23:09", [tools(["update_task", { id: podcast.id, due_at: "2026-11-23T10:00" }])]);
+    const changes = await recentChanges(10);
+    expect(changes[0].text).toBe("**Watch podcast and take notes**: moved from Sat 21 Nov 14:00 to Mon 23 Nov 10:00");
+    expect(changes[1].text).toBe("**Watch podcast and take notes**: notes changed");
+    const undone = await undoChange(changes[1].id);
+    expect(undone).toMatch(/^↩ /);
+    expect(byTitle("Watch podcast and take notes").notes).toBe(FIRST_LINK);
+    // The later move stays, and an undone change is not offered again.
+    expect(local(byTitle("Watch podcast and take notes").due_at)).toBe("2026-11-23T10:00");
+    expect((await recentChanges(10)).some((change) => change.id === changes[1].id)).toBe(false);
+  });
+
+  it("'undo that' typed in words opens the same list, in code", async () => {
+    const result = await run("undo that", "2026-11-20T23:10", []);
+    expect(result.handled[0].kind).toBe("undo");
+    expect(state.calls).toHaveLength(0);
+  });
+});
+
+describe("Phase 1 · receipts show what is attached; Tony's list shows notes", () => {
+  it("23:25 the masterclass screenshot attached: '✓ Watch: … → Mon 23 Nov, 10:00 · 🔗 link · 🖼 1 photo'", async () => {
+    const watch = task({ title: "Watch: Instagram Masterclass", due_at: "2026-11-23T10:00", notes: FIRST_LINK });
+    const shot = media({ kind: "photo", description: `${FIRST_LINK}\nTHE Instagram Masterclass: How To Grow in 2027`, created_at: at("2026-11-20T23:25").toISOString() });
+    await state.db.client.from("settings").update({ last_shared_media_id: shot.id }).eq("id", true);
+    const result = await run("THIS REEL WHICH I SENT YOU", "2026-11-20T23:26", [tools(["update_task", { id: watch.id, attach_shared: true }])]);
+    expect(state.db.rows("media").find((row) => row.id === shot.id)?.task_id).toBe(watch.id);
+    expect(result.replies[0]).toBe("✓ **Watch: Instagram Masterclass** → Mon 23 Nov, **10:00** · 🔗 link · 🖼 1 photo, sir.");
+  });
+
+  it("22:56 'So what I'm gonna post?': Tony's own list shows the notes and attachments", async () => {
+    const stories = task({ title: "Posting stories on Instagram", due_at: "2026-11-21T12:00", notes: "Stories: the new app, the speaking club, the grammar series" });
+    media({ kind: "photo", task_id: stories.id, description: "story draft" });
+    await run("Posting stories on Instagram. So what I'm gonna post?", "2026-11-20T22:56", [
+      tools(["list_tasks", { day: "tomorrow" }]),
+      says("Three points, sir: the new app, the speaking club and the grammar series."),
+    ]);
+    const listed = JSON.stringify(state.calls[1].messages.at(-1));
+    expect(listed).toContain("notes: Stories: the new app");
+    expect(listed).toContain("1 photo");
+  });
+});
+
+describe("Phase 1 · night rule: 00:00–05:00, 'tomorrow' is the day after he sleeps", () => {
+  it("21 Nov 00:08 'send a message tomorrow to my teacher': Saturday 21, with weekday and date", async () => {
+    const result = await run("Remind me to send a message tomorrow to my teacher about asking advice, launching a group.", "2026-11-21T00:08", [
+      tools(["add_task", { title: "Message teacher about launching group", day: "2026-11-22", notes: "Ask for advice on launching a group" }]),
+    ]);
+    expect(thoughtOf(result)?.slot?.day).toBe("2026-11-21");
+    expect(result.replies[0]).toContain("Sat 21 Nov");
+  });
+
+  it("20 Nov 00:59 'tmr … at 2 p.m': Friday 14:00, confirmed as 'tomorrow, Fri 20 Nov'", async () => {
+    const result = await run(`${FIRST_LINK} tmr remind me to watch this podcast and take notes at 2 p.m`, "2026-11-20T00:59", [
+      tools(["add_task", { title: "Watch podcast and take notes", due_at: "2026-11-21T14:00" }]),
+    ]);
+    expect(local(byTitle("Watch podcast and take notes").due_at)).toBe("2026-11-20T14:00");
+    expect(result.replies[0]).toContain("tomorrow, Fri 20 Nov, **14:00**");
+  });
+});
+
+describe("Phase 1 · memory: only facts he stated", () => {
+  it("16:25 'It's Chorazm Honka': 'Khiva area' (never said) is refused; his own words are kept", async () => {
+    const result = await run("Also, Tony, remind me my prayer times. Always. Okay? Take into account my location. It's Chorazm Honka.", "2026-11-20T16:25", [
+      tools(["remember", { fact: "Lives in Khorezm (Khiva area); prayer times should follow that location." }]),
+      tools(["remember", { fact: "Lives in Chorazm Honka; prayer times follow that location" }]),
+    ]);
+    expect(state.db.rows("memory").map((row) => row.fact)).toEqual(["Lives in Chorazm Honka; prayer times follow that location"]);
+    expect(result.replies[0]).toContain("📝 Remembered: Lives in Chorazm Honka");
+  });
+
+  it("the Save button keeps the link and its title, never Tony's reply (rows 5 and 7)", async () => {
+    const offer = state.db.insert("offers", {
+      kind: "link",
+      payload: { url: "https://www.youtube.com/watch?v=Ch4Sl0POBhU", title: "How to Build a Personal Brand (Full Course)", summary: "This is Caleb Ralston's 6 h 22 min course, sir." },
+    });
+    await useOffer("s", Number(offer.id), at("2026-11-20T23:07"));
+    expect(state.db.rows("memory").map((row) => row.fact)).toEqual(["Saved link: How to Build a Personal Brand (Full Course) (https://www.youtube.com/watch?v=Ch4Sl0POBhU)"]);
+  });
+
+  it("/memory lists what Tony keeps and forgets one on a tap", async () => {
+    state.db.insert("memory", { fact: "I work out in the evenings", source: "user" });
+    const wrong = state.db.insert("memory", { fact: "Lives in Khorezm (Khiva area)", source: "user" });
+    expect((await memoryList()).map((row) => row.fact)).toEqual(["I work out in the evenings", "Lives in Khorezm (Khiva area)"]);
+    expect(await forgetFact(Number(wrong.id))).toContain("Lives in Khorezm");
+    expect((await memoryList()).map((row) => row.fact)).toEqual(["I work out in the evenings"]);
+  });
+});
+
+describe("Phase 1 · never mention tools, filters or internal errors", () => {
+  it("22:38 'send me the overdue task…': no 'overdue filter came back empty'", async () => {
+    task({ title: "Challenge: post 4 images", due_at: "2026-11-20T08:00" });
+    const result = await run("send me the overdue task which I could not complete today?", "2026-11-20T22:38", [
+      tools(["list_tasks", { day: "overdue" }]),
+      says("The overdue filter came back empty, though my list shows these five from today as unfinished:\n- [ ] Challenge: post 4 images"),
+    ]);
+    expect(result.replies[0]).not.toMatch(/filter/i);
+    expect(result.replies[0]).toContain("Challenge: post 4 images");
   });
 });

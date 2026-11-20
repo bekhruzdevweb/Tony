@@ -1,6 +1,7 @@
 import type { Task } from "../tasks";
 import type { SystemPrompt } from "./model";
-import { addMinutes, formatDue, formatLongDate, formatTime, localDate } from "../time";
+import { attachedText } from "./checks";
+import { addMinutes, formatDay, formatDue, formatLongDate, formatTime, formatWhen, isNight, localDate } from "../time";
 
 export type MemoryFact = { id: number; fact: string };
 export type ProjectRef = { id: number; name: string };
@@ -20,7 +21,7 @@ Two modes. First decide which one his message is:
 - Task: he asks you to do something with his tasks, reminders or plans ("remind me", "add", "move", "plan", "what's left"). Act through the tools.
 When unsure, it is talk.
 
-Memory: when he shares something lasting about himself (a project, a goal, a person in his life, a preference, a routine), call remember with one short line, without asking and alongside your reply; do not remember moods, one-off plans or trivia, and never what is already in Memory below. Use what you know naturally ("for your IELTS students", "Aziz, your editor"), never by reciting notes.
+Memory: when he shares something lasting about himself (a project, a goal, a person in his life, a preference, a routine), call remember with one short line in his own words, without asking and alongside your reply; do not remember moods, one-off plans or trivia, never what is already in Memory below, never anything from your own replies or a page you read, and never a guess (he said "Khanqa": do not write "Khiva area"). Tony refuses a fact that is not in his words. Use what you know naturally ("for your IELTS students", "Aziz, your editor"), never by reciting notes.
 
 Voice: you can send voice notes. Your reply is spoken automatically when he asks for it ("send a voice note", "say it", "tell me") or has voice on; so when he asks, never say you cannot: just answer, and it goes as a voice note too.
 
@@ -49,7 +50,9 @@ Format: your reply is shown as a Telegram rich message written in markdown, so l
 
 Rules:
 - Handle every request in his latest message, each with its own tool call, in one go ("remind this one in 20 minutes and also the barber at 8:30" is two calls). Never act on or answer an earlier message again.
-- Never mention tools, filters or anything about how you work inside ("my overdue filter", "the tool"): just answer.
+- Never mention tools, filters, errors or anything about how you work inside ("my overdue filter", "the tool", "came back empty"): just answer.
+- Notes: pass only what is new; Tony adds it to the notes already there, never replacing them. Every change is kept, and he can take any of the last ten back with /undo.
+- "Send me that photo / the video / the link": Tony sends the original or the link himself; never write "here it is".
 - A photo or file he asks for is sent by calling media find; never say "here it is" yourself. If nothing matches, say so.
 - Never state a time or claim a change yourself: after your tool calls, Tony confirms what is really stored. If a tool fails, say plainly what did not happen.
 - Moving or rescheduling a task (later, another day, "remind me again in 20 minutes") is update_task with the new due_at, not a new task and not an extra reminder. set_reminder is only for an extra heads-up before the task's own time.
@@ -142,9 +145,16 @@ function reminderNote(task: Task, reminders: ReminderFact[], now: Date): string 
   return notes.length ? notes.join(", ") : undefined;
 }
 
-export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminders?: ReminderFact[], subtaskList?: { title: string; done: boolean }[]): string {
+export function taskLine(
+  task: Task,
+  projects: ProjectRef[],
+  now: Date,
+  reminders?: ReminderFact[],
+  subtaskList?: { title: string; done: boolean }[],
+  media?: { photo: number; video: number; file: number },
+): string {
   const parts = [`#${task.id} ${task.title}`];
-  parts.push(task.due_at ? formatDue(new Date(task.due_at), now) : "inbox, no date");
+  parts.push(task.due_at ? formatWhen(new Date(task.due_at), now) : "inbox, no date");
   if (task.status === "in_progress") parts.push("started");
   if (task.due_at && new Date(task.due_at).getTime() < now.getTime() && task.status !== "in_progress") parts.push("overdue");
   if (task.persistent) parts.push("persistent");
@@ -157,6 +167,9 @@ export function taskLine(task: Task, projects: ProjectRef[], now: Date, reminder
   // Its notes, so "what was in that task?" is answered from what is stored.
   if (task.notes) parts.push(`notes: ${task.notes.replace(/\s+/g, " ").slice(0, 160)}${task.notes.length > 160 ? "…" : ""}`);
   if (subtaskList?.length) parts.push(`parts ${subtaskList.filter((s) => s.done).length}/${subtaskList.length}: ${subtaskList.map((s) => `${s.done ? "☑" : "☐"} ${s.title}`).join("; ")}`);
+  // What is attached, so "send me that photo" is answered from what is stored.
+  const attached = attachedText(media);
+  if (attached) parts.push(`attached: ${attached}`);
   return parts.join(" | ");
 }
 
@@ -221,21 +234,26 @@ export function buildSystemPrompt(input: {
   subtasks?: Map<number, { title: string; done: boolean }[]>;
   /** His routine, in one line. */
   routine?: string;
+  /** What is attached to each task. */
+  media?: Map<number, { photo: number; video: number; file: number }>;
 }): SystemPrompt {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
   const memory = relevantMemory(input.memory, message);
   const hidden = input.tasks.length - tasks.length;
   // "Thu 19 Nov = 2026-11-19 (today), Fri 20 = 2026-11-20 (tomorrow), Sat 21, ..." for nine days.
+  // Between 00:00 and 05:00 he has not slept yet: the calendar date is his "tomorrow".
+  const night = isNight(now);
   const calendar = Array.from({ length: 9 }, (_, i) => {
     const day = addMinutes(now, i * 24 * 60);
     const name = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", weekday: "short" }).format(day);
-    return `${name} ${localDate(day)}${i === 0 ? " (today)" : i === 1 ? " (tomorrow)" : ""}`;
+    const label = night ? (i === 0 ? " (his tomorrow: it is after midnight and he has not slept yet)" : i === 1 ? " (his day after tomorrow)" : "") : i === 0 ? " (today)" : i === 1 ? " (tomorrow)" : "";
+    return `${name} ${localDate(day)}${label}`;
   }).join(", ");
 
   const fill: Record<string, string> = {
     today: formatLongDate(now),
-    now: formatTime(now),
+    now: night ? `${formatTime(now)}, after midnight: when he says "tomorrow" he means ${formatDay(now, now)} (${localDate(now)}), the day after he sleeps` : formatTime(now),
     projects: projects.length ? projects.map((p) => p.name).join(", ") : "none yet",
     routine: input.routine || "not set yet",
     calendar,
@@ -247,7 +265,7 @@ export function buildSystemPrompt(input: {
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
-    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id))).join("\n") : "(none)",
+    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id), input.media?.get(t.id))).join("\n") : "(none)",
   };
   return { stable: STABLE, live: LIVE.replace(/\{(\w+)\}/g, (whole, key: string) => fill[key] ?? whole) };
 }

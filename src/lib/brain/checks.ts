@@ -2,7 +2,7 @@
  * Small, pure rules that keep Tony honest. No database, no model: each is
  * covered by a regression test in tests/brain-checks.test.ts.
  */
-import { formatDue, formatTime } from "../time";
+import { formatTime, formatWhen } from "../time";
 
 export type ReminderDecision = "move" | "same" | "extra";
 
@@ -37,20 +37,38 @@ export type DoneAction = {
   reminder_at?: string;
   /** Its parts' progress, "2/3", when it has subtasks. */
   parts?: string;
-  /** A link was saved in its notes this time. */
+  /** The task holds a link in its notes. */
   link?: boolean;
+  /** Photos, videos and files attached to the task. */
+  media?: { photo: number; video: number; file: number };
   /** Words saved in its notes this time (shown short). */
   note?: string;
   /** A check-in comes after this many untouched days. */
   checkIn?: number;
 };
 
-/** What was saved alongside a change: " · 0/3 parts · 🔗 link saved · 📝 For the student from New York · 🔔 check-in after 2 untouched days". */
-export function savedMarks(action: Pick<DoneAction, "parts" | "link" | "note" | "checkIn">, withParts = true): string {
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** "1 photo, 1 video" for a task's attachments, as Tony's own list shows them; undefined when none. */
+export function attachedText(media?: { photo: number; video: number; file: number }): string | undefined {
+  if (!media) return undefined;
+  const parts = [
+    media.photo ? count(media.photo, "photo", "photos") : undefined,
+    media.video ? count(media.video, "video", "videos") : undefined,
+    media.file ? count(media.file, "file", "files") : undefined,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : undefined;
+}
+
+/** What the task holds, on its receipt: " · 0/3 parts · 🔗 link · 🖼 1 photo · 📝 For the student from New York · 🔔 check-in after 2 untouched days". */
+export function savedMarks(action: Pick<DoneAction, "parts" | "link" | "media" | "note" | "checkIn">, withParts = true): string {
   const note = action.note?.replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
   return [
     withParts && action.parts ? `${action.parts} parts` : undefined,
-    action.link ? "🔗 link saved" : undefined,
+    action.link ? "🔗 link" : undefined,
+    action.media?.photo ? `🖼 ${count(action.media.photo, "photo", "photos")}` : undefined,
+    action.media?.video ? `🎞 ${count(action.media.video, "video", "videos")}` : undefined,
+    action.media?.file ? `📎 ${count(action.media.file, "file", "files")}` : undefined,
     note ? `📝 ${note.length > 60 ? `${note.slice(0, 57)}…` : note}` : undefined,
     action.checkIn ? `🔔 check-in after ${action.checkIn} untouched ${action.checkIn === 1 ? "day" : "days"}` : undefined,
   ]
@@ -72,13 +90,13 @@ export function confirmationFor(actions: DoneAction[], now: Date): string {
     if (action.status === "dropped") return `✓ ${title} removed`;
     if (action.status === "skipped") return `✓ ${title} skipped`;
     if (action.tool === "subtask" && action.parts) return `☑ ${title}: ${action.parts} parts done`;
+    // Every time named with its weekday and date ("tomorrow, Sat 21 Nov, 08:30"), the clock time in bold.
+    const bold = (at: Date) => formatWhen(at, now).replace(/(\d{2}:\d{2})$/, "**$1**");
     if (action.reminder_at) {
-      const at = new Date(action.reminder_at);
-      return `🔔 ${title}: reminder at **${formatTime(at)}**${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
+      return `🔔 ${title}: reminder ${bold(new Date(action.reminder_at))}${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
     }
     if (!action.due_at) return `✓ ${title} in the inbox`;
-    const due = formatDue(new Date(action.due_at), now).replace(/(\d{2}:\d{2})$/, "**$1**");
-    return `✓ ${title} → ${due}`;
+    return `✓ ${title} → ${bold(new Date(action.due_at))}`;
   };
   const unique = actions.filter((action, index) => actions.findIndex((other) => other.title === action.title && other.tool === action.tool && other.reminder_at === action.reminder_at) === index);
   if (unique.length === 1) return `${line(unique[0])}, sir.`;

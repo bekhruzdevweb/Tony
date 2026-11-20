@@ -24,6 +24,8 @@ export type MessageKind =
   | "cmd:ping"
   | "cmd:voice"
   | "cmd:routine"
+  | "cmd:undo"
+  | "cmd:memory"
   | "plan"
   | "voice"
   // An apology, "I don't know that command", and the message that caused it.
