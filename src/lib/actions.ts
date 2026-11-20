@@ -114,7 +114,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       if (!slot) return { text: `${name === "today" ? "Today" : "Saturday"} is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
       await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo" });
       await scheduleReminder(task.id, slot.at);
-      return { text: `${b(task.title)} → ${b(formatWhen(slot.at, now))}, sir.`, keyboard: null };
+      return { text: `✓ ${b(task.title)} → ${b(formatWhen(slot.at, now))}`, keyboard: null };
     }
 
     case "snooze": {
@@ -132,7 +132,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       await scheduleReminder(task.id, at);
       // He chose this time himself: Tony learns where this kind of task belongs.
       await recordSample(task, at);
-      return { text: `Moved to ${b(formatWhen(at, now))}, sir.`, keyboard: null };
+      return { text: `✓ ${b(task.title)} → ${b(formatWhen(at, now))}`, keyboard: null };
     }
 
     case "tomorrow": {
@@ -143,7 +143,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       if (!slot) return { text: `Tomorrow is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
       await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo" });
       await scheduleReminder(task.id, slot.at);
-      return { text: `Moved to ${b(formatWhen(slot.at, now))}, sir.`, keyboard: null };
+      return { text: `✓ ${b(task.title)} → ${b(formatWhen(slot.at, now))}`, keyboard: null };
     }
 
     case "resched":

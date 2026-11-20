@@ -15,7 +15,7 @@ import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
-import { asksForTime, claimsAction, isCapture, linksIn, notesToKeep, oneQuestion, unsaved, withoutClaims, withoutInternals, withoutSendClaims } from "./reliability";
+import { asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims } from "./reliability";
 import { buildPlan } from "../planner";
 import { decideFor, getRoutine, nearestFreeFor } from "../routine";
 import { partsOfDay, routineLines } from "../routine-rules";
@@ -24,8 +24,8 @@ import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
 
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
-const HISTORY = 6;
-const HISTORY_CHARS = 280;
+const HISTORY = 10;
+const HISTORY_CHARS = 1200;
 const clip = (text: string) => (text.length > HISTORY_CHARS ? `${text.slice(0, HISTORY_CHARS)}…` : text);
 const MAX_ROUNDS = 5;
 
@@ -182,6 +182,8 @@ export async function think(
   ];
   // Several requests, or moving and planning things: the larger model.
   const model = needsDeepModel(text) ? env.anthropicDeepModel : undefined;
+  // Advice and discussion get more thought and room for a full answer (Phase 2).
+  const depth = wantsThought(text) ? ("deep" as const) : undefined;
 
   // Every task number the model has seen, so none of them can leak into a reply.
   const taskIds = new Set(context.tasks.map((task) => task.id));
@@ -198,11 +200,12 @@ export async function think(
   const checkIns = new Map<number, number>();
   const routineSet: { field: string; value: string | null; on?: boolean }[] = [];
   let proposal: { offerId: number; say: string } | undefined;
-  let failed = false;
   let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
+  // What Tony says as himself alongside the tools (their "reply"): kept above the receipt, never replaced by it (Phase 2).
+  const spoken: string[] = [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const answer = await chat({ system, messages, tools: TOOLS, web: true, model });
+    const answer = await chat({ system, messages, tools: TOOLS, web: true, model, depth });
     for (const source of answer.sources ?? []) if (!sources.has(source.url)) sources.set(source.url, source.title);
     for (const page of answer.fetched ?? []) if (!fetched.some((known) => known.url === page.url)) fetched.push(page);
     if (!answer.tool_calls) {
@@ -274,18 +277,17 @@ export async function think(
           const touched = (outcome as { task?: unknown }).task;
           if (typeof touched === "string") titles.push(touched.replace(/^#\d+\s+/, "").split(" | ")[0]);
           // The model's own words count only where nothing was written; writes are confirmed from the database.
+          if (typeof args.reply === "string" && args.reply.trim() && WRITES.has(call.function.name) && call.function.name !== "remember" && !spoken.includes(args.reply.trim())) spoken.push(args.reply.trim());
           if (typeof args.reply === "string" && args.reply.trim() && !WRITES.has(call.function.name)) prepared = args.reply;
           else if (call.function.name === "remember" && typeof args.reply === "string") prepared = withoutClaims(args.reply) || prepared;
           else if (!WRITES.has(call.function.name)) allSucceeded = false; // a lookup: the model must speak next
         } else {
           allSucceeded = false;
-          failed = true;
         }
         result = outcome;
       } catch (error) {
         console.error(`Tool ${call.function.name} failed:`, error);
         allSucceeded = false;
-        failed = true;
         result = { ok: false, error: "the tool failed; nothing was changed" };
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
@@ -474,7 +476,12 @@ export async function think(
     });
     const confirmation = done.length ? confirmationFor(done, now) : "";
     // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
-    reply = [failed && reply ? withoutClaims(reply) : undefined, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
+    // His own words first (kept as he said them, less any claim, wrong time or internals), then the receipt from what is stored.
+    const known = [text, confirmation, ...slotLines, context.prayers ?? "", ...context.tasks.map((task) => (task.due_at ? formatTime(new Date(task.due_at)) : ""))].join(" ");
+    const words = keepWords(tidyReply([...spoken, reply ?? ""].filter(Boolean).join("\n\n"), [...taskIds]), { times: clockTimes(known) });
+    // A question of his own does not stand next to Tony's question about the slot.
+    const ownWords = slotLines.length && slot && slot.kind !== "auto" ? words.replace(/[^.?!\n]*\?+/g, "").trim() : words;
+    reply = [ownWords, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
     clash = await findClash([...stored.values()].filter((task) => !decided.has(task.id)), now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
@@ -488,14 +495,14 @@ export async function think(
         item.field === "decide" ? (item.on === false ? `🗓 Asking you again for: ${item.value}` : `🗓 Tony picks the time for: ${item.value}`) : `🗓 ${label[item.field] ?? item.field}: ${item.value ?? "not set"}`,
       )
       .join("\n");
-    reply = reply && changes.size > 0 ? `${reply}\n${lines}` : `${lines}\nNoted in your routine, sir.`;
+    reply = reply && changes.size > 0 ? `${reply}\n${lines}` : `${lines}\nNoted in your routine.`;
   }
   if (saved.length > 0) {
     // Read back: a bookmark is confirmed only once it is in memory.
     const { data } = await requireDb().from("memory").select("fact").like("fact", "Saved link:%");
     const kept = ((data ?? []) as { fact: string }[]).map((row) => row.fact);
     const lines = saved.map((title) => (kept.some((fact) => fact.includes(title)) ? `💾 Saved: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
-    reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time, sir.`;
+    reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time.`;
   }
   if (remembered.length > 0 || forgotten.length > 0) {
     const ids = [...remembered, ...forgotten].map((note) => note.id);

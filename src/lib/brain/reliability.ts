@@ -136,17 +136,29 @@ export function heldToGivenTime(due: Date, said: string, now: Date): Date | unde
 
 // ── 6. One question at most ─────────────────────────────────────────────
 
-/** A reply with at most one question: any question after the first is dropped. */
+/**
+ * A reply with at most one question to him: any question after the first, in
+ * its prose, is dropped. Lists, headings, tables and quotes are content, not
+ * questions to answer, and stay as they are ("- Beginners: what stops them?").
+ */
 export function oneQuestion(reply: string): string {
   let seen = false;
-  const kept = reply.replace(/[^.?!\n]*\?+/g, (question) => {
-    if (!seen) {
-      seen = true;
-      return question;
-    }
-    return "";
-  });
-  return kept.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").replace(/ +([.,!?])/g, "$1").trim();
+  return reply
+    .split("\n")
+    .map((line) => {
+      if (/^\s*([-*•]|\d+\.|#|\||>)/.test(line)) return line;
+      const kept = line.replace(/[^.?!\n]*\?+/g, (question) => {
+        if (!seen) {
+          seen = true;
+          return question;
+        }
+        return "";
+      });
+      return kept === line ? line : kept.replace(/[ \t]{2,}/g, " ").replace(/ +([.,!?])/g, "$1").trim();
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** The model asking for a time or day instead of saving the task ("What time should I set?"). */
@@ -176,13 +188,9 @@ export function claimsAction(reply: string): boolean {
   );
 }
 
-/** The reply without its sentences that claim an action. */
+/** The reply without its sentences that claim an action; its lines and lists stay as they were. */
 export function withoutClaims(reply: string): string {
-  return reply
-    .split(/(?<=[.!?])\s+|\n/)
-    .filter((sentence) => sentence.trim() && !claimsAction(sentence))
-    .join(" ")
-    .trim();
+  return filterSentences(reply, (sentence) => !claimsAction(sentence));
 }
 
 /** Which of the fields a tool meant to write did not end up stored. */
@@ -330,13 +338,25 @@ const INTERNAL = [
   /\b(add_task|update_task|complete_task|list_tasks|set_reminder|save_link|offer_task|web_search|web_fetch|runTool)\b/,
 ];
 
-/** Each line, split into sentences, kept only where `keep` says so; empty lines dropped. */
+/**
+ * Each line, split into sentences, kept only where `keep` says so. A line
+ * nothing was taken from stays exactly as it was (indentation, list marker),
+ * blank lines between sections stay, and a line emptied by the filter goes.
+ */
 const filterSentences = (reply: string, keep: (sentence: string) => boolean) =>
   reply
     .split("\n")
-    .map((line) => line.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim() && keep(sentence)).join(" "))
-    .filter((line) => line.trim())
+    .map((line) => {
+      if (!line.trim()) return line;
+      const marker = /^\s*(?:[-*•]|\d+\.)\s+(?:\[[ xX]\]\s+)?/.exec(line)?.[0] ?? "";
+      const sentences = line.slice(marker.length).split(/(?<=[.!?])\s+/);
+      const kept = sentences.filter((sentence) => sentence.trim() && keep(sentence));
+      if (kept.length === sentences.length) return line;
+      return kept.length ? `${marker}${kept.join(" ")}` : null;
+    })
+    .filter((line): line is string => line !== null)
     .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 
 /** The reply without sentences about tools, filters or errors (22:38: "The overdue filter came back empty"). */
@@ -351,4 +371,75 @@ const SEND_CLAIM = /\b(here (it is|is|'s|you go|they are)|attached|i('ve| have) 
 /** The reply without "Here it is, sir" and the like, for when nothing was sent (15:41, 22:39). */
 export function withoutSendClaims(reply: string): string {
   return filterSentences(reply, (sentence) => !SEND_CLAIM.test(sentence));
+}
+
+// ── Phase 2: Tony's own words stay, with the receipt under them ─────────
+
+/** Clock times in some words, as "HH:MM" ("8.30" → "08:30"). */
+export function clockTimes(text: string): string[] {
+  return [...text.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)].map((match) => `${match[1].padStart(2, "0")}:${match[2]}`);
+}
+
+/**
+ * What Tony says as himself, around a task he has just handled: kept as he
+ * said it, except sentences that claim an action ("Done, sir, set for 9:00":
+ * the receipt says what was done), name a time that is in none of his words
+ * nor stored, mention tools or errors. Lists, headings and blank lines stay.
+ */
+export function keepWords(words: string, allowed: { times: string[] }): string {
+  const times = new Set(allowed.times);
+  return filterSentences(words, (sentence) => !claimsAction(sentence) && !INTERNAL.some((pattern) => pattern.test(sentence)) && clockTimes(sentence).every((time) => times.has(time)));
+}
+
+/**
+ * Advice and discussion ("help me plan my course launch", "what do you
+ * think…") get more thought and room to answer; a task or a quick question
+ * does not.
+ */
+export function wantsThought(text: string): boolean {
+  const t = text.toLowerCase();
+  if (isCapture(text)) return false;
+  return (
+    /\b(help me (plan|think|decide|figure|grow|write|prepare|choose|understand|improve)|how (do|can|should|would|could) i\b|what do you think|what would you (do|suggest)|should i\b|any (ideas|advice|tips|suggestions)|ideas? for\b|advice|strategy|brainstorm|pros and cons|compare\b|explain\b|why (do|does|is|are|did|would)\b|what'?s the best way|plan (my|a|the) (course|launch|business|content|channel|week|month|year|lessons?)|grow my\b)/.test(t) ||
+    (t.length > 240 && /\?/.test(t))
+  );
+}
+
+/** Words that are Uzbek: o'/g' (in any of their spellings), or endings an English word does not have. */
+const UZ_MARK = /^(?!o['‘’ʻ`]?clock)[a-z]*[og]['‘’ʻ`][a-z]{2,}$/i;
+const UZ_ENDING = /^[a-z]{3,}(ish|moq|lar|lari|ning|ni|ga|dan|lik|chi|gan|siz|imni|ingiz)$/i;
+const NOT_UZ = new Set("english finish publish polish wish fish dish british spanish selfish establish cherish flourish punish vanish radish foolish childish stylish furnish nourish perish garnish rubbish dollar dollars cellar collar pillar regular popular similar solar polar lunar sugar cigar again began organ vegan logan slogan woman human german roman cardigan".split(" "));
+const isUzbekWord = (word: string) => UZ_MARK.test(word) || (UZ_ENDING.test(word) && !NOT_UZ.has(word.toLowerCase()));
+/** Time words in Uzbek and Russian that do not belong in a title. */
+const TRAILING = /[\s,.-]+(в|во|на|к|до|завтра|сегодня|утром|вечером|ertaga|bugun|kechqurun|ertalab|soat)$/i;
+
+/**
+ * His own Uzbek or Russian words in the message ("Zamokli ko'ynak olish"),
+ * as he wrote them: a run of Cyrillic, or a clause with an o'/g' word or
+ * two Uzbek-looking words. Undefined for an English message.
+ */
+export function foreignPhrase(text: string): string | undefined {
+  const tidy = (phrase: string) => {
+    let out = phrase.trim().replace(/[\s,.;:!?-]+$/, "");
+    while (TRAILING.test(out)) out = out.replace(TRAILING, "").trim();
+    return out || undefined;
+  };
+  const cyrillic = /[Ѐ-ӿ][Ѐ-ӿ\s,'’-]*/.exec(text)?.[0];
+  if (cyrillic && cyrillic.replace(/[^Ѐ-ӿ]/g, "").length >= 3) return tidy(cyrillic);
+  for (const clause of text.split(/\s*[.!?;\n]+\s*|\s+(?=\b(?:put|remind|add|and remind|please|save)\b)/i)) {
+    const words = clause.match(/[\p{L}'‘’ʻ`]+/gu) ?? [];
+    const uzbek = words.filter(isUzbekWord);
+    if (uzbek.length >= 2 || (uzbek.some((word) => UZ_MARK.test(word)) && words.length <= 6)) return tidy(clause);
+  }
+  return undefined;
+}
+
+/** The model's title, unless it translated his Uzbek or Russian words: then his words are the title (23:17). */
+export function hisTitle(modelTitle: string, said: string): string {
+  const phrase = foreignPhrase(said);
+  if (!phrase) return modelTitle;
+  const stems = (text: string) => new Set((text.toLowerCase().match(/[\p{L}'‘’ʻ`]{3,}/gu) ?? []).map((word) => word.slice(0, 4)));
+  const his = stems(phrase);
+  if ([...stems(modelTitle)].some((stem) => his.has(stem))) return modelTitle;
+  return phrase.length <= 80 ? phrase[0].toUpperCase() + phrase.slice(1) : modelTitle;
 }

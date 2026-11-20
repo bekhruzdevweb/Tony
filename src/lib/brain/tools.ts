@@ -12,15 +12,15 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { estimateMinutes } from "../schedule";
-import { givenTimes, heldToGivenTime, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
+import { givenTimes, heldToGivenTime, hisTitle, mergeNotes, nightTomorrow, statedByHim, type GivenTime } from "./reliability";
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 
 const TIME = "YYYY-MM-DDTHH:MM";
-/** Lets the model confirm in the same call, so most messages need one model call, not two. */
-const reply = { type: "string", description: "What to tell him on success." };
+/** What Tony says as himself with the action, shown above the receipt Tony's code adds (Phase 2): one model call, his own words kept. */
+const reply = { type: "string", description: "What you say to him as yourself, shown above the receipt line Tony adds: a comment, advice or a joke, or empty for a plain request. Never the action, the title, the time or the date: the receipt shows those." };
 const id = { type: "integer" };
 /** Ties the last photo or file he shared to the task, so its reminder sends the original back. */
 const attach = { type: "boolean", description: "Attach the last photo/file he shared." };
@@ -342,6 +342,10 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const fields = await readFields(args, now, { said, heard });
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
+      // His Uzbek or Russian words are the title, never a translation of them (23:17: "Zamokli ko'ynak olish").
+      if (said !== undefined) fields.patch.title = hisTitle(fields.patch.title, said);
+      // Notes that only repeat the title (his words, once translated by the model) say nothing.
+      if (fields.patch.notes && fields.patch.notes.trim().toLowerCase() === fields.patch.title.trim().toLowerCase()) delete fields.patch.notes;
       // A saved link or note gets no date unless his own words gave one: it goes to the inbox.
       if (fields.dueAt && said !== undefined && isLinkTask(fields.patch.title, fields.patch.notes) && !givesTime(said)) {
         fields.dueAt = undefined;

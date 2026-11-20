@@ -40,7 +40,7 @@ describe("8. Night rule: 00:00–05:00, 'tomorrow' is the day after he sleeps", 
     expect(formatWhen(at("2026-11-21T10:00"), at("2026-11-21T00:08"))).toBe("tomorrow, Sat 21 Nov, 10:00");
     expect(formatWhen(at("2026-11-21T01:00"), at("2026-11-21T00:08"))).toBe("tonight, Sat 21 Nov, 01:00");
     expect(confirmationFor([{ tool: "set_reminder", title: "Call the barber", status: "todo", due_at: at("2026-11-21T08:30").toISOString() }], at("2026-11-20T17:31"))).toBe(
-      "✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**, sir.",
+      "✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**",
     );
   });
 });
@@ -86,7 +86,7 @@ describe("5. Receipts show what is attached", () => {
     expect(savedMarks({ media: { photo: 2, video: 1, file: 1 } })).toBe(" · 🖼 2 photos · 🎞 1 video · 📎 1 file");
     expect(
       confirmationFor([{ tool: "add_task", title: "Watch: Instagram Masterclass", status: "todo", due_at: at("2026-11-23T10:00").toISOString(), link: true, media: { photo: 1, video: 0, file: 0 } }], at("2026-11-20T23:25")),
-    ).toBe("✓ **Watch: Instagram Masterclass** → Mon 23 Nov, **10:00** · 🔗 link · 🖼 1 photo, sir.");
+    ).toBe("✓ **Watch: Instagram Masterclass** → Mon 23 Nov, **10:00** · 🔗 link · 🖼 1 photo");
   });
 });
 

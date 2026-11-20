@@ -14,7 +14,7 @@ import type { Answer, ChatMessage } from "../src/lib/brain/model";
 import { createFakeDb, type FakeDb } from "./support/fake-db";
 
 type Step = Answer | "FAIL";
-const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[] }[] }));
+const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[] }[], depths: [] as (string | undefined)[] }));
 
 vi.mock("../src/lib/db", () => ({
   requireDb: () => state.db.client,
@@ -23,8 +23,9 @@ vi.mock("../src/lib/db", () => ({
 }));
 vi.mock("../src/lib/brain/model", async (original) => ({
   ...(await original<typeof import("../src/lib/brain/model")>()),
-  chat: async (input: { messages: ChatMessage[] }) => {
+  chat: async (input: { messages: ChatMessage[]; depth?: string }) => {
     state.calls.push({ messages: structuredClone(input.messages) });
+    state.depths.push(input.depth);
     const step = state.script.shift() as Step | undefined;
     if (step === undefined) throw new Error("eval: the scripted model has no more answers");
     if (step === "FAIL") throw new Error("model unreachable (scripted)");
@@ -76,6 +77,7 @@ beforeEach(() => {
   state.db.insert("settings", {});
   for (const name of ["Teaching", "Content", "Health", "Personal"]) state.db.insert("projects", { name });
   state.calls = [];
+  state.depths = [];
   state.script = [];
 });
 afterEach(() => {
@@ -595,7 +597,7 @@ describe("Style: say what you'll do, [✓] [✏️]", () => {
     expect(byTitle("buy notebook").status).toBe("todo");
     const done = await runProposal(thought.proposal!.offerId);
     expect(byTitle("buy notebook").status).toBe("dropped");
-    expect(done).toBe("✓ **buy notebook** removed, sir.");
+    expect(done).toBe("✓ **buy notebook** removed");
     expect(await runProposal(thought.proposal!.offerId)).toBe("Already settled, sir.");
   });
 
@@ -624,7 +626,8 @@ describe("Check-ins: 'remind me if I don't check it for 2 days' (23:17, ignored)
     const result = await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:17", [
       tools(["add_task", { title: "Buy a zippered shirt", notes: "Zamokli ko'ynak olish" }]),
     ]);
-    const shirt = byTitle("Buy a zippered shirt");
+    // His Uzbek words are the title (Phase 2), never "Buy a zippered shirt".
+    const shirt = byTitle("Zamokli ko'ynak olish");
     expect(shirt.status).toBe("inbox");
     expect(state.db.rows("plans")).toHaveLength(0);
     expect(thoughtOf(result)?.slot).toBeUndefined();
@@ -642,7 +645,7 @@ describe("Check-ins: 'remind me if I don't check it for 2 days' (23:17, ignored)
     const { bot, sent } = fakeBot();
     await runTick(bot, 42, new Date());
     expect(sent).toHaveLength(1);
-    expect(sent[0].text).toContain("Buy a zippered shirt</b> has sat untouched for 2 days");
+    expect(sent[0].text).toContain("Zamokli ko'ynak olish</b> has sat untouched for 2 days");
     expect(sent[0].buttons).toEqual(["✓ Done", "Tomorrow", "Drop"]);
     const next = state.db.rows("reminders").filter((row) => row.kind === "stale" && row.state === "scheduled");
     expect(next.map((row) => local(row.fire_at))).toEqual(["2026-11-25T10:00"]);
@@ -653,7 +656,7 @@ describe("Check-ins: 'remind me if I don't check it for 2 days' (23:17, ignored)
       tools(["add_task", { title: "Buy a zippered shirt" }]),
     ]);
     vi.setSystemTime(at("2026-11-22T12:00"));
-    await state.db.client.from("tasks").update({ notes: "the black one" }).eq("id", byTitle("Buy a zippered shirt").id);
+    await state.db.client.from("tasks").update({ notes: "the black one" }).eq("id", byTitle("Zamokli ko'ynak olish").id);
     vi.setSystemTime(at("2026-11-23T10:00"));
     const { bot, sent } = fakeBot();
     await runTick(bot, 42, new Date());
@@ -706,7 +709,7 @@ describe("Links", () => {
     await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:30", [
       tools(["add_task", { title: "Buy a zippered shirt", notes: "Zamokli ko'ynak olish" }]),
     ]);
-    expect(byTitle("Buy a zippered shirt").notes).toBe("Zamokli ko'ynak olish");
+    expect(String(byTitle("Zamokli ko'ynak olish").notes ?? "")).not.toContain("youtu");
   });
 
   it("a link sent with the task: kept in its notes and shown ('✓ Watch: … → Mon 23 Nov, 10:00 · 🔗 link')", async () => {
@@ -714,7 +717,7 @@ describe("Links", () => {
     const video = tasks()[0];
     expect(video.notes).toContain("https://youtu.be/CN8c1edTCew");
     expect(video.title).toBe("Watch: Stand-in page title");
-    expect(result.replies[0]).toMatch(/✓ \*\*Watch: Stand-in page title\*\* → Mon 23 Nov, \*\*10:00\*\* · 🔗 link, sir\./);
+    expect(result.replies[0]).toMatch(/✓ \*\*Watch: Stand-in page title\*\* → Mon 23 Nov, \*\*10:00\*\* · 🔗 link$/);
   });
 });
 
@@ -780,7 +783,7 @@ describe("Phase 1 · receipts show what is attached; Tony's list shows notes", (
     await state.db.client.from("settings").update({ last_shared_media_id: shot.id }).eq("id", true);
     const result = await run("THIS REEL WHICH I SENT YOU", "2026-11-20T23:26", [tools(["update_task", { id: watch.id, attach_shared: true }])]);
     expect(state.db.rows("media").find((row) => row.id === shot.id)?.task_id).toBe(watch.id);
-    expect(result.replies[0]).toBe("✓ **Watch: Instagram Masterclass** → Mon 23 Nov, **10:00** · 🔗 link · 🖼 1 photo, sir.");
+    expect(result.replies[0]).toBe("✓ **Watch: Instagram Masterclass** → Mon 23 Nov, **10:00** · 🔗 link · 🖼 1 photo");
   });
 
   it("22:56 'So what I'm gonna post?': Tony's own list shows the notes and attachments", async () => {
@@ -851,5 +854,82 @@ describe("Phase 1 · never mention tools, filters or internal errors", () => {
     ]);
     expect(result.replies[0]).not.toMatch(/filter/i);
     expect(result.replies[0]).toContain("Challenge: post 4 images");
+  });
+});
+
+// ── Phase 2 (21 Nov): personality. His words stay, with one receipt line under them ──
+describe("Phase 2 · a companion first: Tony's own words, one receipt line", () => {
+  it("'add milk': one receipt line, nothing else, no 'sir'", async () => {
+    const result = await run("add milk", "2026-11-20T21:00", [tools(["add_task", { title: "Milk", reply: "" }])]);
+    expect(result.replies[0]).toBe("✓ **Milk** in the inbox");
+  });
+
+  it("17:31 the barber at 8.30: Tony's own words stay, the receipt under them", async () => {
+    const result = await run("remind me to call the barber tomorrow at 8.30", "2026-11-20T17:31", [
+      tools(["add_task", { title: "Call the barber", due_at: "2026-11-21T08:30", reply: "Early start: Saturday queues at the barber are brutal, so 8:30 is smart." }]),
+    ]);
+    expect(result.replies[0]).toBe("Early start: Saturday queues at the barber are brutal, so 8:30 is smart.\n\n✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
+  });
+
+  it("his words never claim or state a time that is not stored: 'Done, sir, set for 9:00' goes, the receipt shows 08:30", async () => {
+    const result = await run("remind me to call the barber tomorrow at 8.30", "2026-11-20T17:31", [
+      tools(["add_task", { title: "Call the barber", due_at: "2026-11-21T08:30", reply: "Done, sir, set for 9:00. Good luck with the haircut!" }]),
+    ]);
+    expect(result.replies[0]).toBe("Good luck with the haircut!\n\n✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
+  });
+
+  it("'help me plan my course launch': the whole answer reaches him, lists, headings and the closing question intact; no task, no buttons", async () => {
+    const plan = [
+      "Happy to, and it's a good moment for it: your beginner and elementary groups are the natural first buyers.",
+      "",
+      "### Who it's for",
+      "- Beginners: what stops them speaking today?",
+      "- Elementary: what do they want to be able to do in 8 weeks?",
+      "",
+      "### The offer",
+      "1. One promise in a sentence, in Uzbek and English",
+      "2. A fixed start date and a small cohort",
+      "",
+      "### Launch week",
+      "- Monday: a reel for @behruznrl that shows the before and after",
+      "- Wednesday: a free 30-minute lesson",
+      "- Friday: doors close",
+      "",
+      "Which group do you want to fill first?",
+    ].join("\n");
+    const result = await run("help me plan my course launch", "2026-11-20T21:00", [says(plan)]);
+    expect(result.replies[0]).toBe(plan);
+    expect(tasks()).toHaveLength(0);
+    const thought = thoughtOf(result)!;
+    expect(thought.choices).toBeUndefined();
+    expect(thought.slot).toBeUndefined();
+  });
+
+  it("23:17 'Zamokli ko'ynak olish …': his Uzbek words are the title, never 'Buy a zippered shirt'", async () => {
+    await run("Zamokli ko'ynak olish .put thist task to inbox and remind me if i dont check it for 2 days", "2026-11-20T23:17", [
+      tools(["add_task", { title: "Buy a zippered shirt", nudge_after_days: 2 }]),
+    ]);
+    expect(tasks().map((row) => row.title)).toEqual(["Zamokli ko'ynak olish"]);
+  });
+
+  it("a Russian task stays in Cyrillic", async () => {
+    await run("Купить хлеб", "2026-11-20T21:00", [tools(["add_task", { title: "Buy bread" }])]);
+    expect(tasks().map((row) => row.title)).toEqual(["Купить хлеб"]);
+  });
+
+  it("a long answer from Tony is remembered whole in the next turn (history was clipped at 280 characters)", async () => {
+    const long = `Here is how I'd structure the series, sir. ${"Each episode takes one tense and one real situation from your students' week. ".repeat(10)}End.`;
+    said("user", "how should I structure my grammar series?", "2026-11-20T20:58");
+    said("tony", long, "2026-11-20T20:59");
+    await run("and the second episode?", "2026-11-20T21:00", [says("The second one: the present perfect, told through travel stories.")]);
+    const sent = state.calls[0].messages.map((message) => (typeof message.content === "string" ? message.content : "")).join("\n");
+    expect(long.length).toBeGreaterThan(600);
+    expect(sent).toContain(long);
+  });
+
+  it("advice gets more thought; 'add milk' does not", async () => {
+    await run("help me plan my course launch", "2026-11-20T21:00", [says("Gladly. First: who is it for?")]);
+    await run("add milk", "2026-11-20T21:01", [tools(["add_task", { title: "Milk" }])]);
+    expect(state.depths).toEqual(["deep", undefined]);
   });
 });

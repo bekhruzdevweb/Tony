@@ -19,7 +19,8 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Passed |
 | D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Passed |
 | P1 | Reliability II: change history and /undo, notes appended, receipts with attachments, send-now, night rule, memory hygiene and /memory | Built, awaiting your check |
-| P2 | Personality: companion and advisor first, natural replies with a small receipt line | Not started |
+| C1 | Change 1: a day without a time is always asked (2–3 free slots, best first with a reason, Other), "decide yourself for <kind>", split for long tasks | Built, awaiting your check |
+| P2 | Personality: companion and advisor first, natural replies with a small receipt line | Built, awaiting your check |
 | P3 | Smart context: bursts, library, situation rules, routine, scheduling, Free Time list, follow-ups | Not started |
 | P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Not started |
 
@@ -536,7 +537,7 @@ made from the message that broke it; `npm run build` runs them all first.
   exactly what that change changed and leaves later changes alone. Typing
   "undo that" opens the same list.
 - **Receipts show what a task holds:** "✓ **Watch: …** → Mon 23 Nov,
-  **10:00** · 🔗 link · 🖼 1 photo, sir." Tony's own task list shows notes and
+  **10:00** · 🔗 link · 🖼 1 photo". Tony's own task list shows notes and
   attachments too.
 - **"Send me that photo / the video / the link"** is answered in code, at
   once: the original or the link, never a question about it.
@@ -554,6 +555,52 @@ made from the message that broke it; `npm run build` runs them all first.
 
 Migration `0022_history.sql` adds `task_history` (with its trigger) and
 `events`.
+
+## Change 1: a day without a time is always asked
+
+- **One question, never a silent pick.** "Watch it on Monday" gets one
+  message: the task, "When on Mon 23 Nov? Best: **20:30**, you usually watch
+  videos around 20:30.", what shapes the day ("10:00–14:00 is taken by
+  **Watch: Instagram Masterclass**"), and buttons: the best first (⭐), two
+  more from other parts of the day, and [✏️ Other time]. Nothing is stored
+  until you tap or type a time.
+- **Best first, with its reason:** the part of the day you named ("Sunday
+  evening"), then the time you usually do this kind of task, then its hours in
+  your routine, then the first free time.
+- **"Decide yourself for <kind>"** (videos and podcasts, study, content,
+  coding, workouts, errands, lesson prep, classes) lets Tony pick the time for
+  that kind himself; the receipt says it was his pick and why, with
+  [✏️ Change]. "Ask me again for <kind>" turns it off. `/routine` shows it.
+- **[✏️ Other time] sends no extra message.** The question shows it is waiting;
+  a plain time you type next ("20:30", "8 pm") is placed in code, no AI.
+- **Learning:** from times you type on new tasks, slots you tap, moves, and
+  tasks you finish (when you started them).
+- **A long task with no gap for it** (a 4-hour video) is offered in two halves;
+  it is split only if you tap [✂️ Split …].
+- Today/Tomorrow/Weekend buttons on a task with no time ask the same question;
+  "Plan tomorrow", `/tomorrow` and "move overdue to tomorrow" follow the night
+  rule.
+
+Migration `0023_decide.sql` adds `routine.auto_kinds` and
+`settings.pending_slot`.
+
+## Personality (Phase 2)
+
+- **A companion and advisor first,** a task manager second: opinions,
+  explanations, disagreement, humour, and a real follow-up question in words
+  when it helps. "Sir" now and then, not in every reply.
+- **Length fits the question:** one line for "add milk", a full, structured
+  answer for "help me plan my course launch". Advice and discussion get more
+  thinking time and room; Tony remembers the last 10 turns, each up to 1,200
+  characters (was 6 × 280).
+- **Tasks happen quietly:** Tony's own words stay, with one small receipt line
+  under them built from what is stored ("✓ **Call the barber** → tomorrow, Sat
+  21 Nov, **08:30**"). Only a sentence that claims an action, names a time that
+  is not stored, or mentions tools is removed from his words.
+- **Buttons only for real task actions** (choosing a slot, confirming a
+  change); a question in conversation is answered in words.
+- **Your words for titles:** Uzbek or Russian stays exactly as you wrote it
+  ("Zamokli ko'ynak olish" is never "Buy a zippered shirt").
 
 ## How Tony decides
 

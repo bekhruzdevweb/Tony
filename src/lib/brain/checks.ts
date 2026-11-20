@@ -99,8 +99,8 @@ export function confirmationFor(actions: DoneAction[], now: Date): string {
     return `✓ ${title} → ${bold(new Date(action.due_at))}`;
   };
   const unique = actions.filter((action, index) => actions.findIndex((other) => other.title === action.title && other.tool === action.tool && other.reminder_at === action.reminder_at) === index);
-  if (unique.length === 1) return `${line(unique[0])}, sir.`;
-  return ["Done, sir:", ...unique.map((action) => `- ${line(action)}`)].join("\n");
+  // One small receipt line per task, under Tony's own words (Phase 2): no "sir", no "Done, sir:" header.
+  return unique.map(line).join("\n");
 }
 
 export type TimedTask = { id: number; title: string; due_at: string | null; duration_minutes?: number | null; kind?: string | null; status: string };

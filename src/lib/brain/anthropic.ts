@@ -98,6 +98,12 @@ const WEB_TOOLS: Anthropic.ToolUnion[] = [
   { type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", timezone: "Asia/Samarkand" } },
   { type: "web_fetch_20250910", name: "web_fetch", max_uses: 2, citations: { enabled: true }, max_content_tokens: 8000 },
 ];
+/** At least medium effort, never less than what is configured. */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+function deeper(effort: (typeof EFFORTS)[number]): (typeof EFFORTS)[number] {
+  return EFFORTS.indexOf(effort) >= 1 ? effort : "medium";
+}
+
 /** If the account refuses the web tools (not enabled for it), they are left out for an hour. */
 let webOffUntil = 0;
 const MAX_PAUSES = 3;
@@ -116,15 +122,16 @@ export async function chatWithClaude(
   force?: string,
   web = false,
   model = env.anthropicModel,
+  depth?: "deep",
 ): Promise<Answer> {
   const useWeb = web && Date.now() > webOffUntil;
   const request = (conversation: Anthropic.MessageParam[], withWeb: boolean) =>
     client.messages.create({
       model,
-      // Thinking counts towards this, so it is generous for replies that are a sentence or two.
-      max_tokens: 4000,
-      // Routing a request to a tool and wording a short reply is light work; the model still thinks when it needs to.
-      output_config: { effort: env.anthropicEffort },
+      // Thinking counts towards this: generous for a sentence or two, and twice that for a full answer to advice.
+      max_tokens: depth === "deep" ? 8000 : 4000,
+      // Routing a request to a tool is light work; advice and discussion get at least medium effort (never less than configured).
+      output_config: { effort: depth === "deep" ? deeper(env.anthropicEffort) : env.anthropicEffort },
       system: [
         { type: "text", text: system.stable, cache_control: { type: "ephemeral" } },
         ...(system.live.trim() ? [{ type: "text" as const, text: system.live }] : []),

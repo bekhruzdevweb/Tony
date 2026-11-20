@@ -773,13 +773,6 @@ export function getBot(): Bot | undefined {
   /** [✓ Mark done] [Not yet] for a task whose parts are all ticked. */
   const completeKeyboard = (taskId: number) => new InlineKeyboard().text("✓ Mark done", `done:${taskId}`).text("Not yet", "keep");
 
-  /** The last sentence of a reply, when it is a yes-or-no question ("Shall I move it to 18:00?"). */
-  const yesNoQuestion = (reply: string): string | undefined => {
-    const last = reply.trim().split("\n").pop()?.trim() ?? "";
-    const match = /(?:^|[.!]\s+)((?:shall|should|may|can|could|do you want|would you like|want)\b[^?]{2,200}\?)$/i.exec(last.replace(/[*_]/g, ""));
-    return match?.[1];
-  };
-
   const MUTATING = ["add_task", "update_task", "complete_task", "set_reminder", "remember", "forget"];
 
   // One path for typed and spoken messages: his message, request by request, each confirmed on its own.
@@ -971,12 +964,7 @@ export function getBot(): Bot | undefined {
         if (clash.suggestAt) keyboard.text(`Move ${shortLabel(clash.title, 16)} ${formatTime(clash.suggestAt)}`, `move:${clash.taskId}:${Math.round(clash.suggestAt.getTime() / 60_000)}`);
         keyboard.text("Keep both", "clash:keep");
       }
-      // A yes-or-no question left in the words still gets buttons: he taps, he does not type.
-      const yesNo = choices || keyboard ? undefined : yesNoQuestion(reply);
-      if (yesNo) {
-        keyboard = new InlineKeyboard().text("Yes", "ch:0").text("No", "ch:1");
-        await updateSettings({ pending_choices: { question: yesNo, options: ["Yes", "No"] } });
-      }
+      // Buttons only for real actions on tasks (Phase 2): a question in conversation is answered in words, never with [Yes] [No].
       // The reply as a rich message (lists, tables, headings), times in bold; a confirmation is tidied away later.
       // A confirmation names its task in bold, as it did before.
       const named = confirmed ? titles.reduce((text, title) => (title && text.includes(title) && !text.includes(`**${title}**`) ? text.replace(title, `**${title}**`) : text), reply) : reply;

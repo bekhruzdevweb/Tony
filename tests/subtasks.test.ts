@@ -35,9 +35,9 @@ describe("Progress", () => {
 describe("Confirmations", () => {
   const now = new Date("2026-11-20T18:00:00Z");
   it("says how far along the parts are after ticking one", () => {
-    expect(confirmationFor([{ tool: "subtask", title: "Presentation", status: "todo", due_at: null, parts: "1/3" }], now)).toBe("☑ **Presentation**: 1/3 parts done, sir.");
+    expect(confirmationFor([{ tool: "subtask", title: "Presentation", status: "todo", due_at: null, parts: "1/3" }], now)).toBe("☑ **Presentation**: 1/3 parts done");
   });
   it("shows the parts count on a new task", () => {
-    expect(confirmationFor([{ tool: "add_task", title: "Post stories", status: "inbox", due_at: null, parts: "0/3" }], now)).toBe("✓ **Post stories** in the inbox · 0/3 parts, sir.");
+    expect(confirmationFor([{ tool: "add_task", title: "Post stories", status: "inbox", due_at: null, parts: "0/3" }], now)).toBe("✓ **Post stories** in the inbox · 0/3 parts");
   });
 });

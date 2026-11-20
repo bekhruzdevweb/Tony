@@ -142,12 +142,21 @@ async function chatWithGroq(system: SystemPrompt, messages: ChatMessage[], tools
  * goes to the second model on Groq, so he is not left without an answer.
  * With no Anthropic key at all, Groq is the brain, as it was before.
  */
-export async function chat(input: { system: SystemPrompt | string; messages: ChatMessage[]; tools: ToolDefinition[]; force?: string; web?: boolean; model?: string }): Promise<Answer> {
+export async function chat(input: {
+  system: SystemPrompt | string;
+  messages: ChatMessage[];
+  tools: ToolDefinition[];
+  force?: string;
+  web?: boolean;
+  model?: string;
+  /** Advice and discussion: more thought, and room for a full answer. */
+  depth?: "deep";
+}): Promise<Answer> {
   const system = typeof input.system === "string" ? { stable: input.system, live: "" } : input.system;
   const claude = anthropicClient();
   if (claude) {
     try {
-      return await chatWithClaude(claude, system, input.messages, input.tools, input.force, input.web, input.model);
+      return await chatWithClaude(claude, system, input.messages, input.tools, input.force, input.web, input.model, input.depth);
     } catch (error) {
       console.error(`Claude failed, ${env.aiApiKey ? `falling back to ${env.aiModel}` : "and there is no fallback"}: ${describeClaudeError(error)}`);
       if (!env.aiApiKey) throw new ModelError(`Claude failed: ${describeClaudeError(error)}`);
