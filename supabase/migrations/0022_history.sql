@@ -44,8 +44,8 @@ begin
 end;
 $$;
 
-drop trigger if exists tasks_history on public.tasks;
-create trigger tasks_history
+-- "or replace" (Postgres 14+) keeps it safe to run again without dropping anything.
+create or replace trigger tasks_history
   after insert or update or delete on public.tasks
   for each row execute function public.record_task_history();
 

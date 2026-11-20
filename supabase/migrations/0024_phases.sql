@@ -27,21 +27,6 @@ create table if not exists public.library (
 );
 create index if not exists library_recent on public.library (created_at desc);
 
--- Links he saved with 💾 were kept in memory ("Saved link: <title> (<url>)"): they move to the library.
-insert into public.library (kind, url, title, source, created_at)
-select 'link',
-       substring(fact from '\((https?://[^)\s]+)\)\s*\.?$'),
-       nullif(trim(substring(fact from '^Saved link:\s*(.*?)\s*\(https?://')), ''),
-       'saved',
-       created_at
-from public.memory
-where fact like 'Saved link:%'
-  and substring(fact from '\((https?://[^)\s]+)\)\s*\.?$') is not null
-  and not exists (select 1 from public.library l where l.url = substring(fact from '\((https?://[^)\s]+)\)\s*\.?$'));
-delete from public.memory
-where fact like 'Saved link:%'
-  and exists (select 1 from public.library l where l.url = substring(fact from '\((https?://[^)\s]+)\)\s*\.?$'));
-
 -- ── b) Situation rules: "when I'm not motivated to work out, send me this video" ──
 create table if not exists public.rules (
   id             bigint generated always as identity primary key,
@@ -95,3 +80,21 @@ grant select, insert, update, delete on public.incoming, public.library, public.
 revoke all on public.incoming, public.library, public.rules, public.backups, public.mistakes from anon, authenticated;
 -- Columns added to existing tables keep those tables' grants.
 grant select, insert, update, delete on public.tasks, public.messages to service_role;
+
+-- ── b) Data: links he saved with 💾 were kept in memory; they move to the library ──
+-- ("Saved link: <title> (<url>)", sometimes followed by the model's summary, which is not kept.)
+insert into public.library (kind, url, title, source, created_at)
+select distinct on (saved.url) 'link', saved.url, saved.title, 'saved', saved.created_at
+from (
+  select substring(fact from '\((https?://[^)\s]+)\)') as url,
+         nullif(trim(substring(fact from '^Saved link:\s*(.*?)\s*\(https?://')), '') as title,
+         created_at
+  from public.memory
+  where fact like 'Saved link:%'
+) saved
+where saved.url is not null
+  and not exists (select 1 from public.library l where l.url = saved.url)
+order by saved.url, saved.created_at;
+delete from public.memory
+where fact like 'Saved link:%'
+  and exists (select 1 from public.library l where l.url = substring(fact from '\((https?://[^)\s]+)\)'));

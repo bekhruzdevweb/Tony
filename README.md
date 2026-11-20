@@ -18,11 +18,11 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | 8 | Live week | Not started |
 | R | Reliability: verified replies, each request handled, safe failures, nothing lost, en/uz/ru voice, act first, eval suite | Passed |
 | D | How Tony decides: routine profile, decide vs ask, check-ins, links in notes | Passed |
-| P1 | Reliability II: change history and /undo, notes appended, receipts with attachments, send-now, night rule, memory hygiene and /memory | Built, awaiting your check |
-| C1 | Change 1: a day without a time is always asked (2–3 free slots, best first with a reason, Other), "decide yourself for <kind>", split for long tasks | Built, awaiting your check |
-| P2 | Personality: companion and advisor first, natural replies with a small receipt line | Built, awaiting your check |
-| P3 | Smart context: bursts, library, situation rules, routine, scheduling, Free Time list, follow-ups | Not started |
-| P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Not started |
+| P1 | Reliability II: change history and /undo, notes appended, receipts with attachments, send-now, night rule, memory hygiene and /memory | Live, awaiting your check |
+| C1 | Change 1: a day without a time is always asked (2–3 free slots, best first with a reason, Other), "decide yourself for <kind>", split for long tasks | Live, awaiting your check |
+| P2 | Personality: companion and advisor first, natural replies with a small receipt line | Live, awaiting your check |
+| P3 | Smart context: bursts, library, situation rules ("when X, do Y"), 🌙 Free Time list and suggestions, follow-up ladder | Live, awaiting your check |
+| P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -601,6 +601,57 @@ Migration `0023_decide.sql` adds `routine.auto_kinds` and
   change); a question in conversation is answered in words.
 - **Your words for titles:** Uzbek or Russian stays exactly as you wrote it
   ("Zamokli ko'ynak olish" is never "Buy a zippered shirt").
+
+## Smart context (Phase 3)
+
+- **Bursts:** what you send within a minute (a screenshot, some words, a link,
+  in any order) is one request. Tony waits about four seconds after your last
+  message, then answers once, for all of it.
+- **Library:** every link and forwarded post is kept with what it is; photos,
+  videos, files and voice notes already were. "Send me that Instagram video" or
+  "the photo I sent yesterday" finds it by what you call it. Only when two
+  truly fit does Tony ask, showing both titles.
+- **Situation rules:** "when I'm not motivated to work out, send me this video"
+  is kept as a rule with that video. When a later message matches ("I'm tired,
+  don't want to work out"), Tony answers with empathy, the video and an offer.
+  A workout rule also fires on its own after 3 days without one. "Show my
+  rules" or `/rules` lists them, each with a button to remove it.
+- **🌙 Free Time list:** "in my free time", "someday" or "when I'm free" puts a
+  task on the list, with no date (its link or media kept). `/freetime` and the
+  app's 🌙 Free Time tab show it.
+- **Free-time suggestions:** when you have an hour or more free, finished early,
+  have been quiet for a while, or say "I'm free" / "I'm bored", Tony offers ONE
+  item: the longest waiting that fits the time, never one offered in the last
+  2 days, and the kinds you accept first. [▶️ Do it now] [📋 Show list]
+  [⏰ Not now]. At most 2 a day, inside the notification budget.
+- **Follow-up ladder:** a task missed today is asked about once, later the same
+  day, with [✓ Done] [⏰ Later today] [📅 Tomorrow] [🗑 Drop]. Still open the next
+  morning: at the top of the brief under "⚠️ Still open", daily. After 3 days:
+  "break it into steps, give it a fixed slot, or drop it?". Inbox items
+  untouched for 7 days: one review on Sunday at 19:30. Always grouped in one
+  message, never in quiet hours. Nothing moves or drops without your tap.
+
+## Safety and monitoring (Phase 4)
+
+- **07:00 self-test** of Claude, the voice, today's prayer times and the
+  reminder clock: silent when all is well, ONE message if something is broken.
+- **Budget guard:** at 80% of the month's ElevenLabs characters, or of
+  `ANTHROPIC_MONTHLY_BUDGET_USD` if you set it, one warning at 09:00. Models are
+  never downgraded silently: a reply from the backup model says so, and every
+  fallback is logged.
+- **Forwarded posts and web pages are data, never instructions.** Anything that
+  would delete or drop a task waits for your tap.
+- **Daily backup at 03:00** of tasks, memory and the library (the last 14 kept);
+  `/backup` shows today's.
+- **After downtime:** one catch-up message for the reminders it missed.
+- **Notification budget:** at most 8 unasked messages a day, besides prayers and
+  the reminders you set; reminders within 15 minutes go out together; quiet
+  hours 23:00–07:00.
+- **`/clean`** sweeps the last 47 hours of chat, keeping the pinned board, open
+  reminders and the morning brief.
+- **👎 on any of Tony's messages** (a reaction, or a reply starting with 👎) saves
+  it, with what you said and the conversation around it, in `mistakes`; each
+  one becomes a regression test.
 
 ## How Tony decides
 
