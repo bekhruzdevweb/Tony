@@ -134,3 +134,140 @@ export async function editRich(bot: Bot, chatId: number, messageId: number, html
     return editHtml(bot, chatId, messageId, html, keyboard);
   }
 }
+
+// ---------------------------------------------------------------------------
+// The brain's replies: Telegram rich markdown (lists, task lists, tables,
+// headings), sent as a rich message, with an HTML copy as the fallback.
+
+const escHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const TASK_ITEM = /^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/;
+const BULLET = /^\s*[-*+]\s+(.*)$/;
+const NUMBERED = /^\s*(\d+)[.)]\s+(.*)$/;
+const HEADING = /^\s*#{1,6}\s+(.*)$/;
+const QUOTE = /^\s*>\s?(.*)$/;
+
+/** Markdown emphasis inside one line, as Telegram HTML. */
+function inlineHtml(text: string): string {
+  // Code spans first, so nothing inside them is touched.
+  return text
+    .split(/(`[^`]+`)/)
+    .map((part) => {
+      if (/^`[^`]+`$/.test(part)) return `<code>${escHtml(part.slice(1, -1))}</code>`;
+      return escHtml(part)
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label: string, url: string) => `<a href="${url.replace(/"/g, "&quot;")}">${label}</a>`)
+        .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, x?: string, y?: string) => `<b>${x ?? y}</b>`)
+        .replace(/~~(.+?)~~/g, "<s>$1</s>")
+        .replace(/\|\|(.+?)\|\|/g, "<tg-spoiler>$1</tg-spoiler>")
+        .replace(/==(.+?)==/g, "$1")
+        .replace(/(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/g, "<i>$1</i>")
+        .replace(/(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])/g, "<i>$1</i>");
+    })
+    .join("");
+}
+
+/** A rich-markdown reply as plain Telegram HTML: lists become lines, tables become rows. */
+export function markdownToHtml(markdown: string): string {
+  const out: string[] = [];
+  let quote: string[] = [];
+  let headerRow = true;
+  const flushQuote = () => {
+    if (quote.length) out.push(`<blockquote>${quote.join("\n")}</blockquote>`);
+    quote = [];
+  };
+  for (const line of markdown.split("\n")) {
+    const inQuote = QUOTE.exec(line);
+    if (inQuote) {
+      quote.push(inlineHtml(inQuote[1]));
+      continue;
+    }
+    flushQuote();
+    if (TABLE_ROW.test(line)) {
+      if (TABLE_RULE.test(line)) continue;
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => inlineHtml(cell.trim()));
+      out.push(headerRow ? `<b>${cells.join(" · ")}</b>` : cells.join("  "));
+      headerRow = false;
+      continue;
+    }
+    headerRow = true;
+    let match: RegExpExecArray | null;
+    if ((match = HEADING.exec(line))) out.push(`<b>${inlineHtml(match[1])}</b>`);
+    else if ((match = TASK_ITEM.exec(line))) out.push(`${match[1] === " " ? "☐" : "☑"} ${inlineHtml(match[2])}`);
+    else if ((match = BULLET.exec(line))) out.push(`• ${inlineHtml(match[1])}`);
+    else if ((match = NUMBERED.exec(line))) out.push(`${match[1]}. ${inlineHtml(match[2])}`);
+    else out.push(inlineHtml(line));
+  }
+  flushQuote();
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** The words of a markdown line with its markup taken out. */
+const bare = (text: string) =>
+  text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_~`|=#>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Whether a reply is more than prose: it has a list, a table or a heading. */
+export function hasStructure(markdown: string): boolean {
+  return markdown.split("\n").some((line) => TABLE_ROW.test(line) || TASK_ITEM.test(line) || BULLET.test(line) || NUMBERED.test(line) || HEADING.test(line));
+}
+
+/**
+ * What is said aloud for a reply: its prose only, never the list or table
+ * (those are in the chat). A reply that is only a list gets a short line saying so.
+ */
+export function spokenFromMarkdown(markdown: string): string {
+  let items = 0;
+  const prose: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!line.trim()) continue;
+    if (TABLE_ROW.test(line)) {
+      if (!TABLE_RULE.test(line)) items++;
+      continue;
+    }
+    if (TASK_ITEM.test(line) || BULLET.test(line) || NUMBERED.test(line)) {
+      items++;
+      continue;
+    }
+    if (HEADING.test(line)) continue;
+    prose.push(bare(line.replace(QUOTE, "$1")));
+  }
+  const said = prose.join(" ").trim();
+  if (said) return said;
+  return items > 0 ? "Here it is, sir. The details are in the chat." : bare(markdown);
+}
+
+/** Times (18:00) in bold, unless they already are or sit in code. */
+export function boldTimes(markdown: string): string {
+  return markdown
+    .split(/(`[^`]+`)/)
+    .map((part) => (/^`[^`]+`$/.test(part) ? part : part.replace(/(?<![*\w:])([01]?\d|2[0-3]):[0-5]\d(?![\w*:])/g, "**$&**")))
+    .join("");
+}
+
+/** The reply's markdown as plain text, for places with no formatting (the app's chat). */
+export function markdownToPlain(markdown: string): string {
+  return markdownToHtml(markdown)
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Sends one of the brain's replies: rich markdown as a rich message, or, if
+ * Telegram refuses it, the same reply converted to HTML.
+ */
+export async function sendMarkdown(bot: Bot, chatId: number, markdown: string, options: { keyboard?: InlineKeyboard; silent?: boolean } = {}): Promise<number> {
+  try {
+    const sent = await bot.api.sendRichMessage(chatId, { markdown }, { reply_markup: options.keyboard, disable_notification: options.silent });
+    return sent.message_id;
+  } catch (error) {
+    console.error("A rich reply was refused; sending it as HTML:", error);
+    return sendHtml(bot, chatId, markdownToHtml(markdown), options);
+  }
+}

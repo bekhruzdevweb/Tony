@@ -36,15 +36,17 @@ export function stripJunk(text: string, taskIds: number[] = []): string {
  */
 export function tidyReply(raw: string, taskIds: number[] = []): string {
   const text = stripJunk(raw, taskIds);
-  const glued = text.trim().split(/(?<=[a-z0-9"”’)][.!?])(?=[A-Z“])/);
+  // (Only in prose: a list or table spans lines and never glues this way.)
+  const glued = text.includes("\n") ? [text] : text.trim().split(/(?<=[a-z0-9"”’)][.!?])(?=[A-Z“])/);
   // A real second copy is a whole reply; a few stray characters are not.
   const tail = glued[glued.length - 1];
   const last = (glued.length > 1 && tail.trim().length < 12 ? text.trim() : tail)
-    // Telegram shows plain text, so markdown emphasis is only noise.
-    .replace(/\*\*(.+?)\*\*/g, "$1")
+    // Replies are rich markdown, so bold, lists and tables are kept; only stray spacing goes.
     .replace(/[ \t]+\n/g, "\n")
-    .replace(/[ \t]{2,}/g, " ")
+    .replace(/(\S)[ \t]{2,}/g, "$1 ")
     .trim();
+  // A list, table or heading is laid out line by line: leave it as it is.
+  if (last.includes("\n")) return last.replace(/\n{3,}/g, "\n\n");
 
   const seen = new Set<string>();
   const sentences = last.split(/(?<=[.!?])\s+/).filter((sentence) => {

@@ -47,12 +47,14 @@ type LastSent = { last_sent_hash: string | null; last_sent_at: string | null; la
  */
 export function refuseRepeats(bot: Bot): void {
   bot.api.config.use(async (prev, method, payload, signal) => {
-    if (method !== "sendMessage") return prev(method, payload, signal);
-    const message = payload as { chat_id?: number | string; text?: string; reply_markup?: unknown };
+    if (method !== "sendMessage" && method !== "sendRichMessage") return prev(method, payload, signal);
+    const message = payload as { chat_id?: number | string; text?: string; rich_message?: unknown; reply_markup?: unknown };
     const db = getDb();
-    if (!db || typeof message.text !== "string") return prev(method, payload, signal);
+    // A rich message is compared by its content, so a repeated rich reply is caught too.
+    const words = typeof message.text === "string" ? message.text : message.rich_message ? JSON.stringify(message.rich_message) : undefined;
+    if (!db || words === undefined) return prev(method, payload, signal);
 
-    const hash = createHash("sha256").update(`${message.chat_id}\n${message.text}\n${JSON.stringify(message.reply_markup ?? null)}`).digest("hex");
+    const hash = createHash("sha256").update(`${message.chat_id}\n${words}\n${JSON.stringify(message.reply_markup ?? null)}`).digest("hex");
     try {
       const { data } = await db.from("settings").select("last_sent_hash, last_sent_at, last_sent_id").limit(1).maybeSingle();
       const last = data as LastSent | null;
@@ -62,9 +64,9 @@ export function refuseRepeats(bot: Bot): void {
         last?.last_sent_id != null &&
         Boolean((await db.from("chat_messages").select("id").eq("message_id", last.last_sent_id).not("deleted_at", "is", null).limit(1)).data?.length);
       if (last && recent && !removed && last.last_sent_hash === hash && last.last_sent_id !== null) {
-        console.warn("Skipped a repeated message:", message.text.slice(0, 80));
+        console.warn("Skipped a repeated message:", words.slice(0, 80));
         // Answer as Telegram would have, pointing at the message already in the chat.
-        const stood = { message_id: Number(last.last_sent_id), date: Math.floor(Date.now() / 1000), chat: { id: Number(message.chat_id), type: "private" }, text: message.text };
+        const stood = { message_id: Number(last.last_sent_id), date: Math.floor(Date.now() / 1000), chat: { id: Number(message.chat_id), type: "private" }, text: message.text ?? "" };
         return { ok: true, result: stood } as unknown as Awaited<ReturnType<typeof prev>>;
       }
     } catch (error) {

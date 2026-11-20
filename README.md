@@ -236,6 +236,27 @@ and a skipped day neither breaks a streak nor adds to it.
 
 Needs migration `0011_coach.sql` (applied).
 
+**Tony's replies.** Everything the brain says in Telegram is a rich
+message written in Telegram's rich markdown. The system prompt tells
+Claude how to lay it out, with two worked examples:
+
+- at most two short sentences of prose, the first summing the answer up;
+- three or more items as a list, never a paragraph (tasks as a native
+  checkbox list, `- [ ] Title`);
+- a schedule as a small `| Time | Task |` table;
+- short headings for sections;
+- bold only for times and a key word or two (Tony also bolds every time
+  and, in a confirmation, the task's title);
+- questions as buttons: Claude calls `ask` with options. If a reply still
+  ends with a yes-or-no question ("Shall I move it to tomorrow?"), Tony adds
+  **Yes** / **No** buttons himself.
+
+When you spoke to him, the voice note says only the prose (the summary
+sentence), never the list or table; those stay in the chat. If Telegram
+refuses the rich message, the same reply goes as HTML (lists as lines,
+tables as rows). The app's chat shows the reply as plain text. The
+no-repeat guard covers rich messages too.
+
 **Rich messages elsewhere.** The morning brief and plans (`/plan`, "plan
 my day") are rich messages too: a heading, sections as lists, the plan's
 reasoning in a folding quotation, and the plan's buttons under it.

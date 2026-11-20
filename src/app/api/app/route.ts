@@ -1,3 +1,4 @@
+import { markdownToPlain } from "@/lib/rich";
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
@@ -63,7 +64,8 @@ export async function POST(request: Request) {
         }
         try {
           const thought = await think(text, { channel: "app" });
-          reply = thought.reply;
+          // The app's chat shows plain text: the rich markdown is flattened (lists stay one per line).
+          reply = markdownToPlain(thought.reply);
           // The app has no buttons in Chat: a plan waits under Plans, and options are listed.
           if (thought.planId !== undefined) reply = "I have proposed a plan, sir. It is under Plans (tap my picture), with my reasons and an Apply button.";
           else if (thought.choices) reply = `${thought.choices.question} (${thought.choices.options.join(" / ")})`;

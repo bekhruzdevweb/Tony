@@ -32,7 +32,7 @@ import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForRemin
 import { createLoginCode } from "./session";
 import { getSettings, updateSettings } from "./settings";
 import { addInboxTask, OPEN_STATUSES, type Task } from "./tasks";
-import { editRich, sendRich } from "./rich";
+import { boldTimes, editRich, sendMarkdown, sendRich, spokenFromMarkdown } from "./rich";
 import { cleanFromCommand } from "./sweep";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, toWholeMinute } from "./time";
@@ -467,6 +467,13 @@ export function getBot(): Bot | undefined {
     await logMessage("tony", plain(view.html));
   };
 
+  /** The last sentence of a reply, when it is a yes-or-no question ("Shall I move it to 18:00?"). */
+  const yesNoQuestion = (reply: string): string | undefined => {
+    const last = reply.trim().split("\n").pop()?.trim() ?? "";
+    const match = /(?:^|[.!]\s+)((?:shall|should|may|can|could|do you want|would you like|want)\b[^?]{2,200}\?)$/i.exec(last.replace(/[*_]/g, ""));
+    return match?.[1];
+  };
+
   const MUTATING = ["add_task", "update_task", "complete_task", "set_reminder", "remember", "forget"];
 
   // One path for typed and spoken messages: the brain, with a safe fallback.
@@ -508,16 +515,22 @@ export function getBot(): Bot | undefined {
         choices.options.forEach((option, index) => keyboard.text(option, `ch:${index}`).row());
         keyboard.text("Other…", "ch:other");
         await updateSettings({ pending_choices: choices });
-        await say(ctx, emphasise(choices.question), { keyboard });
+        await sendMarkdown(bot, ctx.chat.id, boldTimes(choices.question), { keyboard });
         return { reply, confirmed: false, completed: false };
       }
       const confirmed = tools.some((tool) => MUTATING.includes(tool));
-      // A confirmation shows the task and time in bold and is tidied away later; conversation stays.
-      await say(
-        ctx,
-        emphasise(reply, confirmed ? titles : []),
-        confirmed ? { kind: "confirmation", deleteAfter: hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) } : {},
-      );
+      // A yes-or-no question left in the words still gets buttons: he taps, he does not type.
+      const yesNo = choices ? undefined : yesNoQuestion(reply);
+      let keyboard: InlineKeyboard | undefined;
+      if (yesNo) {
+        keyboard = new InlineKeyboard().text("Yes", "ch:0").text("No", "ch:1");
+        await updateSettings({ pending_choices: { question: yesNo, options: ["Yes", "No"] } });
+      }
+      // The reply as a rich message (lists, tables, headings), times in bold; a confirmation is tidied away later.
+      // A confirmation names its task in bold, as it did before.
+      const named = confirmed ? titles.reduce((text, title) => (title && text.includes(title) && !text.includes(`**${title}**`) ? text.replace(title, `**${title}**`) : text), reply) : reply;
+      const sent = await sendMarkdown(bot, ctx.chat!.id, boldTimes(named), { keyboard });
+      if (confirmed) await track(sent, "confirmation", { deleteAfter: hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
       // A small acknowledgement on his own message when something was written down or ticked off.
       const reaction = tools.includes("complete_task")
         ? "👌"
@@ -673,7 +686,8 @@ export function getBot(): Bot | undefined {
 
     // Spoken to, Tony answers aloud as well (when a voice is configured):
     // cheerfully when a task was just ticked off, softly late in the evening.
-    const voiceId = await sayAloud(bot, ctx.chat.id, reply, completed ? "completed" : "reply");
+    // Spoken: the reply's prose, a short natural summary; the list or table stays in the chat.
+    const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), completed ? "completed" : "reply");
     if (voiceId !== undefined && confirmed) await track(voiceId, "voice", { deleteAfter: hoursFromNow(VOICE_REPLY_HOURS) });
   });
 
