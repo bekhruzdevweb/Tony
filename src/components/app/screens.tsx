@@ -33,6 +33,38 @@ function Title({ children, sub }: { children: ReactNode; sub?: ReactNode }) {
 }
 
 const attachedTo = (state: AppState) => (task: Task) => state.media.some((item) => item.task_id === task.id);
+const notPrayer = (task: Task) => task.kind !== "prayer";
+
+/** Today's five prayers as one calm strip: tap one to mark it prayed. No red, no counts. */
+function PrayerStrip({ state, now, onToggle }: { state: AppState; now: Date; onToggle: (task: Task) => void }) {
+  const today = localDate(now);
+  const prayers = state.tasks
+    .filter((t) => t.kind === "prayer" && t.due_at && localDate(new Date(t.due_at)) === today && t.status !== "skipped" && t.status !== "dropped")
+    .sort(byDue);
+  if (prayers.length === 0) return null;
+  const next = prayers.find((t) => isOpen(t) && new Date(t.due_at!).getTime() > now.getTime());
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-1.5" aria-label="Prayer times today">
+      <span className="mr-1 text-[13px] text-secondary">🕌</span>
+      {prayers.map((task) => {
+        const done = !isOpen(task);
+        const upcoming = task.id === next?.id;
+        return (
+          <button
+            key={task.id}
+            type="button"
+            onClick={() => onToggle(task)}
+            aria-label={done ? `${task.title}, prayed. Tap to undo` : `Mark ${task.title} as prayed`}
+            className={`h-7 rounded-full border px-2.5 text-[12.5px] transition-colors ${done ? "border-transparent bg-surface text-secondary" : upcoming ? "border-prayer/40 bg-prayer/10 text-prayer" : "border-hairline text-ink"}`}
+          >
+            {done ? "✓ " : ""}
+            {task.title} <span className="text-secondary">{formatTime(new Date(task.due_at!))}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * Today, as Todoist lays it out: the title, "✓ 9 tasks · ⏱ 2h 30m", a
@@ -78,6 +110,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
           >
             Today
           </Title>
+          <PrayerStrip state={state} now={now} onToggle={onToggle} />
           {overdue.length > 0 && (
             <Section
               title="Overdue"
@@ -186,7 +219,7 @@ export function ProjectScreen({ state, now, onOpen, onToggle, onAdd, projectId }
         </Title>
         <Section title="Scheduled">
           {dated.map((task) => (
-            <TaskRow key={task.id} task={task} when="full" overdue={new Date(task.due_at!).getTime() < now.getTime()} {...row} />
+            <TaskRow key={task.id} task={task} when="full" overdue={notPrayer(task) && new Date(task.due_at!).getTime() < now.getTime()} {...row} />
           ))}
           <AddTaskRow onAdd={() => onAdd({ projectId })} />
         </Section>
@@ -241,7 +274,7 @@ const FILTERS: Filter[] = [
 /** Filters (and labels: Tony files by project, so the labels are the projects). */
 export function FiltersScreen({ state, now, onOpen, onToggle, onProject }: ScreenProps & { onProject: (id: number) => void }) {
   const [chosen, setChosen] = useState<Filter | null>(null);
-  const open = state.tasks.filter(isOpen);
+  const open = state.tasks.filter((t) => isOpen(t) && notPrayer(t));
   if (chosen) {
     const tasks = open.filter((t) => chosen.test(t, now)).sort(byDue);
     return (
@@ -305,7 +338,7 @@ export function UpcomingScreen(props: ScreenProps & { onMove: (task: Task, day: 
     return { key, label: i === 0 ? `${md} · Today · ${name}` : i === 1 ? `${md} · Tomorrow · ${name}` : `${md} · ${name}` };
   });
   const tasksOn = (key: string) =>
-    state.tasks.filter((t) => t.due_at && isOpen(t) && localDate(new Date(t.due_at)) === key).sort(byDue);
+    state.tasks.filter((t) => t.due_at && isOpen(t) && notPrayer(t) && localDate(new Date(t.due_at)) === key).sort(byDue);
 
   const dayAt = (x: number, y: number) =>
     (document.elementFromPoint(x, y)?.closest("[data-day]") as HTMLElement | null)?.dataset.day;

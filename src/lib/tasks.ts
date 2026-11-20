@@ -17,12 +17,18 @@ export type Task = {
   persistent_schedule: number[] | null;
   /** Minutes it takes, when known. */
   duration_minutes?: number | null;
+  /** null for an ordinary task; "prayer" for one of the five daily prayers. */
+  kind?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 };
 
 export const OPEN_STATUSES: TaskStatus[] = ["inbox", "todo", "in_progress"];
+
+/** One of the five daily prayers (see prayer.ts): calm, kept out of counts, overdue lists and nudges. */
+export const PRAYER_KIND = "prayer";
+export const isPrayer = (task: { kind?: string | null }) => task.kind === PRAYER_KIND;
 export const MAX_TITLE_LENGTH = 500;
 
 /**

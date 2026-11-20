@@ -48,7 +48,8 @@ export async function runSuggestions(bot: Bot, chatId: number, settings: Setting
     db.from("reminders").select("task_id").eq("state", "scheduled"),
   ]);
   if (taskRows.error || pendingRows.error) throw new Error(`runSuggestions: ${(taskRows.error ?? pendingRows.error)!.message}`);
-  const tasks = taskRows.data as Task[];
+  // Prayers are never suggested, moved or chased.
+  const tasks = (taskRows.data as Task[]).filter((task) => task.kind !== "prayer");
   const hasReminder = new Set(((pendingRows.data ?? []) as { task_id: number | null }[]).map((row) => Number(row.task_id)));
   const suggested = new Set(made.map((row) => Number(row.task_id)));
   const fresh = (task: Task) => !suggested.has(task.id) && task.status !== "in_progress";

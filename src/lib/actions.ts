@@ -40,6 +40,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
 
     case "done": {
       const { nextLabel } = await finishTask(task, "done", now);
+      if (task.kind === "prayer") return { text: "✓ Prayed.", keyboard: null };
       return {
         text: nextLabel ? `✓ Done, sir. ${b(task.title)} comes round again ${b(nextLabel)}.` : `✓ Done, sir. ${b(task.title)} is off the list.`,
         keyboard: null,

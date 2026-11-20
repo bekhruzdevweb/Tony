@@ -38,6 +38,7 @@ import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } fr
 import { addMinutes, formatTime, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
+import { prayerStatus, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readImage } from "./vision";
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
@@ -179,6 +180,29 @@ export function getBot(): Bot | undefined {
   // /clean: sweeps the recent chat in plain code. His command is the newest message, and goes with the rest.
   tasks.command("clean", async (ctx) => {
     await cleanFromCommand(bot, ctx.chat.id, ctx.msg.message_id);
+  });
+
+  // /prayer on|off|hanafi|standard|method <n>: prayer times. Plain code, no AI.
+  tasks.command("prayer", async (ctx) => {
+    const [word, value] = ctx.match.trim().toLowerCase().split(/\s+/);
+    try {
+      if (word === "on" || word === "off") await setPrayer(word === "on");
+      else if (word === "hanafi" || word === "standard" || word === "shafii" || word === "shafi") await setPrayerCalculation({ school: word === "hanafi" ? 1 : 0 });
+      else if (word === "method" && /^\d{1,2}$/.test(value ?? "")) await setPrayerCalculation({ method: Number(value) });
+      else if (word) return oops(ctx, "Use /prayer on, /prayer off, /prayer hanafi, /prayer standard or /prayer method 3, sir.");
+    } catch (error) {
+      console.error("Prayer setting failed:", error);
+      return oops(ctx, "My apologies, sir. I could not fetch the prayer times just now; I shall try again shortly.");
+    }
+    const status = await prayerStatus();
+    if (!status) return oops(ctx, "Prayer times need a database update first, sir.");
+    const times = status.today.map((p) => `${p.status === "done" ? "✓ " : ""}${p.title} ${formatTime(new Date(p.at))}`).join(" · ");
+    const text = status.on
+      ? `🕌 Prayer times are on (Tashkent, method ${status.method}, ${status.school === 1 ? "Hanafi" : "standard"} Asr).\n${times || "Today's times will come at 00:05."}\nA quiet note 10 minutes before and one at the time; no voice.`
+      : "🕌 Prayer times are off. /prayer on to turn them on.";
+    await retire({ kinds: ["cmd:voice"] });
+    const sent = await ctx.reply(text);
+    await track(sent.message_id, "cmd:voice", { deleteAfter: new Date(Date.now() + ERROR_MINUTES * 60_000) });
   });
 
   // /voice on|off|auto: when Tony speaks. Plain code, no AI.

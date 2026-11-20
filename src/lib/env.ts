@@ -110,6 +110,10 @@ export const env = {
   get ttsVoice() {
     return read("TTS_VOICE") ?? "daniel";
   },
+  /** Aladhan, for prayer times (overridable for tests). */
+  get prayerApiBase() {
+    return (read("PRAYER_API_BASE") ?? "https://api.aladhan.com").replace(/\/+$/, "");
+  },
   get supabaseUrl() {
     return read("SUPABASE_URL");
   },

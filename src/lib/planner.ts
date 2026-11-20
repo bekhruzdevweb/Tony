@@ -214,7 +214,9 @@ export async function buildPlan(options: { scope: "day" | "week"; day?: Date; in
     .map((task) => ({ at: new Date(task.due_at!), title: task.title }));
 
   // To place: overdue tasks and the inbox, most pressing first.
+  // (Prayers are fixed times to plan around, never tasks to move.)
   const candidates = tasks
+    .filter((task) => task.kind !== "prayer")
     .filter((task) => task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime()))
     .sort((x, y) => x.priority - y.priority || Number(!x.due_at) - Number(!y.due_at) || (x.due_at ?? x.created_at).localeCompare(y.due_at ?? y.created_at))
     .slice(0, options.scope === "week" ? 14 : 8);

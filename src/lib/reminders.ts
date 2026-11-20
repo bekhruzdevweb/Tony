@@ -1,14 +1,14 @@
 import "server-only";
-import type { Bot } from "grammy";
+import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
-import { i, plain } from "./html";
+import { esc, i, plain } from "./html";
 import { mediaForTask, sendMedia } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { dueReminder, persistentReminder } from "./reminder-messages";
 import { getSettings, updateSettings, type Settings } from "./settings";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, inWindow, toWholeMinute } from "./time";
 
 export type Reminder = {
@@ -241,7 +241,9 @@ export async function runTick(
     fail("runTick: claim", claimed.error);
     if ((claimed.data ?? []).length === 0) continue;
 
-    const message = chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
+    // A prayer: a calm line and one button, a heads-up 10 minutes before (silent) and one at the time.
+    const prayer = isPrayer(task);
+    const message = prayer ? prayerReminder(task, reminder.kind === "extra") : chained ? persistentReminder(task, attempt, now, nextAt) : dueReminder(task);
     // Only the first reminder carries the attachment; later nudges are plain text.
     const attached = attempt === 0 ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;
@@ -252,7 +254,7 @@ export async function runTick(
         const options = {
           keyboard: message.keyboard,
           // A follow-up on an ordinary, low-priority task arrives without sound.
-          silent: isFollowUp && !task.persistent && task.priority === 4,
+          silent: (prayer && reminder.kind === "extra") || (isFollowUp && !task.persistent && task.priority === 4),
         };
         // If he attached a photo or file to this task, the reminder is the original itself, with his note.
         messageId = attached
@@ -292,6 +294,14 @@ export async function runTick(
   }
 
   return finish();
+}
+
+/** A prayer's reminder: "🕌 Asr in 10 minutes · 15:20", then "🕌 Asr · 15:20" with [✓ Prayed]. */
+function prayerReminder(task: Task, early: boolean): { text: string; keyboard?: InlineKeyboard } {
+  const at = formatTime(new Date(task.due_at!));
+  return early
+    ? { text: `🕌 ${esc(task.title)} in 10 minutes · ${at}` }
+    : { text: `🕌 ${esc(task.title)} · ${at}`, keyboard: new InlineKeyboard().text("✓ Prayed", `done:${task.id}`) };
 }
 
 /** The task a reminder message was about, for when he replies to that message. */

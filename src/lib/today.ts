@@ -15,8 +15,10 @@ export type TodaySplit = { carried: Task[]; timed: Task[]; done: Task[]; total: 
 
 const OPEN = new Set(["inbox", "todo", "in_progress"]);
 
-export function splitToday(tasks: Task[], day: Date): TodaySplit {
+export function splitToday(all: Task[], day: Date): TodaySplit {
   const { start, end } = dayBounds(day);
+  // Prayers are shown on their own calm line, never counted as tasks.
+  const tasks = all.filter((task) => task.kind !== "prayer");
   const at = (value: string) => new Date(value).getTime();
   const finishedToday = (task: Task) => task.completed_at !== null && at(task.completed_at) >= start.getTime() && at(task.completed_at) < end.getTime();
   const done = tasks.filter((task) => finishedToday(task) && (task.status === "done" || (task.due_at !== null && at(task.due_at) >= end.getTime())));

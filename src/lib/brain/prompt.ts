@@ -92,7 +92,7 @@ Three waiting, sir, none with a date.
 const LIVE = `Now: {today}, {now} (Asia/Tashkent). Days: {calendar}.
 Projects: {projects}.
 
-{shared}{waiting}{habits}Memory:
+{shared}{waiting}{habits}{prayers}Memory:
 {memory}
 
 Open tasks{task_note}:
@@ -189,6 +189,8 @@ export function buildSystemPrompt(input: {
   waiting?: string;
   /** Each habit's facts from the log, one line each. */
   habits?: string;
+  /** Today's prayer times, "Fajr 05:40, Dhuhr 12:09, ...". */
+  prayers?: string;
 }): SystemPrompt {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
@@ -210,6 +212,7 @@ export function buildSystemPrompt(input: {
       ? `Last thing he shared (${formatDue(input.shared.at, now)}):\n${input.shared.text}\n\n`
       : "",
     waiting: input.waiting ? `Open question: ${input.waiting}\n\n` : "",
+    prayers: input.prayers ? `Prayer times today (Tashkent; reminders are automatic, not tasks to manage): ${input.prayers}\n\n` : "",
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",

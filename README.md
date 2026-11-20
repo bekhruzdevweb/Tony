@@ -268,6 +268,21 @@ grammar article?" finds it; **➕ Task** adds "Read: title" to the inbox with
 the link in its notes. Both are plain code and work once each. These offers
 are kept in the `offers` table (migration `0013_offers.sql`, applied).
 
+**Prayer times.** Every day from 00:05 Tony fetches the five times for
+Tashkent from the free Aladhan API (`/v1/timingsByCity/DD-MM-YYYY?city=
+Tashkent&country=Uzbekistan&method=3&school=1`) and adds Fajr, Dhuhr,
+Asr, Maghrib and Isha as tasks in a **Prayer** project, each with a quiet
+note 10 minutes before (silent) and one at the time with **✓ Prayed**.
+They are calm by design: one line on the Today board and a strip of chips
+in the app (tap to mark prayed), never counted as tasks, never overdue,
+never chased, planned around or spoken; an unticked prayer is closed
+quietly at the next day's fetch. `/prayer` shows today's times; `/prayer
+on|off`; `/prayer hanafi|standard` switches the Asr calculation (Hanafi,
+the default, is 39 minutes later on 20 Nov); `/prayer method N` picks
+Aladhan's method (3 = Muslim World League). A change re-fetches the
+prayers still ahead today. Migration `0016_prayer.sql` (applied) adds
+`tasks.kind`, the settings and the project.
+
 **Tony's replies.** Everything the brain says in Telegram is a rich
 message written in Telegram's rich markdown. The system prompt tells
 Claude how to lay it out, with two worked examples:

@@ -2,7 +2,7 @@ import "server-only";
 import { InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
 import { b, code, esc, expandable, i } from "./html";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, localDate, TIMEZONE } from "./time";
 
 /**
@@ -60,7 +60,8 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
   ]);
   for (const result of [openRows, doneRows]) if (result.error) throw new Error(`dayView: ${result.error.message}`);
 
-  const dated = openRows.data as Task[];
+  // Prayers have their own calm line on the board; they are not in the day's task list.
+  const dated = (openRows.data as Task[]).filter((task) => !isPrayer(task));
   const due = (task: Task) => new Date(task.due_at!).getTime();
   // Overdue means past its time and not started; for a future day, anything from before that day.
   const cutoff = isToday ? now.getTime() : start.getTime();

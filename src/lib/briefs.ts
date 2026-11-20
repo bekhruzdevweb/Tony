@@ -12,7 +12,7 @@ import type { Settings } from "./settings";
 import { postBoard, shortLabel } from "./today-board";
 import { coachForBrief } from "./coach";
 import { sayAloud } from "./speech";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
 import { dayView, loadProjects, taskLine } from "./views";
 
@@ -64,7 +64,8 @@ async function send(
 async function openTasks(): Promise<Task[]> {
   const { data: rows, error } = await requireDb().from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).limit(500);
   if (error) throw new Error(`briefs: ${error.message}`);
-  return rows as Task[];
+  // Prayers are never "missed tasks", carried over or reviewed.
+  return (rows as Task[]).filter((task) => !isPrayer(task));
 }
 
 async function alreadySent(which: number, since: Date): Promise<boolean> {

@@ -1,4 +1,5 @@
 import "server-only";
+import { formatTime, localDate } from "../time";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
 import { logMessage, recentMessages, type Channel } from "../messages";
@@ -47,7 +48,14 @@ async function loadContext() {
   for (const result of [memory, tasks, projects]) {
     if (result.error) throw new Error(`loadContext: ${result.error.message}`);
   }
-  const openTasks = tasks.data as Task[];
+  const everything = tasks.data as Task[];
+  // Prayers are not tasks to manage; the model gets today's times as one line instead.
+  const openTasks = everything.filter((task) => task.kind !== "prayer");
+  const prayers = everything
+    .filter((task) => task.kind === "prayer" && task.due_at && localDate(new Date(task.due_at)) === localDate(new Date()))
+    .sort((a, b) => a.due_at!.localeCompare(b.due_at!))
+    .map((task) => `${task.title} ${formatTime(new Date(task.due_at!))}`)
+    .join(", ");
   // What actually happened with each task's reminders, so Tony can answer
   // "you didn't remind me" from the record instead of guessing.
   const reminders = openTasks.length
@@ -68,6 +76,7 @@ async function loadContext() {
     shared: recentShare(settings.data as { last_shared_text: string | null; last_shared_at: string | null } | null),
     waiting: recentNote(settings.data as { pending_note: string | null; pending_note_at: string | null } | null),
     habits,
+    prayers: prayers || undefined,
   };
 }
 
