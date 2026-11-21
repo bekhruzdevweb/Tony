@@ -611,6 +611,11 @@ Migration `0023_decide.sql` adds `routine.auto_kinds` and
   videos, files and voice notes already were. "Send me that Instagram video" or
   "the photo I sent yesterday" finds it by what you call it. Only when two
   truly fit does Tony ask, showing both titles.
+- **Your label is the key:** a file you filed under a name ("ideas for my
+  reels", "motivation video") is sent by that name at once, in plain code,
+  with no guessing. If you say "no, I didn't mean this one", what was just
+  sent is never sent again: Tony picks another or shows the closest few as
+  buttons.
 - **Situation rules:** "when I'm not motivated to work out, send me this video"
   is kept as a rule with that video. When a later message matches ("I'm tired,
   don't want to work out"), Tony answers with empathy, the video and an offer.
