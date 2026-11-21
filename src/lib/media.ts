@@ -87,6 +87,42 @@ export async function updateMedia(id: number, patch: Partial<Pick<Media, "task_i
 }
 
 /** The first thing attached to a task, if anything is. */
+/** Every file kept with a task (a forwarded post's photos), in the order he sent them; voice notes are not examples. */
+export async function mediaListForTask(taskId: number): Promise<Media[]> {
+  const { data, error } = await requireDb().from("media").select().eq("task_id", taskId).order("id").limit(20);
+  if (error) throw new Error(`mediaListForTask: ${error.message}`);
+  return ((data ?? []) as Media[]).filter((item) => item.kind !== "voice" && item.kind !== "audio");
+}
+
+/**
+ * A task's example sent back as he forwarded it: the photos and videos as one
+ * album with the post's text, and the text in full after it when it is too
+ * long for a caption (21 Nov: "keep the post with the task"). Only for an
+ * example of two files or more, or a post's text kept with the task; a single
+ * file stays the reminder itself. Returns whether anything was sent.
+ */
+export async function sendTaskExample(bot: Bot, chatId: number, taskId: number): Promise<boolean> {
+  const files = await mediaListForTask(taskId);
+  const posts = await requireDb().from("library").select("description").eq("task_id", taskId).eq("kind", "post").order("id").limit(3);
+  const postText = ((posts.data ?? []) as { description: string | null }[]).map((row) => row.description?.trim()).filter(Boolean)[0];
+  const text = files.map((item) => item.caption?.trim()).find((caption) => caption && !isPromoCaption(caption)) ?? postText;
+  if (files.length < 2 && !(files.length === 0 && text)) return false;
+  const album = files.filter((item) => item.kind === "photo" || item.kind === "video").slice(0, 10);
+  const captioned = album.length >= 2 && text !== undefined && text.length <= CAPTION_LIMIT;
+  if (album.length >= 2) {
+    await bot.api.sendMediaGroup(
+      chatId,
+      album.map((item, index) => ({ type: item.kind as "photo" | "video", media: item.file_id, ...(index === 0 && captioned ? { caption: text } : {}) })),
+      { disable_notification: true },
+    );
+  } else {
+    for (const item of files.slice(0, 3)) await sendMedia(bot, chatId, item, "", { silent: true });
+  }
+  // The post's text: the album's caption when it fits, otherwise whole after it, in Telegram-sized pieces.
+  if (text && !captioned) for (let at = 0; at < text.length; at += 4000) await bot.api.sendMessage(chatId, text.slice(at, at + 4000), { disable_notification: true });
+  return true;
+}
+
 export async function mediaForTask(taskId: number): Promise<Media | undefined> {
   const { data, error } = await requireDb().from("media").select().eq("task_id", taskId).order("id").limit(1);
   if (error) throw new Error(`mediaForTask: ${error.message}`);

@@ -713,6 +713,25 @@ describe("Links", () => {
     expect(made.due_at).toBeNull();
   });
 
+  it("21 Nov 18:52: the post he forwarded with 'remind me some day' stays with that task (its photos and text), nothing older", async () => {
+    const older = media({ kind: "photo", caption: "website colours", created_at: at("2026-11-21T10:00").toISOString() });
+    const album = [
+      media({ kind: "photo", caption: "", created_at: at("2026-11-21T18:52").toISOString() }),
+      media({ kind: "photo", caption: "You know why a lot of people don’t feel truly fulfilled having achieved their goals?", created_at: at("2026-11-21T18:52").toISOString() }),
+      media({ kind: "photo", caption: "", created_at: at("2026-11-21T18:52").toISOString() }),
+    ];
+    const message =
+      "I have to write posts like that on my Telegram channel. Remind me. some day\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nYou know why a lot of people don’t feel truly fulfilled having achieved their goals?\n(Saved. It can be attached to a task or filed under a label.)\n»»»";
+    const result = await run(message, "2026-11-21T18:53", [
+      tools(["add_task", { title: "Write Telegram posts like Freya's Talking", free_time: true }]),
+      says("Good format to copy, sir."),
+    ]);
+    const made = byTitle("Write Telegram posts like Freya's Talking");
+    expect(state.db.rows("media").filter((row) => row.task_id === made.id).map((row) => row.id)).toEqual(album.map((row) => row.id));
+    expect(state.db.rows("media").find((row) => row.id === older.id)!.task_id ?? null).toBeNull();
+    expect(result.replies[0]).toMatch(/🖼 3 photos/);
+  });
+
   it("23:25 'send me the video to just to check': the brain picks it from his library by meaning; code sends the exact link (21 Nov: word matching mixed links up)", async () => {
     task({ title: "Watch: Instagram Masterclass (Brock Johnson)", due_at: "2026-11-23T10:00", notes: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi" });
     // The link only lived in the task's notes: it joins the library (library:1), named by its task, and the brain sees it.

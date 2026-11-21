@@ -24,6 +24,7 @@ import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
 import { listRules, rulesForPrompt, rulesView } from "../rules";
 import { libraryForPrompt } from "../library";
+import { carriesMedia } from "../link-rules";
 import { ruleHints } from "../smart-rules";
 
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
@@ -406,6 +407,15 @@ export async function think(
           change.wrote = { ...change.wrote, ...(patch.notes ? { notes: url } : {}), ...(patch.title ? { title: patch.title } : {}) };
         }
       }
+    }
+    // A post or files he forwarded or attached with this request belong to the one task he asked for:
+    // kept with it, and sent back with its reminder (21 Nov: "keep the post with the task").
+    if (added.length === 1 && carriesMedia(text)) {
+      const since = new Date(now.getTime() - 5 * 60_000).toISOString();
+      const fresh = (((await db.from("media").select("id, kind").is("task_id", null).gte("created_at", since)).data ?? []) as { id: number; kind: string }[]).filter((item) => item.kind !== "voice" && item.kind !== "audio");
+      if (fresh.length) await db.from("media").update({ task_id: added[0] }).in("id", fresh.map((item) => item.id));
+      const posts = (((await db.from("library").select("id").eq("kind", "post").is("task_id", null).gte("created_at", since)).data ?? []) as { id: number }[]);
+      if (posts.length) await db.from("library").update({ task_id: added[0] }).in("id", posts.map((row) => row.id));
     }
     // Nothing he said is lost: links and details missing from the new tasks go into their notes.
     if (added.length > 0) {

@@ -30,7 +30,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media, sendTaskExample } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -773,6 +773,8 @@ export function getBot(): Bot | undefined {
       } else if (chatId !== undefined && tapped && base !== undefined) {
         await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${markdownToHtml(result.text)}`, undefined, isCaption);
       }
+      // Starting it now: the example he kept with it (a post he forwarded) comes too.
+      if (action === "now" && chatId !== undefined) await sendTaskExample(bot, chatId, Number(id)).catch((error) => console.error("Could not send the task's example:", error));
       await logMessage("tony", result.text);
       return;
     }

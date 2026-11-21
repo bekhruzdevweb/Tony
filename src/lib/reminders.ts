@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
-import { mediaForTask, sendMedia } from "./media";
+import { mediaForTask, sendMedia, sendTaskExample } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { busyAround, getRoutine } from "./routine";
@@ -350,7 +350,9 @@ export async function runTick(
       if (list.length) message.text = `${message.text}\n${i(`${progress(list)} done`)}\n${list.map((s) => `${s.done ? "☑" : "☐"} ${esc(s.title)}`).join("\n")}`;
     }
     // Only the first reminder carries the attachment; later nudges are plain text.
-    const attached = attempt === 0 ? await mediaForTask(task.id).catch(() => undefined) : undefined;
+    // A post he kept with the task (its photos and text) goes out first, as he forwarded it; a single file is the reminder itself.
+    const example = attempt === 0 && !prayer ? await sendTaskExample(bot, chatId, task.id).catch((error) => (console.error("Could not send the task's example:", error), false)) : false;
+    const attached = attempt === 0 && !example ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;
     // Two tries, each with a hard timeout: a stalled connection must never
     // hold the tick until the platform kills it.
