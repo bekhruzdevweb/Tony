@@ -88,7 +88,9 @@ export async function linkCandidates(now: Date): Promise<LinkCandidate[]> {
  * match; two if it is a close call. Undefined if he has sent no links.
  */
 export async function linkReply(request: string, now = new Date()): Promise<string | undefined> {
-  const ranked = rankLinks(request, await linkCandidates(now));
+  // Tony's last few messages in the past hour, newest first.
+  const said = await requireDb().from("messages").select("text").eq("role", "tony").gte("created_at", new Date(now.getTime() - 60 * MINUTE).toISOString()).order("created_at", { ascending: false }).limit(4);
+  const ranked = rankLinks(request, await linkCandidates(now), ((said.data ?? []) as { text: string }[]).map((row) => row.text));
   if (ranked.length === 0) return undefined;
   const [best, second] = ranked;
   const line = (item: LinkCandidate) => `🔗 ${item.title ? `**${item.title}**\n` : ""}${item.url}`;

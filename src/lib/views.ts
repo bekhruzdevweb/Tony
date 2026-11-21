@@ -49,7 +49,7 @@ export const dayFromKey = (key: string) => new Date(`${key.slice(0, 4)}-${key.sl
  * A day as a checklist: what is overdue, what is to do, what is done, and a
  * button per task that ticks it off (or unticks it) in place.
  */
-export async function dayView(day: Date, now = new Date(), options: { title?: string; lead?: string } = {}): Promise<DayView> {
+export async function dayView(day: Date, now = new Date(), options: { title?: string; lead?: string; skipCarried?: boolean } = {}): Promise<DayView> {
   const db = requireDb();
   const { start, end } = dayBounds(day);
   const isToday = localDate(day) === localDate(now);
@@ -76,9 +76,11 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
   if (total === 0) parts.push("Nothing planned, sir.");
   else if (done.length > 0) parts.push(i(`${done.length} of ${total} done`));
 
-  if (overdue.length > 0) {
+  // In the morning brief, earlier days' tasks are already listed (with buttons) in "Still open": not twice.
+  const shownOverdue = options.skipCarried ? overdue.filter((t) => due(t) >= start.getTime()) : overdue;
+  if (shownOverdue.length > 0) {
     parts.push(
-      [`⚠️ ${b("Overdue")}`, ...overdue.map((task) => taskLine(task, projects, now.getTime() - due(task) < DAY_MS && localDate(new Date(task.due_at!)) === localDate(now) ? formatTime(new Date(task.due_at!)) : `${weekday(new Date(task.due_at!))} ${formatTime(new Date(task.due_at!))}`))].join("\n"),
+      [`⚠️ ${b("Overdue")}`, ...shownOverdue.map((task) => taskLine(task, projects, now.getTime() - due(task) < DAY_MS && localDate(new Date(task.due_at!)) === localDate(now) ? formatTime(new Date(task.due_at!)) : `${weekday(new Date(task.due_at!))} ${formatTime(new Date(task.due_at!))}`))].join("\n"),
     );
   }
   if (open.length > 0) {

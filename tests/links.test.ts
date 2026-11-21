@@ -26,6 +26,15 @@ describe("'Send me the video' is a request for the link", () => {
     // No words to go on: the newest.
     expect(rankLinks("send me the video to just to check", candidates)[0].url).toBe("https://www.instagram.com/reel/DfoBspQhNjO/");
   });
+  it("means the task Tony just reminded him of (21 Nov: 'Send me link' got the podcast)", () => {
+    const candidates = [
+      { url: "https://www.youtube.com/watch?v=Ch4Sl0POBhU", title: "Watch podcast and take notes", context: "", at: 9 },
+      { url: "https://www.instagram.com/reel/DfoBspQhNjO/", title: "Instagram reel (saved link)", context: "", at: 1 },
+    ];
+    expect(asksForLink("Send me link")).toBe(true);
+    expect(rankLinks("Send me link", candidates, ["Sir, a reminder: Instagram reel (saved link)."])[0].url).toBe("https://www.instagram.com/reel/DfoBspQhNjO/");
+    expect(rankLinks("send me the instagram link", candidates)[0].url).toBe("https://www.instagram.com/reel/DfoBspQhNjO/");
+  });
 });
 
 describe("Never asking whether to attach a link he just sent", () => {

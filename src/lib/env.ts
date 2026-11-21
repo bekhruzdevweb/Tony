@@ -90,9 +90,9 @@ export const env = {
   get sttModel() {
     return read("STT_MODEL") ?? "whisper-large-v3";
   },
-  /** Tony's voice: ElevenLabs. */
+  /** ElevenLabs: cut off on 21 Nov at his request. The voice is Groq's; set VOICE_ELEVENLABS=on to bring it back. */
   get elevenLabsApiKey() {
-    return read("ELEVENLABS_API_KEY");
+    return read("VOICE_ELEVENLABS") === "on" ? read("ELEVENLABS_API_KEY") : undefined;
   },
   get elevenLabsVoiceId() {
     return read("ELEVENLABS_VOICE_ID");

@@ -58,6 +58,17 @@ export function followUpMessage(tasks: OpenTask[], now: Date, lead: string): { t
   }
   const shown = tasks.slice(0, 8);
   const lines = shown.map((task, index) => `${index + 1}. ${openLine(task, now)}`);
+  if (shown.length >= 3) {
+    // Three or more: a short grid, two tasks a row ([✓ 1] [📅 1] [✓ 2] [📅 2]), then one button for all.
+    const pairs = shown.map((task, index) => [
+      { text: `✓ ${index + 1}`, data: `fu:done:${task.id}` },
+      { text: `📅 ${index + 1}`, data: `fu:tom:${task.id}` },
+    ]);
+    const rows: Row[] = [];
+    for (let n = 0; n < pairs.length; n += 2) rows.push([...pairs[n], ...(pairs[n + 1] ?? [])]);
+    rows.push([{ text: "📅 All to tomorrow", data: `fu:all:${shown.map((task) => task.id).join(",")}` }]);
+    return { text: [lead, ...lines, "_✓ done · 📅 tomorrow_"].join("\n"), rows };
+  }
   const firm = shown.some((task) => slippedDays(task, now) >= 3);
   const legend = firm ? "✓ done · ⏰ later today · 📅 tomorrow · 🗑 drop; 🧩 steps · 📌 fixed slot for the ones that slipped 3 days" : "✓ done · ⏰ later today · 📅 tomorrow · 🗑 drop";
   return { text: [lead, ...lines, `_${legend}_`].join("\n"), rows: shown.map((task, index) => taskButtons(task, index + 1, now)) };
@@ -70,13 +81,22 @@ async function followedUpToday(now: Date): Promise<Set<number>> {
   return new Set(((data ?? []) as { detail: { task_ids?: number[] } }[]).flatMap((row) => row.detail?.task_ids ?? []));
 }
 
+/** Tasks with a reminder still to come (a snooze, "ask me again at 17:10"): already handled. */
+async function waitingOnReminder(now: Date): Promise<number[]> {
+  const { data, error } = await requireDb().from("reminders").select("task_id").eq("state", "scheduled").gt("fire_at", now.toISOString()).neq("kind", "brief").limit(500);
+  if (error) throw new Error(`followups: ${error.message}`);
+  return ((data ?? []) as { task_id: number | null }[]).flatMap((row) => (row.task_id === null ? [] : [row.task_id]));
+}
+
 /**
  * Missed today, followed up later the same day: every task two hours or more
  * past its time and still open goes into one message, at most once each,
  * outside quiet hours (the caller checks) and within the budget.
  */
 export async function sameDayFollowUp(now: Date): Promise<{ text: string; rows: Row[]; taskIds: number[] } | undefined> {
-  const tasks = missedToday(await openTasks(), now, await followedUpToday(now));
+  // A task he snoozed or that has another reminder still to come is handled: no "still open" for it.
+  const skip = new Set([...(await followedUpToday(now)), ...(await waitingOnReminder(now))]);
+  const tasks = missedToday(await openTasks(), now, skip);
   if (tasks.length === 0) return undefined;
   if ((await budgetLeft(now)) <= 0) return undefined;
   const lead = tasks.length === 1 ? "⏰ Still open from today:" : `⏰ ${tasks.length} still open from today:`;

@@ -64,12 +64,19 @@ const stems = (text: string) => new Set((text.toLowerCase().match(/\p{L}{3,}/gu)
  * title and what was said around the link), then by the kind he named
  * (video, reel, podcast), then the newest.
  */
-export function rankLinks(request: string, candidates: LinkCandidate[]): (LinkCandidate & { points: number })[] {
+export function rankLinks(request: string, candidates: LinkCandidate[], recent: string[] = []): (LinkCandidate & { points: number })[] {
   const wanted = stems(request);
   const lower = request.toLowerCase();
+  // What Tony just said (a reminder, a reply), newest first: "send me the link" means that task's link.
+  const recentLower = recent.map((text) => text.toLowerCase());
   const score = (candidate: LinkCandidate) => {
     const have = stems(`${candidate.title} ${candidate.context}`);
     let points = [...wanted].filter((stem) => have.has(stem)).length * 3;
+    const title = candidate.title.trim().toLowerCase();
+    const said = title.length >= 4 ? recentLower.findIndex((text) => text.includes(title)) : -1;
+    if (said >= 0) points += Math.max(1, 4 - said);
+    if (/\binstagram\b|\binsta\b/.test(lower) && /instagram\.com/i.test(candidate.url)) points += 2;
+    if (/\byoutube\b/.test(lower) && /youtu\.?be/i.test(candidate.url)) points += 2;
     if (/\b(video|watch)\b/.test(lower) && verbFor(candidate.url) === "Watch") points += 1;
     if (/\breel\b/.test(lower) && /instagram\.com\/reel/i.test(candidate.url)) points += 2;
     if (/\bpodcast\b/.test(lower) && /podcast/i.test(`${candidate.title} ${candidate.context}`)) points += 2;

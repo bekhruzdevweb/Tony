@@ -53,7 +53,7 @@ import { HistoryOff, recentChanges, undoChange } from "./history";
 import { forgetFact, memoryList } from "./memory";
 import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
-import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, toWholeMinute } from "./time";
+import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
@@ -683,6 +683,23 @@ export function getBot(): Bot | undefined {
     }
 
     // The follow-up ladder's buttons ("fu:<action>:<task>"): plain code, never the model (phase d).
+    // "📅 All to tomorrow" under a long follow-up: each listed task still open moves to tomorrow. Plain code.
+    if (payload.startsWith("fu:all:")) {
+      const ids = payload.slice("fu:all:".length).split(",").map(Number).filter(Boolean);
+      const { data } = await requireDb().from("tasks").select("id, status").in("id", ids);
+      let moved = 0;
+      for (const row of (data ?? []) as { id: number; status: Task["status"] }[]) {
+        if (!OPEN_STATUSES.includes(row.status)) continue;
+        await runAction("tomorrow", row.id, undefined);
+        moved++;
+      }
+      const line = moved ? `📅 ${moved} moved to tomorrow, sir.` : "Already settled, sir.";
+      await ctx.answerCallbackQuery({ text: line }).catch(() => undefined);
+      if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, `${base}\n${line}`, undefined, isCaption);
+      else await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      await logMessage("tony", line);
+      return;
+    }
     if (payload.startsWith("fu:")) {
       const [, action, id] = payload.split(":");
       const taskId = Number(id);
@@ -691,8 +708,15 @@ export function getBot(): Bot | undefined {
       let line: string | undefined;
       let toast = "Done, sir.";
       try {
+        // A move from an older message never undoes a move he made since: "already moved" instead.
+        const sentAt = (tapped?.date ?? 0) * 1000;
+        const movedSince = task && task.due_at && new Date(task.due_at).getTime() > Date.now() && new Date(task.updated_at).getTime() > sentAt;
         if (!task || !OPEN_STATUSES.includes(task.status)) {
           toast = "Already settled, sir.";
+        } else if (movedSince && (action === "later" || action === "tom" || action === "snooze")) {
+          const when = new Date(task.due_at!);
+          line = `↪️ ${b(task.title)} is already moved to ${when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: TIMEZONE })}, ${formatTime(when)}.`;
+          toast = plain(line).slice(0, 180);
         } else if (action === "done" || action === "drop" || action === "tom") {
           const outcome = await runAction(action === "tom" ? "tomorrow" : action, taskId, undefined);
           // An undated task's "tomorrow" is a question with its slots: it comes as its own message.

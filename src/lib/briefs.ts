@@ -130,14 +130,14 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const carried = tasks.filter((task) => task.due_at && new Date(task.due_at).getTime() < start.getTime());
   const inboxCount = tasks.filter((task) => task.status === "inbox").length;
 
-  const view = await dayView(now, now, { lead: "Good morning, sir." });
+  // The follow-up ladder (phase d): what is still open from earlier days, with its buttons, under the greeting.
+  const open = await stillOpenSection(now).catch((error) => (console.error("Still open failed:", error), undefined));
+  const view = await dayView(now, now, { skipCarried: Boolean(open) });
   // The coach: one personal line from the habit log, and each habit's facts.
   const coach = await coachForBrief(now);
   // Two things at once today: flagged so they can be sorted before the day starts.
   const clashLines = allClashes(view.open).map(([a, c]) => `⚠️ ${esc(`Clash: ${clashSentence(a, c)}`)}`);
-  // The follow-up ladder (phase d): what is still open from earlier days comes first, with its buttons.
-  const open = await stillOpenSection(now).catch((error) => (console.error("Still open failed:", error), undefined));
-  const html = [open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  const html = ["Good morning, sir.", open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 

@@ -382,6 +382,10 @@ export async function runTick(
     await logMessage("tony", plain(message.text));
     // Tracked, so it is removed once the task is done, skipped or moved.
     await track(messageId, checkIn ? "stale" : "reminder", { taskId: task.id });
+    // A prayer at its time: the "in 10 minutes" heads-up has done its job and goes, one message per prayer.
+    if (prayer && reminder.kind !== "extra") {
+      for (const old of await otherReminderMessages(task.id, messageId).catch(() => [] as number[])) await bot.api.deleteMessage(chatId, old).catch(() => undefined);
+    }
     // The next check-in, N days on, for as long as the task sits untouched.
     if (checkIn && (reminder.every_days ?? 0) > 0) {
       const next = checkInTime(now, reminder.every_days!, await getRoutine());

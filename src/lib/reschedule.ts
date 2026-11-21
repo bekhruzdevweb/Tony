@@ -11,7 +11,7 @@ import { addMinutes, dayBounds, formatTime, hisTomorrow, localDate, parseLocalDa
  */
 export async function rescheduleOverdue(to: "today" | "tomorrow", now = new Date()): Promise<number> {
   const db = requireDb();
-  const { data, error } = await db.from("tasks").select().in("status", OPEN_STATUSES).neq("status", "in_progress").lt("due_at", now.toISOString());
+  const { data, error } = await db.from("tasks").select().in("status", OPEN_STATUSES).neq("status", "in_progress").or("kind.is.null,kind.neq.prayer").lt("due_at", now.toISOString());
   if (error) throw new Error(`rescheduleOverdue: ${error.message}`);
   // After midnight, "tomorrow" is the day just begun (the day after he sleeps).
   const day = localDate(to === "today" ? now : hisTomorrow(now));
