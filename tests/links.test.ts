@@ -106,3 +106,13 @@ describe("a task's link rides on its reminder", () => {
     expect(openButton("English File Elementary")).toBeUndefined();
   });
 });
+
+describe("a forwarded post is one request", () => {
+  it("its own 'Also, …' or 'undo it' never act as his words", async () => {
+    const { asksToUndo } = await import("../src/lib/brain/handle");
+    const message = "save this\n\n[He forwarded this to you]\n«««\nWe failed. Also, you can undo it later.\n»»»";
+    expect(carriesMedia(message)).toBe(true);
+    expect(asksToUndo(message)).toBe(true); // the whole text would have been taken for "undo"
+    expect(asksToUndo(ownWords(message))).toBe(false);
+  });
+});

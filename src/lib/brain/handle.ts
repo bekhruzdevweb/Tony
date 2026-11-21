@@ -114,7 +114,8 @@ export async function handleMessage(
     return [{ text, kind: "rules", reply: view.text, rows: view.rows }];
   }
 
-  const parts = split ? splitIntents(text) : [text];
+  // A message with a forwarded post or a file is one request: the post's own sentences ("Also, …") never split it.
+  const parts = split && !carriesMedia(text) ? splitIntents(text) : [text];
   for (const [index, part] of parts.entries()) {
     if (asksToClean(part) && part.split(/\s+/).length <= 8) {
       await logHis();
@@ -123,7 +124,8 @@ export async function handleMessage(
       handled.push({ text: part, kind: "clean" });
       continue;
     }
-    if (asksToUndo(part)) {
+    // "Undo it" in a forwarded post is not his request.
+    if (asksToUndo(ownWords(part))) {
       await logHis();
       handled.push({ text: part, kind: "undo" });
       continue;
