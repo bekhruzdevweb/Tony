@@ -79,7 +79,10 @@ export function ruleHints<T extends { id: number; situation: string }>(text: str
 }
 
 /** "When I'm not motivated to work out, send me this video": a rule to keep, never a request to send it now. */
-export const isRuleRequest = (text: string) => /^\s*(when(ever)?|if|every time|each time|in case)\s+(i\b|i'm|im\b|i am|i've|my\b|it'?s\b|it is|there'?s|the\b|we\b)[^.?!]{2,}?[,]?\s*(send|show|remind|tell|give|play|share)\b/i.test(text);
+export const isRuleRequest = (text: string) =>
+  /^\s*(when(ever)?|if|every time|each time|in case)\s+(i\b|i'm|im\b|i am|i've|my\b|it'?s\b|it is|there'?s|the\b|we\b)[^.?!]{2,}?[,]?\s*(send|show|remind|tell|give|play|share)\b/i.test(text) ||
+  // The condition after the request: "send me this video when I need motivation".
+  /\b(send|show|tell|give|play|share)\b[^.?!]{0,60}?\b(when(ever)?|every time|each time|in case|if)\s+(i\b|i'm|im\b|i am|i've|i'll|i'd|i feel|i need|i get|my\b|it'?s\b|it is|there'?s|we\b)/i.test(text);
 
 /** "Show my rules", "my rules", "list rules". */
 export const asksForRules = (text: string) => /^\s*(show|list|see|what are)?\s*(me\s+)?(all\s+)?(my|the)\s+rules\??\s*$/i.test(text) || /^\s*rules\s*$/i.test(text);

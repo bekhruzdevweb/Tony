@@ -94,7 +94,7 @@ export async function linkReply(request: string, now = new Date()): Promise<stri
   if (ranked.length === 0) return undefined;
   const [best, second] = ranked;
   const line = (item: LinkCandidate) => `🔗 ${item.title ? `**${item.title}**\n` : ""}${item.url}`;
-  // A close call (same score, both relevant): both, newest first.
-  const close = second !== undefined && second.points === best.points && best.points > 0;
+  // A close call (same score, both matching words he used): both, newest first.
+  const close = second !== undefined && second.points === best.points && best.words > 0 && second.words > 0;
   return close ? `${line(best)}\n\n${line(second)}` : line(best);
 }

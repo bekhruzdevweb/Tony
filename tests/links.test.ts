@@ -2,7 +2,7 @@
  * Links: his real messages from 20 Nov, 23:22–23:39.
  */
 import { describe, expect, it } from "vitest";
-import { asksForLink, asksToAttachLink, isGenericTitle, rankLinks, refersToLink, titleForLink } from "../src/lib/link-rules";
+import { asksForLink, asksToAttachLink, carriesMedia, isGenericTitle, ownWords, rankLinks, refersToLink, titleForLink } from "../src/lib/link-rules";
 
 describe("'Send me the video' is a request for the link", () => {
   it("spots it", () => {
@@ -57,5 +57,29 @@ describe("Titles from the page", () => {
     expect(titleForLink("Watch the video", "https://youtu.be/SaiTtbRJwic", "THE Instagram Masterclass: How To Grow in 2027 - YouTube")).toBe("Watch: THE Instagram Masterclass: How To Grow in 2027");
     expect(titleForLink("Read this", "https://example.com/post", "How to plan a week")).toBe("Read: How to plan a week");
     expect(titleForLink("Watch: Mosseri AI setup", "https://youtu.be/CN8c1edTCew", "Head of Instagram Reveals…")).toBe("Watch: Mosseri AI setup");
+  });
+});
+
+describe("21 Nov 18:11: 'send me this video when i needed motivation' with a forwarded video", () => {
+  const message =
+    "send me this video when i needed motivation\n\n[He forwarded this to you]\n«««\nA video forwarded from Save As Bot — скачать\nСпасибо, что пользуетесь - @SaveAsBot'ом\n(A video; you cannot see inside it.)\n(Saved. It can be attached to a task or filed under a label.)\n»»»";
+  it("is a rule with his own video, not a request for an old link", async () => {
+    const { isRuleRequest } = await import("../src/lib/smart-rules");
+    expect(ownWords(message)).toBe("send me this video when i needed motivation");
+    expect(carriesMedia(message)).toBe(true);
+    expect(isRuleRequest(ownWords(message))).toBe(true);
+    expect(isRuleRequest("send me that video")).toBe(false);
+    expect(isRuleRequest("can you send it to me with this image?")).toBe(false);
+  });
+  it("'this video' means the link he sent last, not old ones sharing filler words", () => {
+    const candidates = [
+      { url: "https://youtu.be/SaiTtbRJwic", title: "Watch: Instagram Masterclass (Brock Johnson)", context: "THE Instagram Masterclass: How To Grow in 2027", at: 1 },
+      { url: "https://www.instagram.com/reel/DfoBspQhNjO/", title: "instagram.com", context: "I can't open this reel from here, sir, so I can't tell you what it covers. I haven't saved anything.", at: 2 },
+      { url: "https://www.instagram.com/reel/Df6Ja3OR_PK/", title: "Shoot videos like this reel", context: "the style of video he wants to shoot", at: 3 },
+    ];
+    const ranked = rankLinks(message, candidates);
+    expect(ranked[0].url).toBe("https://www.instagram.com/reel/Df6Ja3OR_PK/");
+    // The boilerplate ("you", "can", "saved") no longer counts as his words.
+    expect(ranked.find((item) => item.url.includes("DfoBspQhNjO"))!.words).toBe(0);
   });
 });

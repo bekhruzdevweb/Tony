@@ -3,7 +3,7 @@ import { asksToClean } from "./checks";
 import { think } from "./index";
 import { splitIntents } from "./reliability";
 import { logEvent } from "../events";
-import { asksForLink } from "../link-rules";
+import { asksForLink, carriesMedia, ownWords } from "../link-rules";
 import { linkReply } from "../links";
 import { asksForMedia, findMedia } from "../media";
 import { logMessage, type Channel } from "../messages";
@@ -131,12 +131,18 @@ export async function handleMessage(
       handled.push({ text: part, kind: "undo" });
       continue;
     }
-    // "When I'm not motivated…, send me this video" is a rule to keep (the brain saves it), never "send it now".
-    const conditional = isRuleRequest(part);
+    // His own words: the block Tony adds about what he forwarded or attached is not part of the request.
+    const own = ownWords(part);
+    // "When I'm not motivated…, send me this video" / "send me this video when I need motivation":
+    // a rule to keep (the brain saves it), never "send it now".
+    const conditional = isRuleRequest(own);
+    // A video, photo or file came with these words: "this video" is that one, so the brain handles it
+    // (21 Nov 18:11: "send me this video when i needed motivation" + a video got two old links).
+    const shortcut = !conditional && !carriesMedia(part);
     // "Send me that photo": the original, at once. A video counts only if a saved video matches; otherwise it is a link.
-    const wantsFile = /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?)\b/i.test(part);
-    if (!conditional && asksForMedia(part) && (wantsFile || /\bvideos?\b/i.test(part))) {
-      const found = await findMedia(part, 3, clock()).catch((error) => (console.error("Media lookup failed:", error), []));
+    const wantsFile = /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?)\b/i.test(own);
+    if (shortcut && asksForMedia(own) && (wantsFile || /\bvideos?\b/i.test(own))) {
+      const found = await findMedia(own, 3, clock()).catch((error) => (console.error("Media lookup failed:", error), []));
       const usable = wantsFile ? found : found.filter((item) => item.kind === "video" || item.kind === "animation");
       if (usable.length > 0) {
         await logHis();
@@ -145,8 +151,8 @@ export async function handleMessage(
       }
     }
     // "Send me the video": answered with the link at once.
-    if (!conditional && asksForLink(part) && !wantsFile) {
-      const reply = await linkReply(part, clock()).catch((error) => (console.error("Link lookup failed:", error), undefined));
+    if (shortcut && asksForLink(own) && !wantsFile) {
+      const reply = await linkReply(own, clock()).catch((error) => (console.error("Link lookup failed:", error), undefined));
       if (reply) {
         await logHis();
         await logMessage("tony", reply, channel).catch(() => undefined);
@@ -155,8 +161,8 @@ export async function handleMessage(
       }
     }
     // Nothing recent fits: his library, everything he ever sent ("that Instagram video", "the photo I sent yesterday").
-    if (!conditional && (asksForMedia(part) || asksForLink(part))) {
-      const found = await findInLibrary(part, clock()).catch(() => ({}) as Awaited<ReturnType<typeof findInLibrary>>);
+    if (shortcut && (asksForMedia(own) || asksForLink(own))) {
+      const found = await findInLibrary(own, clock()).catch(() => ({}) as Awaited<ReturnType<typeof findInLibrary>>);
       if (found.found) {
         await logHis();
         if (found.found.source === "media") {
