@@ -1315,4 +1315,23 @@ describe("21 Nov 22:09 · four requests in one voice note: 'And I already shoot 
     expect(result.replies[0]).toContain("✓ **Shoot app tutorial on Zoom** done");
     expect(result.leftover).toBe(0);
   });
+
+  it("three questions for tomorrow from one message each offer their own best time; tapping each ⭐ never stacks them", async () => {
+    const { reel, zoom, stories } = setUp();
+    const result = await run(MESSAGE, "2026-11-21T22:09", [
+      tools(["update_task", { id: reel.id, day: "2026-11-22" }], ["complete_task", { id: zoom.id }]),
+      tools(["update_task", { id: stories.id, day: "2026-11-22" }]),
+      tools(["add_task", { title: "Start IELTS exam preparation", day: "2026-11-22", duration: 60 }]),
+    ]);
+    // That evening all three said "Best: 20:15", and three taps put all three at 20:15.
+    const slots = [0, 1, 2].map((index) => askOf(result, index));
+    const bests = slots.map((slot) => slot.options[0].at.getTime());
+    expect(new Set(bests).size).toBe(3);
+    expect(timesOf(slots[0])[0]).toBe("20:15");
+    for (const slot of slots) expect(slot.day).toBe("2026-11-22");
+    for (const slot of slots) await placeTask(slot.taskId, slot.options[0].at, { learn: true });
+    const placed = ["Instagram reel (saved link)", "Posting stories on Instagram", "Start IELTS exam preparation"].map((title) => byTitle(title));
+    const spans = placed.map((row) => ({ start: new Date(String(row.due_at)).getTime(), end: new Date(String(row.due_at)).getTime() + Number(row.duration_minutes) * 60_000 }));
+    for (const [i, a] of spans.entries()) for (const b of spans.slice(i + 1)) expect(a.end <= b.start || b.end <= a.start).toBe(true);
+  });
 });

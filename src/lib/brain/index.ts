@@ -6,7 +6,7 @@ import { env } from "../env";
 import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
 import { placeTask } from "../slots";
-import type { SlotOption } from "../routine-rules";
+import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
@@ -18,7 +18,7 @@ import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact 
 import { tidyReply } from "./tidy";
 import { asksForReply, asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, receiptOnly, statedByHim, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims, ownWords } from "./reliability";
 import { buildPlan } from "../planner";
-import { decideFor, getRoutine, nearestFreeFor } from "../routine";
+import { decideFor, getRoutine, nearestFreeFor, taskMinutes } from "../routine";
 import { partsOfDay, routineLines } from "../routine-rules";
 import { asksToAttachLink, isGenericTitle, refersToLink, titleForLink } from "../link-rules";
 import { pageTitle, recentLink } from "../links";
@@ -141,6 +141,8 @@ export async function think(
     logged?: boolean;
     /** Items he just said are not the one ("no, I didn't mean this one"): never sent again, left out of the list. */
     rejected?: string[];
+    /** Times an earlier request in the same message just offered first, kept free for it (21 Nov 22:09: three questions, all "Best: 20:15"). */
+    held?: Interval[];
   } = {},
 ): Promise<{
   reply: string;
@@ -168,7 +170,7 @@ export async function think(
   /** He asked for a file or link and nothing went out: the closest few, one button each ("lib:send:…"). */
   libraryChoices?: { text: string; data: string }[];
 }> {
-  const { channel = "telegram", now = new Date(), context: note, part, rejected = [] } = options;
+  const { channel = "telegram", now = new Date(), context: note, part, rejected = [], held = [] } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
   const titles: string[] = [];
@@ -577,7 +579,7 @@ export async function think(
     } else if (named.size === 1) {
       const [[id, day]] = [...named];
       const task = stored.get(id)!;
-      const decision = await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text));
+      const decision = await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text), held);
       const label = dayLabel(day, now);
       const extra = savedMarks(marks(id));
       decided.add(id);
@@ -592,7 +594,7 @@ export async function think(
           slotLines.push(autoReceipt({ title: placed.task.title, marks: extra, when: formatWhen(pick.at, now).replace(/(\d{2}:\d{2})$/, "**$1**"), why: pick.why }));
         } else problems.push(placed.text);
       } else if (decision.decision === "ask") {
-        slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options, ...(decision.taken ? { taken: decision.taken } : {}) };
+        slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options, minutes: taskMinutes(task), ...(decision.taken ? { taken: decision.taken } : {}) };
         slotLines.push(slotQuestion({ title: task.title, marks: extra, when: label.when, options: decision.options, taken: decision.taken }));
       } else if (decision.decision === "split") {
         slot = { kind: "split", taskId: id, title: task.title, day, parts: decision.parts, minutes: decision.minutes };
@@ -692,7 +694,7 @@ export async function think(
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */
 export type Slot =
-  | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string }
+  | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string; minutes?: number }
   | { kind: "auto"; taskId: number; title: string; day: string; at: Date; why: string }
   | { kind: "split"; taskId: number; title: string; day: string; parts: Date[]; minutes: number };
 

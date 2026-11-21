@@ -145,14 +145,21 @@ export async function busyAround(day: Date, except: number[] = []): Promise<Inte
 
 type Placeable = Pick<Task, "id" | "title"> & Partial<Pick<Task, "duration_minutes" | "project_id">>;
 
-async function slotInput(task: Placeable, day: Date, now: Date, parts?: Part[]) {
+/** `held`: times not yet on the list but already offered for something else, kept free as if they were. */
+async function slotInput(task: Placeable, day: Date, now: Date, parts?: Part[], held: Interval[] = []) {
   const [routine, busy, project] = await Promise.all([getRoutine(), busyAround(day, [task.id]), projectName(task.project_id)]);
-  return { minutes: task.duration_minutes || estimateMinutes(task.title), kind: kindOf(task.title, project), day, now, routine, busy, parts };
+  return { minutes: taskMinutes(task), kind: kindOf(task.title, project), day, now, routine, busy: [...busy, ...held], parts };
 }
 
-/** A day he named without a time: asked (best first), Tony's own pick for a kind he let him decide, two halves, or none. */
-export async function decideFor(task: Placeable, day: Date, now = new Date(), parts?: Part[]): Promise<Decision> {
-  return decideSlot(await slotInput(task, day, now, parts));
+/** The minutes a task takes, as the slots count them. */
+export const taskMinutes = (task: Pick<Task, "title"> & Partial<Pick<Task, "duration_minutes">>) => task.duration_minutes || estimateMinutes(task.title);
+
+/**
+ * A day he named without a time: asked (best first), Tony's own pick for a kind he let him decide, two halves, or none.
+ * `held`: times an earlier request in the same message just offered first, so each question offers its own.
+ */
+export async function decideFor(task: Placeable, day: Date, now = new Date(), parts?: Part[], held: Interval[] = []): Promise<Decision> {
+  return decideSlot(await slotInput(task, day, now, parts, held));
 }
 
 /** Two or three real free slots on that day, best first, each with its reason. */

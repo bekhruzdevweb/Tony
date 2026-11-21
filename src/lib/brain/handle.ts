@@ -1,6 +1,7 @@
 import "server-only";
 import { asksToClean } from "./checks";
 import { think } from "./index";
+import type { Interval } from "../routine-rules";
 import { splitIntents } from "./reliability";
 import { logEvent } from "../events";
 import { carriesMedia, ownWords } from "../link-rules";
@@ -37,6 +38,16 @@ export type Handled =
   | { text: string; kind: "rules"; reply: string; rows: { text: string; data: string }[][] }
   | { text: string; kind: "thought"; thought: Thought }
   | { text: string; kind: "failed"; reply: string };
+
+/** What a question about the time holds free until he answers: the time it offers first (or both halves), for the task's length. */
+export function heldBy(slot: Thought["slot"]): Interval[] {
+  if (!slot) return [];
+  const length = (minutes: number | undefined) => (minutes && minutes > 0 ? minutes : 30) * 60_000;
+  if (slot.kind === "ask") return slot.options.slice(0, 1).map((option) => ({ start: option.at.getTime(), end: option.at.getTime() + length(slot.minutes) }));
+  if (slot.kind === "split") return slot.parts.map((at) => ({ start: at.getTime(), end: at.getTime() + length(slot.minutes) }));
+  // Tony's own pick is already on the list.
+  return [];
+}
 
 /** Said when the model cannot be reached even after a retry. Nothing he said is turned into a task; the failure is logged. */
 export const UNAVAILABLE = "I didn't catch that, sir.";
@@ -119,6 +130,9 @@ export async function handleMessage(
 
   // A message with a forwarded post or a file is one request: the post's own sentences ("Also, …") never split it.
   const parts = split && !carriesMedia(text) ? splitIntents(text) : [text];
+  // The time each earlier request just offered first is kept free for it, so the next question offers its own
+  // (21 Nov 22:09: three questions for tomorrow, all "Best: 20:15"; three taps put all three at 20:15).
+  const held: Interval[] = [];
   for (const [index, part] of parts.entries()) {
     if (asksToClean(part) && part.split(/\s+/).length <= 8) {
       await logHis();
@@ -164,15 +178,19 @@ export async function handleMessage(
     const run = async () => {
       const already = logged;
       logged = true;
-      return think(part, { channel, context, now: clock(), part: piece, logged: already, rejected });
+      return think(part, { channel, context, now: clock(), part: piece, logged: already, rejected, held: [...held] });
+    };
+    const offered = (thought: Thought) => {
+      held.push(...heldBy(thought.slot));
+      return thought;
     };
     try {
-      handled.push({ text: part, kind: "thought", thought: await run() });
+      handled.push({ text: part, kind: "thought", thought: offered(await run()) });
     } catch (first) {
       console.error("Brain failed, trying once more:", first);
       await wait(RETRY_MS);
       try {
-        handled.push({ text: part, kind: "thought", thought: await run() });
+        handled.push({ text: part, kind: "thought", thought: offered(await run()) });
       } catch (second) {
         console.error("Brain failed again:", second);
         await logEvent("ai_failure", { text: part, channel, error: String(second instanceof Error ? second.message : second).slice(0, 500) });
