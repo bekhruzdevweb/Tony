@@ -14,23 +14,29 @@ import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
- * The pinned "Today" message, sent as a Telegram rich message: a heading,
- * a "1/3 done" line, the day as a native checkbox list, and a short "✓"
- * button per open task that ticks it off. If Telegram refuses the rich
- * form, the HTML board below is sent instead: the whole day as a list in
- * the text, and a short button per task. There is exactly one, its
- * message id is kept in settings, and it is edited in place whenever
- * anything about today changes.
+ * The pinned "Today" message, sent as a Telegram rich message. Every task
+ * shows once, with its own "✓ Done" at the end of its line (a tap on the
+ * native checkbox is not reported to the bot, so the line carries the
+ * button). Parts sit under their task, each with its own "✓ Done".
+ * Finished tasks fold away under "✅ Done". If Telegram refuses the rich
+ * form, the HTML board below is sent instead: the same list as text, and
+ * one full-width button per task, in the same order. There is exactly one
+ * board, its message id is kept in settings, and it is edited in place
+ * whenever anything about today changes.
  *
- *   📋 Today · Fri 20 Nov   1/3
+ *   📋 Sat 21 Nov
+ *   ▰▰▰▱▱▱▱▱▱▱  4/14 done
  *
- *   ☐ ⚠️ Wed 23:29 Reply to the school
- *   ☐ 18:00 English Speaking Club
- *   ☑ 09:00 Morning walk          (struck through, at the bottom)
+ *   ⚠️ From earlier days
+ *   ☐ Fri 18:00  Develop the website            ✓ Done
+ *   To do
+ *   ☐ 12:00  Posting stories on Instagram 1/3   ✓ Done
+ *       ☑ the new app he's building
+ *       ☐ the grammar series                    ✓ Done
+ *   ☐ 18:00  Shoot app tutorial on Zoom         ✓ Done
+ *   ▸ ✅ Done · 4                                 (folded)
  *
- *   [☐ Reply to school] [☐ Speaking Club]
- *   [☑ Morning walk]
- *   [➕ Add]            [📱 App]
+ *   [➕ Add]  [📱 App]
  */
 const MAX_BUTTONS = 40;
 const BUTTON_ROOM = 17; // the label after "☐ ", about 18 characters in all
@@ -77,6 +83,10 @@ export function shortLabel(title: string, room = BUTTON_ROOM): string {
 
 type RichBlock = NonNullable<RichMessage["blocks"]>[number];
 type RichButton = Extract<RichBlock, { type: "buttons" }>["buttons"][number];
+type RichText = Extract<RichBlock, { type: "paragraph" }>["text"];
+
+/** A title cut to fit a full-width button. */
+const clip = (text: string, room: number) => (text.length > room ? `${text.slice(0, room - 1).trimEnd()}…` : text);
 
 /**
  * The board two ways: as a rich message (a heading, a native checkbox
@@ -136,74 +146,79 @@ export async function boardView(day: Date): Promise<Board> {
   const status = `Today · ${done.length}/${total} done`;
   const html = [`<b>📋 ${esc(shortDay(day))}</b>`, i(`${done.length}/${total} done`), "", total === 0 ? "Nothing is due today, sir." : lines.join("\n")].join("\n");
 
-  // Two short buttons a row, in the same order as the list.
-  const buttons = [
-    ...[...carried, ...timed].map((task) => ({ task, mark: "☐" })),
-    ...done.map((task) => ({ task, mark: "☑" })),
-  ].slice(0, MAX_BUTTONS);
-  const labels = buttons.map(({ task }) => shortLabel(task.title));
-  // Two tasks that shorten to the same words are told apart by their time.
-  const label = (n: number) => {
-    const same = labels.filter((other) => other === labels[n]).length > 1;
-    const at = buttons[n].task.due_at ? formatTime(new Date(buttons[n].task.due_at!)) : "";
-    return `${buttons[n].mark} ${same && at ? `${shortLabel(buttons[n].task.title, BUTTON_ROOM - 6)} ${at}` : labels[n]}`;
-  };
+  // One full-width button per open task, in the same order as the list; its open parts follow it, indented.
   const keyboard = new InlineKeyboard();
-  // A task with open parts gets a button per part instead (the task follows when every part is done).
-  const flat = buttons.flatMap(({ task }, n) => {
-    const open = (parts.get(task.id) ?? []).filter((s) => !s.done);
-    return open.length && buttons[n].mark === "☐" ? open.map((s) => ({ text: `☐ ${shortLabel(s.title)}`, data: `st:${s.id}` })) : [{ text: label(n), data: `td:${task.id}` }];
-  }).slice(0, MAX_BUTTONS);
-  flat.forEach((button, n) => {
-    keyboard.text(button.text, button.data);
-    if (n % 2 === 1) keyboard.row();
-  });
-  if (flat.length % 2 === 1) keyboard.row();
+  const stamp = (task: Task, carriedOver: boolean) => {
+    const at = new Date(task.due_at!);
+    return carriedOver ? `⚠️ ${weekday(at)} ${formatTime(at)}` : formatTime(at);
+  };
+  const plainButtons = [
+    ...carried.map((task) => ({ task, carriedOver: true })),
+    ...timed.map((task) => ({ task, carriedOver: false })),
+  ].flatMap(({ task, carriedOver }) => [
+    { text: `☐ ${stamp(task, carriedOver)}  ${clip(task.title, 30)}`, data: `td:${task.id}` },
+    ...(parts.get(task.id) ?? []).filter((part) => !part.done).map((part) => ({ text: `   ↳ ☐ ${clip(part.title, 30)}`, data: `st:${part.id}` })),
+  ]).slice(0, MAX_BUTTONS);
+  for (const button of plainButtons) keyboard.text(button.text, button.data).row();
   // Telegram has no long-press menu on a message, so adding lives in a last row of its own.
   keyboard.text("➕ Add", "td:add");
   if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
 
   const hash = createHash("sha256").update(`${status}\n${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
 
-  // The rich form. Native checkboxes show what is done; ticking happens on
-  // the buttons below the list, one per open task, because a tap on the
-  // checkbox itself is not reported to the bot.
+  // The rich form: each open line ends in its own "✓ Done" (a link-style button inside the text).
   type Item = { blocks: RichBlock[]; has_checkbox: true; is_checked?: true };
-  const item = (text: string, checked: boolean, task?: Task): Item => {
-    // A task's parts sit under it as their own checkbox list.
-    const nested = task ? (parts.get(task.id) ?? []) : [];
-    const blocks: RichBlock[] = [{ type: "paragraph", text }];
-    if (nested.length) blocks.push({ type: "list", items: nested.map((s) => ({ blocks: [{ type: "paragraph", text: s.title }], has_checkbox: true as const, ...(s.done ? { is_checked: true as const } : {}) })) } as RichBlock);
-    return { blocks, has_checkbox: true, ...(checked ? { is_checked: true as const } : {}) };
+  const tick = (data: string, label = "✓ Done"): RichText => ({ type: "button", button: { text: label, callback_data: data, style: "link" } }) as RichText;
+  const partsOf = (task: Task): RichBlock[] => {
+    const nested = parts.get(task.id) ?? [];
+    if (!nested.length) return [];
+    return [
+      {
+        type: "list",
+        items: nested.map((part) => ({
+          blocks: [{ type: "paragraph", text: part.done ? ({ type: "strikethrough", text: part.title } as RichText) : ([`${part.title}   `, tick(`st:${part.id}`)] as RichText) }],
+          has_checkbox: true as const,
+          ...(part.done ? { is_checked: true as const } : {}),
+        })),
+      } as RichBlock,
+    ];
   };
-  const items = [
-    ...carried.map((task) => {
-      const at = new Date(task.due_at!);
-      return item(`⚠️ ${weekday(at)} ${formatTime(at)} ${task.title}${count(task)}${bell(task)}`, false, task);
-    }),
-    ...timed.map((task) => item(`${formatTime(new Date(task.due_at!))} ${task.title}${count(task)}${bell(task)}`, false, task)),
-    ...done.map((task) => item(`${doneAt(task)} ${task.title}${count(task)}`, true)),
-  ];
-  const openTasks = [...carried, ...timed].slice(0, MAX_BUTTONS);
-  const openLabels = openTasks.map((task) => shortLabel(task.title));
-  const tickButtons: RichButton[] = openTasks.flatMap((task, n): RichButton[] => {
-    // A task with open parts: a ✓ per part; ticking the last one asks about the task.
-    const open = (parts.get(task.id) ?? []).filter((s) => !s.done);
-    if (open.length) return open.map((s) => ({ text: `✓ ${shortLabel(s.title)}`, callback_data: `st:${s.id}` }));
-    const same = openLabels.filter((other) => other === openLabels[n]).length > 1;
-    return [{ text: `✓ ${same ? `${shortLabel(task.title, BUTTON_ROOM - 6)} ${formatTime(new Date(task.due_at!))}` : openLabels[n]}`, callback_data: `td:${task.id}` }];
-  }).slice(0, MAX_BUTTONS);
-  const rows: RichBlock[] = [];
-  for (let n = 0; n < tickButtons.length; n += 2) rows.push({ type: "buttons", buttons: tickButtons.slice(n, n + 2) });
+  const openItem = (task: Task, when: string): Item => ({
+    blocks: [{ type: "paragraph", text: [{ type: "bold", text: when }, `  ${task.title}${count(task)}${bell(task)}   `, tick(`td:${task.id}`)] as RichText }, ...partsOf(task)],
+    has_checkbox: true,
+  });
+  const doneItem = (task: Task): Item => ({
+    blocks: [{ type: "paragraph", text: [{ type: "strikethrough", text: `${doneAt(task)}  ${task.title}` }, `${count(task)}   `, tick(`td:${task.id}`, "↩ Undo")] as RichText }],
+    has_checkbox: true,
+    is_checked: true,
+  });
+  const bar = (n: number, of: number) => {
+    const filled = of === 0 ? 0 : Math.round((n / of) * 10);
+    return `${"▰".repeat(filled)}${"▱".repeat(10 - filled)}`;
+  };
+  const sections: RichBlock[] = [];
+  if (total === 0) sections.push({ type: "paragraph", text: "Nothing is due today, sir." });
+  if (carried.length) {
+    sections.push({ type: "heading", size: 4, text: "⚠️ From earlier days" });
+    sections.push({ type: "list", items: carried.map((task) => openItem(task, `${weekday(new Date(task.due_at!))} ${formatTime(new Date(task.due_at!))}`)) } as RichBlock);
+  }
+  if (timed.length) {
+    sections.push({ type: "heading", size: 4, text: "To do" });
+    sections.push({ type: "list", items: timed.map((task) => openItem(task, formatTime(new Date(task.due_at!)))) } as RichBlock);
+  }
+  if (total > 0 && carried.length + timed.length === 0) sections.push({ type: "paragraph", text: "🎉 Everything for today is done, sir." });
+  if (done.length) {
+    // Finished ones fold away, so the open list stays short; the summary keeps the count in view.
+    sections.push({ type: "details", summary: `✅ Done · ${done.length}`, blocks: [{ type: "list", items: done.map(doneItem) } as RichBlock] } as RichBlock);
+  }
   const lastRow: RichButton[] = [{ text: "➕ Add", callback_data: "td:add" }];
   if (settings.app_url?.startsWith("https://")) lastRow.push({ text: "📱 App", web_app: { url: settings.app_url } });
-  rows.push({ type: "buttons", buttons: lastRow });
   const rich: RichMessage = {
     blocks: [
-      { type: "heading", size: 2, text: shortDay(day) },
-      { type: "paragraph", text: { type: "italic", text: `${done.length}/${total} done` } },
-      total === 0 ? { type: "paragraph", text: "Nothing is due today, sir." } : { type: "list", items },
-      ...rows,
+      { type: "heading", size: 2, text: `📋 ${shortDay(day)}` },
+      { type: "paragraph", text: [bar(done.length, total), "  ", { type: "italic", text: `${done.length}/${total} done` }] as RichText },
+      ...sections,
+      { type: "buttons", buttons: lastRow },
     ],
     skip_entity_detection: true,
   };
@@ -249,7 +264,16 @@ export async function refreshBoard(bot: Bot, chatId: number): Promise<void> {
         await updateSettings({ today_message_id: null, today_message_hash: null });
         return;
       }
-      if (!unchanged(error)) throw error;
+      if (!unchanged(error)) {
+        // Telegram would not take the new rich board as an edit: a fresh board replaces it
+        // (rich if it is accepted when sent, the plain one otherwise), so the board never goes stale.
+        if (isRich) {
+          console.error("The rich Today board could not be edited; posting a fresh one:", error);
+          await postBoard(bot, chatId, day);
+          return;
+        }
+        throw error;
+      }
     }
     // The pinned one-line banner follows the board's counts.
     if (settings.today_status_id) {
