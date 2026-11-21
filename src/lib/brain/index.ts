@@ -193,8 +193,10 @@ export async function think(
   const his = [part?.full ?? text, ...history.filter((m) => m.role === "user").slice(-2).map((m) => m.text)].join("\n");
   // "This one" with nothing replied to: the reminder sent in the last 15 minutes.
   const recent = await recentReminders(now);
+  // The request is named word for word, so a sentence inside it is never taken for one of the others
+  // (21 Nov 22:09: "…for tomorrow? And I already shoot an app tutorial on Zoom." moved the reel and left the tutorial open).
   const partNote = part
-    ? `His message held ${part.total} requests: "${part.full}". This is request ${part.index + 1}: handle only this one now; each of the others is handled on its own.`
+    ? `His message held ${part.total} requests: "${part.full}". This is request ${part.index + 1}: "${text}". Handle everything in it, every sentence (one saying he already did something completes that task), and nothing from the others: each of those is handled on its own.`
     : undefined;
   // His rules his words may fit ("I'm tired, don't want to work out"): a hint; the brain decides.
   const hinted = ruleHints(text, context.ruleList);

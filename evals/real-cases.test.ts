@@ -1284,3 +1284,35 @@ describe("21 Nov 20:41–20:42 · 'it doesnt take long so make no need to add an
     expect(byTitle("Add my workout days to Tony").due_at).toBeNull();
   });
 });
+
+describe("21 Nov 22:09 · four requests in one voice note: 'And I already shoot an app tutorial on Zoom.'", () => {
+  const MESSAGE =
+    "Can you switch the saved link Instagram Reels for tomorrow? And I already shoot an app tutorial on Zoom. And also switch posting stories on Instagram for tomorrow. And also tomorrow I will start preparation for my IELTS exam. Yes.";
+  const setUp = () => {
+    routineRow({ learned: { content: [1215, 1215], prep: [1215, 1215] } });
+    task({ title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00", duration_minutes: 90 });
+    return {
+      reel: task({ title: "Instagram reel (saved link)", due_at: "2026-11-21T16:30", duration_minutes: 30, notes: "https://www.instagram.com/reel/DfoBspQhNjO/" }),
+      zoom: task({ title: "Shoot app tutorial on Zoom", due_at: "2026-11-21T21:00", duration_minutes: 60 }),
+      stories: task({ title: "Posting stories on Instagram", due_at: "2026-11-21T12:00", duration_minutes: 30 }),
+    };
+  };
+
+  it("the brain is told the request word for word, every sentence of it: the tutorial he says he shot is completed with the reel's move", async () => {
+    const { reel, zoom, stories } = setUp();
+    const result = await run(MESSAGE, "2026-11-21T22:09", [
+      tools(["update_task", { id: reel.id, day: "2026-11-22" }], ["complete_task", { id: zoom.id }]),
+      tools(["update_task", { id: stories.id, day: "2026-11-22" }]),
+      tools(["add_task", { title: "Start IELTS exam preparation", day: "2026-11-22", duration: 60 }]),
+    ]);
+    // That evening the sentence rode in the first request, was taken for "one of the others", and was never handled;
+    // at 00:05 Tony asked "You said you already shot the Zoom tutorial… Do you want me to do that?"
+    const first = String(state.calls[0].messages.at(-1)?.content ?? "");
+    expect(first).toContain('This is request 1: "Can you switch the saved link Instagram Reels for tomorrow? And I already shoot an app tutorial on Zoom."');
+    expect(first).toMatch(/every sentence/);
+    expect(state.calls[0].system).toMatch(/Never ask whether to tick it off/);
+    expect(byTitle("Shoot app tutorial on Zoom").status).toBe("done");
+    expect(result.replies[0]).toContain("✓ **Shoot app tutorial on Zoom** done");
+    expect(result.leftover).toBe(0);
+  });
+});
