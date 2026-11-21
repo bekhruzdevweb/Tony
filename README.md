@@ -23,6 +23,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | P2 | Personality: companion and advisor first, natural replies with a small receipt line | Live, awaiting your check |
 | P3 | Smart context: bursts, library, situation rules ("when X, do Y"), 🌙 Free Time list and suggestions, follow-up ladder | Live, awaiting your check |
 | P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Live, awaiting your check |
+| M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -257,8 +258,13 @@ code, in the inbox, or at the time he named). When unsure, it is talk.
 **Long-term memory.** When he mentions something lasting (a project, a
 goal, a person, a preference, a routine), Claude saves it with `remember`
 alongside its reply, without asking; moods, one-off plans and trivia are
-not saved, and the same fact is never stored twice. The twelve notes most
-relevant to each message are given to Claude, to use naturally.
+not saved, and the same fact is never stored twice. Since 22 Nov notes live
+in three layers (this week, this month, always; spec: "Layered memory"):
+every reply sees all live week and month notes and the twelve always notes
+most relevant to the message; a repeated note is confirmed, never copied;
+goals come first in plans and the morning brief (🎯 Focus); and every Sunday
+at 21:30 a review moves up what held, drops what went stale and sends three
+lines with ↩ to keep what was dropped.
 
 **Web.** Claude has Anthropic's web search (up to 3 searches per reply,
 located in Tashkent) and web fetch (up to 2 pages). Haiku takes the basic

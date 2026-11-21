@@ -3,7 +3,7 @@ import type { Task } from "./tasks";
 
 export type AppProject = { id: number; name: string; color: string; sort_order: number };
 export type AppMessage = { id: number; role: "user" | "tony"; text: string; channel: "telegram" | "app"; created_at: string };
-export type AppMemory = { id: number; fact: string; created_at: string };
+export type AppMemory = { id: number; fact: string; created_at: string; layer?: "week" | "month" | "always"; goal?: boolean; confirmed_at?: string; mentions?: number };
 
 export type AppSettings = {
   brief_morning: string;

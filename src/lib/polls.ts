@@ -191,9 +191,9 @@ export async function handlePollAnswer(bot: Bot, chatId: number, pollId: string,
     const mood = picks[0]?.mood;
     await close();
     if (!mood) return;
-    // Kept as a memory note, so Tony can take it into account next week.
+    // Kept as a this-week memory note, so Tony can take it into account next week; it fades after that.
     const week = new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, day: "numeric", month: "short" }).format(now);
-    const { error } = await db.from("memory").insert({ fact: `Week ending ${week}: he said it went "${mood}"`, source: "user" });
+    const { error } = await db.from("memory").insert({ fact: `Week ending ${week}: he said it went "${mood}"`, source: "user", layer: "week", confirmed_at: now.toISOString() });
     if (error) console.error(`handlePollAnswer: ${error.message}`);
     const reply =
       mood === "Too much on my plate"

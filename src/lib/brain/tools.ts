@@ -604,7 +604,9 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
 
     case "remember": {
       const fact = typeof args.fact === "string" ? args.fact.trim().slice(0, 300) : "";
-      const layer = readLayer(args.layer);
+      // No layer named: a new note is kept for good, a known one stays where it is (never moved up by default).
+      const given = args.layer === undefined || args.layer === null || args.layer === "" ? undefined : readLayer(args.layer);
+      const layer = given ?? "always";
       const goal = args.goal === true;
       // Only what he said himself: never Tony's own replies, never a guess ("Khiva area" for Khanqa).
       if (fact && his !== undefined && !statedByHim(fact, his)) {
@@ -613,12 +615,14 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       type Kept = { id: number; fact: string; layer: MemoryLayer; mentions: number; goal: boolean };
       // Said again: the note is confirmed, counts one more mention, and may move up a layer (never down).
       const confirm = async (note: Kept) => {
-        const patch: Record<string, unknown> = { mentions: note.mentions + 1, confirmed_at: now.toISOString(), layer: higherLayer(note.layer, layer) };
+        const patch: Record<string, unknown> = { mentions: note.mentions + 1, confirmed_at: now.toISOString(), layer: given ? higherLayer(note.layer, given) : note.layer };
         if (goal && !note.goal) patch.goal = true;
         if (fact && fact.toLowerCase() !== note.fact.toLowerCase()) patch.fact = fact;
         const { error } = await db.from("memory").update(patch).eq("id", note.id);
         check("remember", error);
-        return { ok: true as const, id: note.id, fact: String(patch.fact ?? note.fact), layer: patch.layer, confirmed: true };
+        // Nothing new (same words, same layer, same goal): confirmed quietly, no receipt.
+        const changed = patch.fact !== undefined || patch.layer !== note.layer || patch.goal === true;
+        return { ok: true as const, id: note.id, fact: String(patch.fact ?? note.fact), layer: patch.layer, confirmed: true, changed };
       };
       const sameAs = Number(args.same_as);
       if (Number.isSafeInteger(sameAs) && sameAs > 0) {

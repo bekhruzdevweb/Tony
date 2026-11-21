@@ -43,6 +43,10 @@ const { budgetLeft, costOf, dueToday, latestBackup, notify, runBackup } = await 
 const { markSent, saveMistake } = await import("../src/lib/mistakes");
 const { runTick } = await import("../src/lib/reminders");
 const { listInbox } = await import("../src/lib/tasks");
+const { keepDropped, weeklyMemoryReview } = await import("../src/lib/memory-review");
+const { runSmartJobs } = await import("../src/lib/smart-jobs");
+const { runBriefs } = await import("../src/lib/briefs");
+const { getSettings } = await import("../src/lib/settings");
 
 let callId = 0;
 const tools = (...calls: [string, Record<string, unknown>][]): Answer => ({
@@ -411,5 +415,113 @@ describe("e) Safety and monitoring", () => {
     expect(await dueToday("selftest", "07:00", new Date())).toBe(true);
     expect(await dueToday("selftest", "07:00", new Date())).toBe(false);
     expect(costOf({ model: "claude-sonnet-5-5", input: 1000, output: 1000 })).toBeCloseTo(0.012, 6);
+  });
+});
+
+// ── Layered memory (22 Nov) ─────────────────────────────────────────────
+describe("Layered memory: this week, this month, always", () => {
+  /** A bot whose every call succeeds; what it sends is kept. */
+  const anyBot = () => {
+    const sent: string[] = [];
+    const api = new Proxy(
+      {},
+      { get: (_target, name) => async (_chat: number, text?: unknown) => (String(name).startsWith("send") && sent.push(typeof text === "string" ? text : JSON.stringify(text)), { message_id: 700 + sent.length }) },
+    );
+    return { bot: { api } as never, sent };
+  };
+  const memory = () => state.db.rows("memory") as Record<string, unknown>[];
+  const keep = (fact: string, layer: string, created: string, extra: Record<string, unknown> = {}) =>
+    state.db.insert("memory", { fact, source: "user", layer, created_at: at(created).toISOString(), confirmed_at: at(String(extra.confirmed ?? created)).toISOString(), ...extra, confirmed: undefined });
+
+  it("'This week IELTS prep is my priority': a this-week goal; said again, the same note is confirmed quietly, never copied or moved", async () => {
+    const first = await run("This week IELTS prep is my priority", "2026-11-16T09:00", [tools(["remember", { fact: "IELTS prep is my priority", layer: "week", goal: true }]), says("Understood, sir.")]);
+    expect(memory()).toHaveLength(1);
+    const note = memory()[0];
+    expect(note).toMatchObject({ fact: "IELTS prep is my priority", layer: "week", goal: true, mentions: 1 });
+    expect(first.replies[0]).toContain("📝 This week: IELTS prep is my priority");
+    const before = state.calls.length;
+    const again = await run("IELTS is still my priority, remember", "2026-11-19T09:00", [tools(["remember", { same_as: note.id }]), says("Of course, sir.")]);
+    // Every reply sees memory in its layers, the goal marked.
+    expect(state.calls[before].system).toContain(`This week:\\n[${note.id}] 🎯 IELTS prep is my priority`);
+    expect(memory()).toHaveLength(1);
+    expect(memory()[0]).toMatchObject({ layer: "week", mentions: 2 });
+    expect(local(memory()[0].confirmed_at)).toBe("2026-11-19T09:00");
+    expect(again.replies[0]).not.toContain("📝");
+  });
+
+  it("the morning brief opens with his focus: this week's goal, then this month's; faded and always notes are not goals", async () => {
+    keep("Grammar series", "month", "2026-11-10T09:00", { goal: true, confirmed: "2026-11-18T09:00" });
+    keep("IELTS prep is my priority", "week", "2026-11-20T09:00", { goal: true });
+    keep("Old focus: the slides", "week", "2026-11-10T09:00", { goal: true });
+    keep("Be patient", "always", "2026-10-01T09:00", { goal: true });
+    vi.setSystemTime(at("2026-11-22T08:00"));
+    const { bot, sent } = anyBot();
+    await runBriefs(bot, 42, await getSettings(), new Date());
+    // Sent as a rich message: the greeting, then the focus line.
+    const brief = sent.find((text) => text.includes("Good morning"))!;
+    expect(brief).toContain('{"type":"paragraph","text":"Good morning, sir."},{"type":"paragraph","text":["🎯 ",{"type":"bold","text":"Focus"},": IELTS prep is my priority · Grammar series"]}');
+    expect(brief).not.toMatch(/Old focus|Be patient/);
+  });
+
+  it("Sunday 21:30: what held moves up, what went stale is dropped, always notes untouched; the summary, and ↩ keeps what was dropped", async () => {
+    const held = keep("IELTS prep is my priority", "week", "2026-11-16T09:00", { goal: true, mentions: 2, confirmed: "2026-11-19T09:00" });
+    const stale = keep("Slides for the Wednesday class", "week", "2026-11-17T10:00");
+    const fresh = keep("Films reels on Saturdays", "week", "2026-11-21T10:00");
+    const always = keep("Works out in the evenings", "always", "2026-10-01T10:00");
+    said("user", "IELTS first this week, then the reels", "2026-11-19T09:00");
+    said("user", "remind me about this\n\n[He forwarded this to you]\n«««\nBuy our course now\n»»»", "2026-11-20T09:00");
+    vi.setSystemTime(at("2026-11-22T21:30"));
+    state.script = [tools(["review", { notes: [{ id: held.id, action: "promote" }, { id: stale.id, action: "drop" }, { id: fresh.id, action: "keep" }, { id: always.id, action: "drop" }] }])];
+    const review = (await weeklyMemoryReview(new Date()))!;
+    // The model read his own words, never the forwarded post.
+    const asked = JSON.stringify(state.calls[0].messages);
+    expect(asked).toContain("IELTS first this week, then the reels");
+    expect(asked).not.toContain("Buy our course");
+    expect(memory().map((row) => [row.fact, row.layer])).toEqual([
+      ["IELTS prep is my priority", "month"],
+      ["Films reels on Saturdays", "week"],
+      ["Works out in the evenings", "always"],
+    ]);
+    expect(review.text).toBe(
+      [
+        "🧠 **Sunday memory review**, sir.",
+        "📝 **Learned** (1): Films reels on Saturdays",
+        "⬆️ **Moved up**: IELTS prep is my priority → This month",
+        "🗑 **Dropped**: Slides for the Wednesday class",
+      ].join("\n"),
+    );
+    expect(review.rows[0].map((button) => button.text)).toEqual(["↩ Keep the dropped", "🧠 See memory"]);
+    const reviewId = Number(review.rows[0][0].data.split(":")[2]);
+    expect(await keepDropped(reviewId, new Date())).toBe("↩ Kept, sir: Slides for the Wednesday class");
+    expect(memory().find((row) => row.fact === "Slides for the Wednesday class")).toMatchObject({ layer: "week" });
+    expect(local(memory().find((row) => row.fact === "Slides for the Wednesday class")!.confirmed_at)).toBe("2026-11-22T21:30");
+    // Once only.
+    expect(await keepDropped(reviewId, new Date())).toBe("Those are already back, sir.");
+    expect(memory().filter((row) => row.fact === "Slides for the Wednesday class")).toHaveLength(1);
+  });
+
+  it("the model unreachable: the plain rules decide (a week note not heard of for a week goes)", async () => {
+    keep("Old focus: the slides", "week", "2026-11-10T09:00");
+    keep("Works out in the evenings", "always", "2026-10-01T10:00");
+    vi.setSystemTime(at("2026-11-22T21:30"));
+    state.script = ["FAIL"];
+    const review = (await weeklyMemoryReview(new Date()))!;
+    expect(memory().map((row) => row.fact)).toEqual(["Works out in the evenings"]);
+    expect(review.text).toContain("🗑 **Dropped**: Old focus: the slides");
+    expect((state.db.rows("events").find((row) => row.kind === "memory_review")!.detail as { by: string }).by).toBe("rules");
+  });
+
+  it("the Sunday tick sends the summary once, silently, at 21:30; not before, not twice", async () => {
+    keep("Old focus: the slides", "week", "2026-11-10T09:00");
+    const { bot, sent } = anyBot();
+    vi.setSystemTime(at("2026-11-22T21:29"));
+    await runSmartJobs(bot, 42, await getSettings(), new Date());
+    expect(sent.filter((text) => text.includes("Sunday memory review"))).toHaveLength(0);
+    state.script = [tools(["review", { notes: [] }])];
+    vi.setSystemTime(at("2026-11-22T21:30"));
+    await runSmartJobs(bot, 42, await getSettings(), new Date());
+    vi.setSystemTime(at("2026-11-22T21:31"));
+    await runSmartJobs(bot, 42, await getSettings(), new Date());
+    expect(sent.filter((text) => text.includes("Sunday memory review"))).toHaveLength(1);
   });
 });

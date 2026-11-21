@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { AppPlan, AppState } from "@/lib/app-types";
+import { isAlive, LAYER_TITLES, normalNote, type MemoryLayer } from "@/lib/memory-rules";
 import type { Task } from "@/lib/tasks";
 import { formatDue, formatLongDate, formatTime } from "@/lib/time";
 import { Empty, Icon, Section, TaskRow, isOpen } from "./ui";
@@ -13,6 +14,8 @@ export type Theme = "system" | "light" | "dark";
 
 const COLORS = ["#5B8BFF", "#7A5CFF", "#34C759", "#FF9F0A", "#FF5A5F", "#64748B"];
 const field = "h-11 rounded-card bg-background px-3 outline-none focus:ring-2 focus:ring-primary/40";
+
+const SHOWN_ORDER: MemoryLayer[] = ["week", "month", "always"];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children?: ReactNode }) {
   return (
@@ -233,13 +236,17 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
 
       <Section title="Tony's memory">
         {state.memory.length === 0 && <li className="px-4 py-3 text-sub text-secondary">Nothing remembered yet. Tell Tony a habit or preference.</li>}
-        {state.memory.map((note) => (
-          <Row key={note.id} label={note.fact}>
-            <button type="button" onClick={() => act("forget", { id: note.id })} className="h-11 shrink-0 px-1 text-sub font-medium text-overdue">
-              Forget
-            </button>
-          </Row>
-        ))}
+        {/* This week first, then this month, then always (layered memory, 22 Nov). */}
+        {state.memory
+          .map((note) => normalNote(note))
+          .sort((a, b) => SHOWN_ORDER.indexOf(a.layer) - SHOWN_ORDER.indexOf(b.layer) || b.id - a.id)
+          .map((note) => (
+            <Row key={note.id} label={note.fact} hint={[LAYER_TITLES[note.layer], note.goal ? "🎯 goal" : undefined, isAlive(note, new Date()) ? undefined : "fading"].filter(Boolean).join(" · ")}>
+              <button type="button" onClick={() => act("forget", { id: note.id })} className="h-11 shrink-0 px-1 text-sub font-medium text-overdue">
+                Forget
+              </button>
+            </Row>
+          ))}
       </Section>
 
       <Section title="Telegram">

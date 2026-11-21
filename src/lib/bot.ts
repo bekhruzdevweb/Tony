@@ -52,6 +52,8 @@ import { dayLabel, slotButtons, slotQuestion } from "./slot-text";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
 import { HistoryOff, recentChanges, undoChange } from "./history";
 import { forgetFact, memoryList } from "./memory";
+import { keepDropped } from "./memory-review";
+import { memoryPage } from "./memory-rules";
 import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
@@ -577,6 +579,24 @@ export function getBot(): Bot | undefined {
     if (payload === "keep") {
       await ctx.answerCallbackQuery({ text: "Very good, sir." }).catch(() => undefined);
       await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      return;
+    }
+
+    // Under the Sunday memory review: ↩ puts back what it dropped (once), 🧠 opens /memory. Plain code.
+    if (payload.startsWith("mr:")) {
+      if (payload === "mr:view") {
+        await ctx.answerCallbackQuery().catch(() => undefined);
+        if (chatId === undefined) return;
+        await retire({ kinds: ["cmd:memory"] });
+        const view = await memoryView();
+        const sent = await sendMarkdown(bot, chatId, view.text, { keyboard: view.keyboard });
+        await track(sent, "cmd:memory", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        return;
+      }
+      const outcome = await keepDropped(Number(payload.split(":")[2]), new Date());
+      await ctx.answerCallbackQuery({ text: outcome.slice(0, 190) }).catch(() => undefined);
+      await logMessage("tony", outcome);
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("🧠 See memory", "mr:view") }).catch(() => undefined);
       return;
     }
 
@@ -1121,17 +1141,26 @@ export function getBot(): Bot | undefined {
     await track(sent, "cmd:undo", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
   };
 
-  /** /memory: what Tony keeps about him, each with 🗑 to forget it. Plain code. */
+  /** /memory: what Tony keeps about him in its three layers (this week, this month, always), each with 🗑 to forget it. Plain code. */
   const memoryView = async (lead?: string): Promise<{ text: string; keyboard?: InlineKeyboard }> => {
-    const rows = (await memoryList()).slice(-30);
-    if (rows.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}I keep nothing about you yet, sir.` };
+    const page = memoryPage(await memoryList(), new Date());
+    if (page.ids.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}I keep nothing about you yet, sir.` };
     const keyboard = new InlineKeyboard();
-    rows.forEach((row, index) => {
-      keyboard.text(`🗑 ${index + 1}`, `mem:${row.id}`);
+    page.ids.forEach((id, index) => {
+      keyboard.text(`🗑 ${index + 1}`, `mem:${id}`);
       if (index % 5 === 4) keyboard.row();
     });
-    const lines = rows.map((row, index) => `${index + 1}. ${row.source === "link" ? "🔗 " : ""}${row.fact.length > 140 ? `${row.fact.slice(0, 137)}…` : row.fact}`);
-    return { text: [...(lead ? [lead, ""] : []), "**What I keep about you**, sir. Tap a number to forget it:", ...lines].join("\n"), keyboard };
+    return {
+      text: [
+        ...(lead ? [lead, ""] : []),
+        "🧠 **What I keep about you**, sir. Tap a number to forget it.",
+        ...page.lines,
+        ...(page.hidden ? [`_+${page.hidden} older notes not shown_`] : []),
+        "",
+        "_Every Sunday night, what held moves up a layer and what went stale is dropped._",
+      ].join("\n"),
+      keyboard,
+    };
   };
 
   /** Shows what the brain did for one request: the reply, its buttons, a plan or a question. */

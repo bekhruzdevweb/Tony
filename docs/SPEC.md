@@ -106,7 +106,7 @@ Eight features make up v1; everything else waits.
 | Persistent mode | Repeats the reminder until Start, Done or Skip is tapped (schedule below) | Telegram |
 | Missed and stale check | Overdue tasks come back the next morning; Inbox items untouched for 3 days get a nudge | Telegram |
 | Briefs | Morning brief 08:00 and evening review 21:00, times editable in Settings | Telegram |
-| Memory | Tony saves facts the user states ("I work out in the evenings") and uses them in replies | Both |
+| Memory | Tony saves facts the user states ("I work out in the evenings") and uses them in replies, in three layers: this week, this month, always (see "Layered memory" below) | Both |
 
 Persistent mode schedule (default, editable per task): 0, +15, +30, +60, +90, +120 minutes, then one last message: "I'll leave it here for today, sir." The task is then marked missed and enters the next morning's brief.
 
@@ -179,7 +179,7 @@ Six tables hold everything; seven tools are all Tony can do.
 | tasks | id, title, notes, project_id, priority, status (inbox, todo, in_progress, done, skipped, dropped), due_at, repeat_rule, persistent (bool), created_at, updated_at, completed_at |
 | reminders | id, task_id, fire_at, kind (due, nudge, stale, brief), attempt, state (scheduled, sent, acknowledged, cancelled), telegram_message_id |
 | projects | id, name, color, order |
-| memory | id, fact, source (user), created_at |
+| memory | id, fact, source (user), layer (week, month, always), goal (bool), mentions, confirmed_at, created_at |
 | messages | id, role (user, tony), text, channel (telegram, app), created_at |
 | settings | telegram_chat_id, timezone, brief_morning, brief_evening, quiet_start, quiet_end, persistent_schedule |
 
@@ -221,6 +221,22 @@ Stack: Next.js (App Router, TypeScript) on Vercel; Supabase (Postgres + auth); g
    Done when: a full week passes with no missed reminders and no message Behruzbek wanted to mute.
 
 The repo starts with a CLAUDE.md that links this spec and states: build one phase at a time, run it, show the result, then wait for approval.
+
+### Layered memory (added by the owner, 22 Nov)
+
+Memory is kept in three layers, in the database (migration `0026_memory_layers.sql`):
+
+| Layer | Holds | Fades |
+|---|---|---|
+| This week | What is true now: this week's plans, focus and goals ("IELTS prep is my priority") | After 7 days without coming up |
+| This month | What held for more than a week, and monthly goals | After 31 days without coming up |
+| Always | Who he is, his people, preferences, routine, how he wants Tony to work | Never on its own |
+
+- **Every reply checks memory first:** all live week and month notes, and the always notes that bear on the message, grouped by layer, goals marked 🎯. Faded notes are left out.
+- **Saying it again confirms it:** the same note is counted and kept fresh (never copied), and can move up a layer, never down. A repeat gets no receipt; a new note does ("📝 This week: …").
+- **Goals come first:** in the planner (goal tasks earliest in the day) and in the morning brief ("🎯 Focus: …" right under the greeting).
+- **Sunday review, 21:30:** the model reads the week and month notes against what he said that week (his own words only). What held moves up a layer, what went stale is dropped, the rest is kept; always notes are never touched. Rails in code: a week note moves up only after 3 days, a month note after 3 weeks; nothing confirmed in the last day is dropped. If the model cannot be reached, plain rules decide. He gets a three-line summary (learned, moved up, dropped) with ↩ to keep what was dropped and 🧠 to open /memory. The review runs even in quiet hours; only the summary waits for the day's message budget.
+- **/memory** shows the three layers (this week, this month, always), goals 🎯 and fading notes marked, each with 🗑. Settings in the app shows each note's layer.
 
 ## Later versions and open questions
 

@@ -8,6 +8,7 @@ import { noteFollowUp, sameDayFollowUp, weeklyInboxReview, type Row } from "./fo
 import { plain } from "./html";
 import type { LibraryItem } from "./library-rules";
 import { loadMedia, mediaLabel, sendMedia } from "./media";
+import { weeklyMemoryReview } from "./memory-review";
 import { logMessage } from "./messages";
 import { markdownToHtml } from "./rich";
 import { runRuleChecks } from "./rules";
@@ -21,8 +22,9 @@ import { requireDb } from "./db";
 
 /**
  * Phases c–e on the minute tick (21 Nov): the same-day follow-up, a rule
- * that fires on its own, a free-time suggestion, Sunday's inbox review, and
- * the daily jobs (backup 03:00, self-test 07:00, budget guard 09:00). Unasked
+ * that fires on its own, a free-time suggestion, Sunday's inbox review and
+ * memory review (21:30), and the daily jobs (backup 03:00, self-test 07:00,
+ * budget guard 09:00). Unasked
  * messages respect quiet hours and the day's budget; at most one of them per
  * tick. Each job is noted in `events` and never stops the reminders.
  */
@@ -51,6 +53,7 @@ async function send(bot: Bot, chatId: number, markdown: string, rows: Row[] = []
 export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings, now: Date): Promise<number> {
   let sent = 0;
   const quiet = inWindow(now, settings.quiet_start, settings.quiet_end, settings.timezone ?? TIMEZONE);
+  const sunday = new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short" }).format(now) === "Sun";
   const job = async (name: string, work: () => Promise<unknown>) => {
     try {
       await work();
@@ -96,7 +99,7 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
       });
     }
     // d) Sunday evening: the inbox items untouched for a week.
-    if (sent === 0 && new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short" }).format(now) === "Sun") {
+    if (sent === 0 && sunday) {
       await job("inbox-review", async () => {
         if ((await budgetLeft(now)) <= 0 || !(await dueToday("inbox-review", "19:30", now))) return;
         const review = await weeklyInboxReview(now);
@@ -106,6 +109,19 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
         sent++;
       });
     }
+  }
+
+  // Sunday night: the memory review (what held moves up a layer, what went stale is dropped).
+  // It runs even in quiet hours or with the day's budget spent; then only the summary is skipped.
+  if (sent === 0 && sunday) {
+    await job("memory-review", async () => {
+      if (!(await dueToday("memory-review", "21:30", now))) return;
+      const review = await weeklyMemoryReview(now);
+      if (!review || quiet || (await budgetLeft(now)) <= 0) return;
+      await send(bot, chatId, review.text, review.rows, { silent: true });
+      await notify("memory_review", now);
+      sent++;
+    });
   }
 
   // e) The daily jobs.
