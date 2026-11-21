@@ -134,15 +134,35 @@ async function adoptTaskLinks(): Promise<void> {
  * have to shoot like" or "the masterclass" are picked by meaning, then sent
  * by code with library send (21 Nov: keyword matching mixed his links up).
  */
-export async function libraryForPrompt(now = new Date(), links = 15, files = 6): Promise<string | undefined> {
+export async function libraryForPrompt(now = new Date(), links = 15, files = 12): Promise<string | undefined> {
   await adoptTaskLinks().catch((error) => console.warn("adoptTaskLinks:", error instanceof Error ? error.message : error));
-  const items = await libraryItems(60).catch(() => [] as LibraryItem[]);
-  const chosen = [...items.filter((item) => item.source === "library").slice(0, links), ...items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio").slice(0, files)].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const items = await libraryItems(80).catch(() => [] as LibraryItem[]);
+  // Files: an album kept with one task is one line ("+4 more with it"), and every file he named
+  // ("ideas for my reels") is always listed (21 Nov 20:21: five album photos pushed his named video out
+  // of the list, and Tony sent the wrong video twice).
+  const media = items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio");
+  const perTask = new Map<number, number>();
+  for (const item of media) if (item.task_id) perTask.set(item.task_id, (perTask.get(item.task_id) ?? 0) + 1);
+  const seen = new Set<number>();
+  const oneEach = media.filter((item) => {
+    if (!item.task_id) return true;
+    if (seen.has(item.task_id)) return false;
+    seen.add(item.task_id);
+    return true;
+  });
+  const named = oneEach.filter((item) => item.note?.trim());
+  const fileList = [...new Map([...named, ...oneEach].map((item) => [item.id, item])).values()].slice(0, Math.max(files, named.length));
+  const chosen = [...items.filter((item) => item.source === "library").slice(0, links), ...fileList].sort((a, b) => b.created_at.localeCompare(a.created_at));
   if (chosen.length === 0) return undefined;
   const ids = [...new Set(chosen.map((item) => item.task_id).filter((id): id is number => typeof id === "number"))];
   const tasks = ids.length ? (((await requireDb().from("tasks").select("id, title").in("id", ids)).data ?? []) as { id: number; title: string }[]) : [];
   const titles = new Map(tasks.map((task) => [task.id, task.title]));
-  return chosen.map((item) => libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined)).join("\n");
+  return chosen
+    .map((item) => {
+      const more = item.source === "media" && item.task_id ? (perTask.get(item.task_id) ?? 1) - 1 : 0;
+      return `${libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined)}${more > 0 ? ` · +${more} more with it` : ""}`;
+    })
+    .join("\n");
 }
 
 /**

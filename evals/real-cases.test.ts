@@ -732,6 +732,33 @@ describe("Links", () => {
     expect(result.replies[0]).toMatch(/🖼 3 photos/);
   });
 
+  it("21 Nov 20:25 'Put it inbox / Remind me to study Thinking fast and slow… 23 November': a task he finished at 20:15 is never reopened", async () => {
+    const reel = task({ title: "Posting reel on Instagram", status: "done", due_at: "2026-11-21T20:15", completed_at: at("2026-11-21T20:15").toISOString() });
+    await run("Put it inbox\n\nRemind me to study Thinking fast and slow on notebooklm  23 November", "2026-11-21T20:25", [
+      tools(["update_task", { id: reel.id, clear_due: true }], ["add_task", { title: "Study Thinking Fast and Slow", notes: "Study it on NotebookLM" }]),
+      says("Done, sir."),
+    ]);
+    expect(byTitle("Posting reel on Instagram").status).toBe("done");
+    expect(byTitle("Study Thinking Fast and Slow")).toBeDefined();
+  });
+
+  it("21 Nov 20:21: a file he named ('ideas for my reels') is always in front of the brain, and an album is one line", async () => {
+    const named = media({ kind: "video", note: "ideas for my reels", created_at: at("2026-11-21T18:47").toISOString() });
+    const album = task({ title: "Write Telegram posts like Freya's Talking", free_time: true });
+    for (let n = 0; n < 5; n++) media({ kind: "photo", task_id: album.id, created_at: at("2026-11-21T18:52").toISOString() });
+    for (let n = 0; n < 3; n++) media({ kind: "photo", caption: `screenshot ${n}`, created_at: at("2026-11-21T19:00").toISOString() });
+    await run("Send me one video Like ideas for my reels", "2026-11-21T20:21", [tools(["library", { action: "send", items: [`media:${named.id}`] }]), says("Here it is, sir.")]);
+    expect(state.calls[0].system).toContain(`media:${named.id} 🎞 ideas for my reels`);
+    expect(state.calls[0].system).toContain("+4 more with it");
+  });
+
+  it("a named file stays in front of the brain even after fifteen newer photos", async () => {
+    const named = media({ kind: "video", note: "ideas for my reels", created_at: at("2026-11-21T18:47").toISOString() });
+    for (let n = 0; n < 15; n++) media({ kind: "photo", caption: `photo ${n}`, created_at: at("2026-11-21T19:00").toISOString() });
+    await run("send me the ideas for my reels video", "2026-11-21T20:21", [tools(["library", { action: "send", items: [`media:${named.id}`] }]), says("Here it is, sir.")]);
+    expect(state.calls[0].system).toContain(`media:${named.id} 🎞 ideas for my reels`);
+  });
+
   it("23:25 'send me the video to just to check': the brain picks it from his library by meaning; code sends the exact link (21 Nov: word matching mixed links up)", async () => {
     task({ title: "Watch: Instagram Masterclass (Brock Johnson)", due_at: "2026-11-23T10:00", notes: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi" });
     // The link only lived in the task's notes: it joins the library (library:1), named by its task, and the brain sees it.

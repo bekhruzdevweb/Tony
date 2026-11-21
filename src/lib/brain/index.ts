@@ -666,7 +666,8 @@ async function recentReminders(now: Date): Promise<{ task_id: number | null; tit
   const { data } = await db.from("reminders").select("task_id, sent_at").in("state", ["sent", "acknowledged"]).gte("sent_at", new Date(now.getTime() - 15 * 60_000).toISOString());
   const rows = ((data ?? []) as { task_id: number | null; sent_at: string }[]).filter((row) => row.task_id !== null);
   if (rows.length === 0) return [];
-  const tasks = await db.from("tasks").select("id, title, kind").in("id", rows.map((row) => row.task_id!));
-  const byId = new Map(((tasks.data ?? []) as { id: number; title: string; kind: string | null }[]).filter((task) => task.kind !== "prayer").map((task) => [task.id, task.title]));
+  const tasks = await db.from("tasks").select("id, title, kind, status").in("id", rows.map((row) => row.task_id!));
+  // A task he already ticked off is not what "it" means any more.
+  const byId = new Map(((tasks.data ?? []) as { id: number; title: string; kind: string | null; status: string }[]).filter((task) => task.kind !== "prayer" && OPEN_STATUSES.includes(task.status as Task["status"])).map((task) => [task.id, task.title]));
   return rows.filter((row) => byId.has(row.task_id!)).map((row) => ({ ...row, title: byId.get(row.task_id!)! }));
 }
