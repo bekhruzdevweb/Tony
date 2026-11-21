@@ -22,7 +22,7 @@ import {
   stillOpen,
   type OpenTask,
 } from "../src/lib/smart-rules";
-import { describeUrl, itemLabel, pickItem, type LibraryItem } from "../src/lib/library-rules";
+import { describeUrl, groupAlbums, isNotThatOne, itemLabel, labelHit, labelMatch, pickItem, rankItems, type LibraryItem } from "../src/lib/library-rules";
 
 const at = (local: string) => new Date(`${local}:00+05:00`);
 const iso = (local: string) => at(local).toISOString();
@@ -157,5 +157,56 @@ describe("b) Library: found by what he calls it", () => {
     expect(itemLabel(items[0], now)).toBe("▶️ Ziyoda on Instagram · today");
     expect(describeUrl("https://www.instagram.com/reel/Df-WBn2haF6/?x=1")).toBe("Instagram reel");
     expect(describeUrl("https://youtu.be/w0H1-b044KY")).toBe("YouTube video");
+  });
+});
+
+describe("b) Library: his own label is the key (21 Nov 20:21)", () => {
+  const now = at("2026-11-21T20:21");
+  const items: LibraryItem[] = [
+    { source: "library", id: 1, kind: "link", url: "https://www.instagram.com/reel/Df6Ja3OR_PK/?jplx=x", title: "Sevara on Instagram", description: "i have to shoot this type of videos", task_id: 48, created_at: iso("2026-11-21T18:10") },
+    { source: "media", id: 62, kind: "video", title: "Video for when I need motivation", note: "Video for when I need motivation", description: null, created_at: iso("2026-11-21T18:11") },
+    { source: "media", id: 65, kind: "video", title: "ideas for my reels", note: "ideas for my reels", description: null, created_at: iso("2026-11-21T18:47") },
+    { source: "media", id: 71, kind: "video", title: null, note: null, description: null, task_id: 50, created_at: iso("2026-11-21T19:17") },
+  ];
+  it("'Send me one video Like ideas for my reels' is the file he filed under that label", () => {
+    expect(labelMatch(items, "Send me one video Like ideas for my reels").found?.id).toBe(65);
+    expect(labelMatch(items, "send me ideas for reels").found?.id).toBe(65);
+  });
+  it("the correction names the label too, and the item just sent is never it", () => {
+    expect(labelMatch(items, "No, I didn't mean this one. I meant the video which I sent it to you as the ideas for my reels.", ["library:1"]).found?.id).toBe(65);
+    expect(labelMatch(items, "send me ideas for my reels", ["media:65"]).found).toBeUndefined();
+  });
+  it("'the video' is no label (the brain picks); a label's one distinctive word is ('the motivation video'); a page title is never his label", () => {
+    expect(labelMatch(items, "send me the video")).toEqual({});
+    expect(labelMatch(items, "send me the motivation video").found?.id).toBe(62);
+    expect(rankItems(items, "send me the motivation video", now).map((item) => item.id)[0]).toBe(62);
+    expect(labelMatch(items, "send me Sevara on Instagram")).toEqual({});
+  });
+  it("two files under one label: both offered, never one picked", () => {
+    const twins: LibraryItem[] = [...items, { source: "media", id: 80, kind: "video", title: "ideas for my reels", note: "ideas for my reels", description: null, created_at: iso("2026-11-21T19:40") }];
+    const result = labelMatch(twins, "send me ideas for my reels");
+    expect(result.found).toBeUndefined();
+    expect(result.choices?.map((item) => item.id).sort()).toEqual([65, 80]);
+  });
+  it("candidates: his label first, then the rest by fit (newest first among equals); the item he rejected left out", () => {
+    expect(rankItems(items, "Send me one video Like ideas for my reels", now, ["library:1"]).map((item) => item.id)).toEqual([65, 71, 62]);
+    expect(labelHit(items[2], "Send me one video Like ideas for my reels")).toBe(true);
+    expect(labelHit(items[1], "Send me one video Like ideas for my reels")).toBe(false);
+  });
+  it("'No, I didn't mean this one', 'I meant the other', 'wrong one' are corrections; 'no problem' is not", () => {
+    for (const text of ["No, I didn't mean this one.", "I meant the other video", "wrong one", "not that one", "no, not this", "that's not it"]) expect(isNotThatOne(text)).toBe(true);
+    for (const text of ["no problem", "send me the one about hooks", "I mean it", "No, I didn't finish it"]) expect(isNotThatOne(text)).toBe(false);
+  });
+  it("the five photos of one forwarded post are one item; two files with their own labels stay apart", () => {
+    const album: LibraryItem[] = [66, 67, 68, 69, 70].map((id) => ({ source: "media", id, kind: "photo", title: id === 68 ? "You know why a lot of people don’t feel truly fulfilled…" : null, description: "Shows: an autumn scene", task_id: 49, created_at: iso("2026-11-21T18:52") }));
+    const grouped = groupAlbums([...items, ...album]);
+    expect(grouped.map((item) => item.id)).toEqual([1, 62, 65, 71, 66]);
+    expect(grouped[4].album).toBe(5);
+    expect(itemLabel(grouped[4], now)).toBe("📰 5 photos (one forwarded post) · today");
+    const pair: LibraryItem[] = [
+      { source: "media", id: 90, kind: "photo", title: "hook ideas", description: null, created_at: iso("2026-11-21T10:00") },
+      { source: "media", id: 91, kind: "photo", title: "caption ideas", description: null, created_at: iso("2026-11-21T10:00") },
+    ];
+    expect(groupAlbums(pair).map((item) => item.id)).toEqual([90, 91]);
   });
 });

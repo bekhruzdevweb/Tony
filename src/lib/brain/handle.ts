@@ -11,6 +11,8 @@ import { rulesView } from "../rules";
 import { suggestFreeTime } from "../free-time";
 import { asksForRules, saysFree } from "../smart-rules";
 import { requireDb } from "../db";
+import { asksForItem, findByLabel, itemRef, recentlySent } from "../library";
+import { isNotThatOne, itemLabel } from "../library-rules";
 
 export type Thought = Awaited<ReturnType<typeof think>>;
 
@@ -19,6 +21,8 @@ export type Handled =
   | { text: string; kind: "clean" }
   /** "Send me the video": the link itself, found in plain code. */
   | { text: string; kind: "link"; reply: string }
+  /** "Send me ideas for my reels": the item he filed under those very words, sent in plain code (21 Nov 20:21). */
+  | { text: string; kind: "send"; reply: string; refs: string[] }
   /** "Send me that photo": the originals, found in plain code; the bot sends them and confirms only what Telegram delivered. */
   | { text: string; kind: "media"; ids: number[] }
   /** "Undo that": the last changes, to undo with a tap. */
@@ -132,12 +136,35 @@ export async function handleMessage(
     // Links and files ("send me the video", "the reel", "that photo") are never picked here by matching
     // words: the brain picks by meaning from his library, with what he said about each, and code sends
     // exactly that one (21 Nov: word matching sent wrong links, and several files when he asked for one).
+    // The one exception is his own label: "send me ideas for my reels" is the file he filed under
+    // "ideas for my reels", sent at once (21 Nov 20:21: the model never saw it and guessed twice).
+    // "No, not this one": what was just sent is never sent again, and the brain is told so.
+    let rejected: string[] = [];
+    const said = ownWords(part);
+    if (!carriesMedia(part) && (asksForItem(said) || isNotThatOne(said))) {
+      rejected = isNotThatOne(said) ? await recentlySent(clock()).catch(() => [] as string[]) : [];
+      const byLabel = channel === "telegram" ? await findByLabel(said, rejected).catch(() => ({}) as Awaited<ReturnType<typeof findByLabel>>) : {};
+      if (byLabel.found) {
+        await logHis();
+        const reply = "Here it is, sir.";
+        await logMessage("tony", reply, channel).catch(() => undefined);
+        handled.push({ text: part, kind: "send", reply, refs: [itemRef(byLabel.found)] });
+        continue;
+      }
+      if (byLabel.choices) {
+        await logHis();
+        const question = "Which one, sir?";
+        await logMessage("tony", question, channel).catch(() => undefined);
+        handled.push({ text: part, kind: "choose", question, options: byLabel.choices.map((item) => ({ text: itemLabel(item, clock()).slice(0, 60), data: `lib:send:${itemRef(item)}` })) });
+        continue;
+      }
+    }
     const piece = parts.length > 1 ? { index, total: parts.length, full: text } : undefined;
     // The brain logs his message itself unless it already is in the history (and not again on a retry).
     const run = async () => {
       const already = logged;
       logged = true;
-      return think(part, { channel, context, now: clock(), part: piece, logged: already });
+      return think(part, { channel, context, now: clock(), part: piece, logged: already, rejected });
     };
     try {
       handled.push({ text: part, kind: "thought", thought: await run() });

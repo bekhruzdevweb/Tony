@@ -18,16 +18,107 @@ export type LibraryItem = {
   note?: string | null;
   task_id?: number | null;
   created_at: string;
+  /** The photos of one forwarded post, shown as one item: how many there are. */
+  album?: number;
 };
 
 const DAY_MS = 24 * 60 * 60_000;
 
 /** Words that say nothing about which item he means. */
 const STOP = new Set(
-  "send sent give show find that this those these which what where when there here with from about have please could would just again tony thing things item items link links video videos photo photos picture pictures image images post posts file files voice note notes message yesterday today tonight morning evening week last earlier before sent ago days attach attached task tasks open watch".split(" "),
+  "send sent give show find that this those these which what where when there here with from about have please could would just again tony thing things item items link links video videos photo photos picture pictures image images post posts file files voice note notes message yesterday today tonight morning evening week last earlier before sent ago days attach attached task tasks open watch the and for not one other ones you your our his her its all any can are was were but how why who did does has had get got want need some like into onto mean meant".split(
+    " ",
+  ),
 );
 
 const stems = (text: string) => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((word) => !STOP.has(word)).map((word) => word.slice(0, 5)));
+
+/** "library:3", "media:7": how an item is named on a button and to the brain. */
+export const refOf = (item: Pick<LibraryItem, "source" | "id">) => `${item.source}:${item.id}`;
+
+// ── His own label is the key (21 Nov 20:21) ─────────────────────────────
+// He filed a video under "ideas for my reels" and asked for "ideas for my
+// reels"; the model never saw it and guessed twice. A label he gave, found
+// whole in his words, settles it in code: no model, no guess.
+
+/** Words that carry no meaning in a label or in a request for one. */
+const FILLER = new Set([...STOP, "didn", "don"]);
+const labelWords = (text: string) => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((word) => !FILLER.has(word)).map((word) => word.slice(0, 5)));
+
+/** His own name for an item: the label he filed it under or his caption (a file), what he said with it (a link). A page's title is not his. */
+export function labelOf(item: LibraryItem): string | undefined {
+  if (item.source === "media") return item.title?.trim() || undefined;
+  const said = item.description?.trim();
+  return said && said !== describeUrl(item.url ?? "") && said !== item.title ? said : undefined;
+}
+
+/** Whether his words hold the item's whole label: two or more of its words, or its one distinctive word ("motivation"). */
+export function labelHit(item: LibraryItem, said: string): boolean {
+  const label = labelWords(labelOf(item) ?? "");
+  if (label.size === 0) return false;
+  const his = labelWords(said);
+  if (label.size === 1) return [...label].every((word) => word.length >= 5 && his.has(word));
+  return [...label].every((word) => his.has(word));
+}
+
+/** The item he filed under the words he uses now, or the few under one label (he is asked), or nothing. Never a voice note. */
+export function labelMatch(items: LibraryItem[], said: string, exclude: string[] = []): { found?: LibraryItem; choices?: LibraryItem[] } {
+  const hits = items
+    .filter((item) => !exclude.includes(refOf(item)) && item.kind !== "voice" && item.kind !== "audio" && labelHit(item, said))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (hits.length === 0) return {};
+  if (hits.length === 1) return { found: hits[0] };
+  return { choices: hits.slice(0, 3) };
+}
+
+/** "No, I didn't mean this one", "I meant the other video", "wrong one", "that's not it": what was just sent is not what he wanted. */
+export const isNotThatOne = (text: string) =>
+  /\b(no|nope|nah|not)\b[^.?!]{0,40}\b(this|that|the) one\b/i.test(text) ||
+  /\b(didn'?t|did not|don'?t|do not|never) mean\b/i.test(text) ||
+  /\bi meant\b/i.test(text) ||
+  /\bwrong (one|video|link|photo|picture|file|reel|post|item)\b/i.test(text) ||
+  /\b(that|this|it)('?s| is)? not (it|the one|right)\b/i.test(text) ||
+  /^\s*(no|nope|nah)[,.!]?\s+(not|that'?s not|this is not|it'?s not)\b/i.test(text);
+
+/** The few items that fit his words best, his own label counting most; what he rejected left out. For the brain to choose from, or for buttons. */
+export function rankItems(items: LibraryItem[], said: string, now: Date, exclude: string[] = [], count = 3): LibraryItem[] {
+  return items
+    .filter((item) => !exclude.includes(refOf(item)) && item.kind !== "voice" && item.kind !== "audio")
+    .map((item) => ({ item, score: scoreItem(item, said, now) + (labelHit(item, said) ? 4 : 0) }))
+    .filter((entry) => entry.score >= MATCH)
+    .sort((a, b) => b.score - a.score || b.item.created_at.localeCompare(a.item.created_at))
+    .slice(0, count)
+    .map((entry) => entry.item);
+}
+
+/**
+ * The photos (or videos) of one forwarded post, kept as separate files, are
+ * one item here: the first stands for all, with `album` saying how many.
+ * Files with labels of their own stay apart.
+ */
+export function groupAlbums(items: LibraryItem[]): LibraryItem[] {
+  const key = (item: LibraryItem) => (item.source === "media" && (item.kind === "photo" || item.kind === "video") ? `${item.task_id ?? "-"}|${item.created_at.slice(0, 16)}` : undefined);
+  const groups = new Map<string, LibraryItem[]>();
+  for (const item of items) {
+    const k = key(item);
+    if (k) groups.set(k, [...(groups.get(k) ?? []), item]);
+  }
+  const seen = new Set<string>();
+  const out: LibraryItem[] = [];
+  for (const item of items) {
+    const k = key(item);
+    const members = k ? groups.get(k) ?? [] : [];
+    const titles = new Set(members.map((member) => member.title?.trim()).filter(Boolean));
+    if (members.length < 2 || titles.size > 1) {
+      out.push(item);
+      continue;
+    }
+    if (seen.has(k!)) continue;
+    seen.add(k!);
+    out.push({ ...item, title: item.title ?? [...titles][0] ?? null, album: members.length });
+  }
+  return out;
+}
 
 /**
  * A caption a downloader bot stamps on what it hands out ("Спасибо, что
@@ -134,9 +225,11 @@ export function pickItem(items: LibraryItem[], query: string, now: Date): { foun
 
 /** An item in a few words, for a list or a button: "▶️ Instagram reel · Thu 20 Nov". */
 export function itemLabel(item: LibraryItem, now = new Date()): string {
-  const icon = item.kind === "link" ? (kindMatches(item, ["video"]) ? "▶️" : "🔗") : item.kind === "post" ? "📰" : item.kind === "photo" ? "🖼" : item.kind === "voice" || item.kind === "audio" ? "🎙" : item.kind === "video" || item.kind === "animation" || item.kind === "video_note" ? "🎞" : "📎";
+  const icon = item.album ? "📰" : item.kind === "link" ? (kindMatches(item, ["video"]) ? "▶️" : "🔗") : item.kind === "post" ? "📰" : item.kind === "photo" ? "🖼" : item.kind === "voice" || item.kind === "audio" ? "🎙" : item.kind === "video" || item.kind === "animation" || item.kind === "video_note" ? "🎞" : "📎";
   const site = siteOf(item.url);
-  const name = (item.title?.trim() || item.note?.trim() || item.description?.split("\n").pop()?.replace(/^Shows:\s*/, "").trim() || (site ? `${site} ${item.kind}` : `Saved ${item.kind}`)).replace(/\s+/g, " ");
+  const name = item.album
+    ? `${item.album} ${item.kind === "photo" ? "photos" : "files"} (one forwarded post)`
+    : (item.title?.trim() || item.note?.trim() || item.description?.split("\n").pop()?.replace(/^Shows:\s*/, "").trim() || (site ? `${site} ${item.kind}` : `Saved ${item.kind}`)).replace(/\s+/g, " ");
   const at = new Date(item.created_at);
   const when = localDate(at) === localDate(now) ? "today" : new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short", day: "numeric", month: "short" }).format(at).replace(",", "");
   return `${icon} ${name.length > 60 ? `${name.slice(0, 59)}…` : name} · ${when}`;

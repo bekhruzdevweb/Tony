@@ -23,7 +23,8 @@ import { asksToAttachLink, isGenericTitle, refersToLink, titleForLink } from "..
 import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
 import { listRules, rulesForPrompt, rulesView } from "../rules";
-import { libraryForPrompt } from "../library";
+import { asksForItem, itemRef, libraryCandidates, libraryForPrompt, loadItem } from "../library";
+import { itemLabel, type LibraryItem } from "../library-rules";
 import { carriesMedia } from "../link-rules";
 import { ruleHints } from "../smart-rules";
 
@@ -54,7 +55,7 @@ function recentNote(row: { pending_note: string | null; pending_note_at: string 
   return Date.now() - new Date(row.pending_note_at).getTime() > NOTE_MINUTES * 60_000 ? undefined : row.pending_note;
 }
 
-async function loadContext() {
+async function loadContext(input: { message?: string; rejected?: string[]; now?: Date } = {}) {
   const db = requireDb();
   const [memory, tasks, projects, settings, habits, routine] = await Promise.all([
     db.from("memory").select("id, fact").order("id"),
@@ -104,7 +105,7 @@ async function loadContext() {
     // His rules and the newest of his library (phase b), so "that video" and "I'm tired of it all" can be understood.
     ruleList,
     rules: await rulesForPrompt(ruleList).catch(() => undefined),
-    library: await libraryForPrompt().catch(() => undefined),
+    library: await libraryForPrompt(input.now ?? new Date(), { message: input.message, rejected: input.rejected }).catch(() => undefined),
   };
 }
 
@@ -132,6 +133,8 @@ export async function think(
     part?: { index: number; total: number; full: string };
     /** His message is already in the log (an earlier request from it, or a retry). */
     logged?: boolean;
+    /** Items he just said are not the one ("no, I didn't mean this one"): never sent again, left out of the list. */
+    rejected?: string[];
   } = {},
 ): Promise<{
   reply: string;
@@ -156,8 +159,10 @@ export async function think(
   sendItems?: string[];
   /** His rules were shown: their 🗑 buttons go under the reply. */
   showRules?: boolean;
+  /** He asked for a file or link and nothing went out: the closest few, one button each ("lib:send:…"). */
+  libraryChoices?: { text: string; data: string }[];
 }> {
-  const { channel = "telegram", now = new Date(), context: note, part } = options;
+  const { channel = "telegram", now = new Date(), context: note, part, rejected = [] } = options;
   const tools: string[] = [];
   // Titles of the tasks the tools touched, so the reply can show them in bold.
   const titles: string[] = [];
@@ -170,7 +175,7 @@ export async function think(
   // Web pages behind the answer, listed under it as links.
   const sources = new Map<string, string>();
   const fetched: { url: string; title: string }[] = [];
-  const [context, history] = await Promise.all([loadContext(), recentMessages(HISTORY)]);
+  const [context, history] = await Promise.all([loadContext({ message: text, rejected, now }), recentMessages(HISTORY)]);
   // His message is logged once, whole, even when it is handled request by request.
   if (!options.logged) await logMessage("user", part?.full ?? text, channel);
 
@@ -188,7 +193,12 @@ export async function think(
   // His rules his words may fit ("I'm tired, don't want to work out"): a hint; the brain decides.
   const hinted = ruleHints(text, context.ruleList);
   const ruleNote = hinted.length ? `His message may fit his rule${hinted.length > 1 ? "s" : ""} ${hinted.map((rule) => `#${rule.id} (when ${rule.situation.replace(/^when\s+/i, "")})`).join(", ")}: if it does, act on it with rule_fire.` : undefined;
-  const notes = [partNote, note, ruleNote, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
+  // "No, I didn't mean this one": what just went out is named, and never sent again (21 Nov 20:21).
+  const rejectedItems = rejected.length ? await Promise.all(rejected.map((ref) => loadItem(ref).catch(() => undefined))) : [];
+  const rejectedNote = rejected.length
+    ? `He says what you just sent (${rejected.map((ref, index) => `${ref}${rejectedItems[index] ? ` "${itemLabel(rejectedItems[index], now)}"` : ""}`).join(", ")}) is NOT the one. Never send it again: pick another from "Fits his words best" or the library list, or ask which with ask, naming them.`
+    : undefined;
+  const notes = [partNote, note, rejectedNote, ruleNote, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
   // A forwarded post or a page he only sent: material, never instructions. Any change it seems to ask for waits for his tap.
   const materialOnly = isMaterialOnly(text) || Boolean(note?.startsWith("He sent a link:"));
   const messages: ChatMessage[] = [
@@ -260,8 +270,14 @@ export async function think(
         const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
         const name = call.function.name;
         const writes = isWrite(name, args);
+        // What he just rejected is never sent again (21 Nov 20:21): the model picks another, or asks.
+        const refused = name === "library" && args.action === "send" ? [...(Array.isArray(args.items) ? args.items.map(String) : []), ...(typeof args.item === "string" ? [args.item] : [])].map((ref) => ref.trim()).filter((ref) => rejected.includes(ref)) : [];
         // Deleting or dropping always needs his tap; so does anything a forwarded post or a page seems to ask for (phase e).
-        const outcome = needsTap(name, args) || (materialOnly && writes) ? await proposeInstead(name, args, now, text, heard) : await runTool(name, args, now, text, heard, his);
+        const outcome: Awaited<ReturnType<typeof runTool>> = refused.length
+          ? { ok: false, error: `he said ${refused.join(", ")} is not the one: choose another from the list, or ask him which` }
+          : needsTap(name, args) || (materialOnly && writes)
+            ? await proposeInstead(name, args, now, text, heard)
+            : await runTool(name, args, now, text, heard, his);
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
@@ -349,6 +365,18 @@ export async function think(
     if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || showRules || prepared)) {
       if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
+    }
+  }
+
+  // He asked for a file or link (or said the one sent is not it), and nothing went out, nothing was asked,
+  // nothing changed: the closest few as buttons, never a second guess (21 Nov 20:21).
+  let libraryChoices: { text: string; data: string }[] | undefined;
+  const saidNow = ownWords(text);
+  if ((asksForItem(saidNow) || rejected.length > 0) && sendItems.length === 0 && !mediaIds?.length && !choices && !proposal && changes.size === 0 && planId === undefined) {
+    const candidates = await libraryCandidates(saidNow, now, rejected).catch(() => [] as LibraryItem[]);
+    if (candidates.length > 0) {
+      libraryChoices = candidates.map((item) => ({ text: itemLabel(item, now).slice(0, 60), data: `lib:send:${itemRef(item)}` }));
+      if (!(reply ? withoutSendClaims(withoutInternals(reply)) : "").trim()) reply = "Which one, sir?";
     }
   }
 
@@ -585,7 +613,7 @@ export async function think(
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules };
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */

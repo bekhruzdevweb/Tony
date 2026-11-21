@@ -1,10 +1,10 @@
 import "server-only";
 import { requireDb } from "./db";
 import { linksIn, mergeNotes } from "./brain/reliability";
-import { wordsAround } from "./link-rules";
+import { asksForLink, ownWords, wordsAround } from "./link-rules";
 import { OPEN_STATUSES } from "./tasks";
-import { describeUrl, isPromoCaption, itemLabel, libraryLine, pickItem, type LibraryItem } from "./library-rules";
-import { updateMedia } from "./media";
+import { describeUrl, groupAlbums, isPromoCaption, itemLabel, labelHit, labelMatch, labelOf, libraryLine, pickItem, rankItems, refOf, type LibraryItem } from "./library-rules";
+import { askedToSend, asksForMedia, updateMedia } from "./media";
 
 /**
  * The library (phase b, 21 Nov): every link and forwarded post he sends,
@@ -70,7 +70,51 @@ export async function findInLibrary(query: string, now = new Date()): Promise<{ 
 }
 
 /** "library:3", "media:7": how an item is named on a button and to the brain. */
-export const itemRef = (item: Pick<LibraryItem, "source" | "id">) => `${item.source}:${item.id}`;
+export const itemRef = refOf;
+
+/** He asks for something back: a photo, video, file or link, in any words with a send verb. */
+export const asksForItem = (said: string) => asksForMedia(said) || asksForLink(said) || (askedToSend(said) && /\b(it|that|this|the one|one|them)\b/i.test(said));
+
+/**
+ * What Tony last sent him ("sent_item" events, within the last minutes): what
+ * a "no, not this one" is about. "This one" is what answered his previous
+ * message (or a tap after it): everything noted since that message. What he
+ * got for an earlier request, and kept, is not rejected.
+ */
+export async function recentlySent(now = new Date(), minutes = 20): Promise<string[]> {
+  const db = requireDb();
+  const { data, error } = await db
+    .from("events")
+    .select("detail, created_at")
+    .eq("kind", "sent_item")
+    .gte("created_at", new Date(now.getTime() - minutes * 60_000).toISOString())
+    .order("id", { ascending: false })
+    .limit(6);
+  if (error) return [];
+  const rows = (data ?? []) as { detail: { ref?: unknown } | null; created_at: string }[];
+  if (rows.length === 0) return [];
+  const last = await db.from("messages").select("created_at").eq("role", "user").order("id", { ascending: false }).limit(1);
+  const lastAt = ((last.data ?? []) as { created_at: string }[])[0]?.created_at;
+  const latest = new Date(rows[0].created_at).getTime();
+  const floor = lastAt ? new Date(lastAt).getTime() - 2_000 : latest - 10_000;
+  const together = rows.filter((row) => new Date(row.created_at).getTime() >= floor);
+  return [...new Set(together.map((row) => String(row.detail?.ref ?? "")).filter(Boolean))];
+}
+
+/**
+ * The file or link he filed under the very words he uses now ("send me ideas
+ * for my reels"): sent by code, no model (21 Nov 20:21: the model never saw it
+ * and guessed twice). Two under one label: he is asked. What he just rejected
+ * is never it.
+ */
+export async function findByLabel(said: string, exclude: string[] = []): Promise<{ found?: LibraryItem; choices?: LibraryItem[] }> {
+  return labelMatch(groupAlbums(await libraryItems(300)), said, exclude);
+}
+
+/** The few items that fit his words best, for buttons when nothing was sent and nothing asked. */
+export async function libraryCandidates(said: string, now = new Date(), exclude: string[] = []): Promise<LibraryItem[]> {
+  return rankItems(groupAlbums(await libraryItems(300)), said, now, exclude);
+}
 
 export async function loadItem(ref: string): Promise<LibraryItem | undefined> {
   const [source, id] = ref.split(":");
@@ -133,16 +177,40 @@ async function adoptTaskLinks(): Promise<void> {
  * when he sent it and the task it belongs to, so "this video", "the reel I
  * have to shoot like" or "the masterclass" are picked by meaning, then sent
  * by code with library send (21 Nov: keyword matching mixed his links up).
+ *
+ * Every file he labelled in the last two weeks is listed (his label is how he
+ * asks for it), the photos of one forwarded post as one line, and when his
+ * message asks for an item, the few that fit his words best come first
+ * (21 Nov 20:21: the one he meant was cut off the list by an album, and the
+ * model guessed). What he just rejected ("no, not this one") is left out.
  */
-export async function libraryForPrompt(now = new Date(), links = 15, files = 6): Promise<string | undefined> {
+export async function libraryForPrompt(now = new Date(), options: { message?: string; rejected?: string[]; links?: number; files?: number } = {}): Promise<string | undefined> {
+  const { links = 15, files = 10, rejected = [] } = options;
   await adoptTaskLinks().catch((error) => console.warn("adoptTaskLinks:", error instanceof Error ? error.message : error));
-  const items = await libraryItems(60).catch(() => [] as LibraryItem[]);
-  const chosen = [...items.filter((item) => item.source === "library").slice(0, links), ...items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio").slice(0, files)].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  if (chosen.length === 0) return undefined;
-  const ids = [...new Set(chosen.map((item) => item.task_id).filter((id): id is number => typeof id === "number"))];
+  const items = groupAlbums(await libraryItems(150).catch(() => [] as LibraryItem[]));
+  const linkItems = items.filter((item) => item.source === "library").slice(0, links);
+  const fileItems = items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio");
+  const fortnight = now.getTime() - 14 * 24 * 60 * 60_000;
+  const named = fileItems.filter((item) => labelOf(item) && new Date(item.created_at).getTime() >= fortnight).slice(0, files);
+  const unnamed = fileItems.filter((item) => !named.includes(item)).slice(0, 3);
+  const newest = (a: LibraryItem, b: LibraryItem) => b.created_at.localeCompare(a.created_at);
+  const chosen = [...linkItems, ...named, ...unnamed].filter((item) => !rejected.includes(refOf(item))).sort(newest);
+  const said = options.message ? ownWords(options.message) : "";
+  const candidates = said && (asksForItem(said) || rejected.length > 0) ? rankItems(items, said, now, rejected) : [];
+  if (chosen.length === 0 && candidates.length === 0) return undefined;
+  const ids = [...new Set([...chosen, ...candidates].map((item) => item.task_id).filter((id): id is number => typeof id === "number"))];
   const tasks = ids.length ? (((await requireDb().from("tasks").select("id, title").in("id", ids)).data ?? []) as { id: number; title: string }[]) : [];
   const titles = new Map(tasks.map((task) => [task.id, task.title]));
-  return chosen.map((item) => libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined)).join("\n");
+  const line = (item: LibraryItem) => libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined);
+  const head = candidates.length
+    ? [
+        "Fits his words best (his own labels and what he said count most; pick by meaning, then library send):",
+        ...candidates.map((item) => `${line(item)}${labelHit(item, said) ? " · HIS LABEL is in his words" : ""}`),
+        "",
+        "All of it, newest first:",
+      ]
+    : [];
+  return [...head, ...chosen.map(line)].join("\n");
 }
 
 /**

@@ -28,6 +28,7 @@ import {
 } from "./chat-log";
 import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
+import { logEvent } from "./events";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
 import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media, sendTaskExample } from "./media";
@@ -990,6 +991,16 @@ export function getBot(): Bot | undefined {
         replies.push(item.reply);
         continue;
       }
+      if (item.kind === "send") {
+        // "Send me ideas for my reels": the item he filed under those words, at once, in plain code.
+        if (ctx.chat) {
+          const sent = await sendMarkdown(bot, ctx.chat.id, item.reply);
+          await track(sent, "confirmation", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+          for (const ref of item.refs) await sendLibraryItem(ctx.chat.id, ref);
+        }
+        replies.push(item.reply);
+        continue;
+      }
       if (item.kind === "media") {
         // "Send me that photo": the originals, at once; only what Telegram delivered is reported.
         replies.push(await sendOriginals(ctx, item.ids));
@@ -1043,7 +1054,10 @@ export function getBot(): Bot | undefined {
       const item = ctx.chat ? await loadMedia(id) : undefined;
       if (!item || !ctx.chat) continue;
       await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
-        () => sent.push(mediaLabel(item)),
+        () => {
+          sent.push(mediaLabel(item));
+          return logEvent("sent_item", { ref: `media:${id}`, label: mediaLabel(item) });
+        },
         (error) => console.error("Could not resend media:", error),
       );
     }
@@ -1077,18 +1091,27 @@ export function getBot(): Bot | undefined {
     const lines = changes.map((change, index) => `${index + 1}. ${formatTime(new Date(change.at))} · ${change.text}`);
     return { text: [...(lead ? [lead, ""] : []), "**Last changes**, newest first. Tap a number to undo it:", ...lines].join("\n"), keyboard };
   };
-  /** One library item sent back: the original file, or the link with its title (phase b). */
+  /**
+   * One library item sent back: the original file, or the link with its title (phase b).
+   * What went out is noted ("sent_item"), so "no, not this one" knows what it is about
+   * and that item is never sent again (21 Nov 20:21).
+   */
   const sendLibraryItem = async (chatId: number, ref: string) => {
     const item = await loadItem(ref).catch(() => undefined);
     if (!item) return;
     if (item.source === "media") {
       const media = await loadMedia(item.id);
-      if (media) await sendMedia(bot, chatId, media, emphasise(mediaLabel(media))).catch((error) => console.error("Could not send the item:", error));
+      if (media)
+        await sendMedia(bot, chatId, media, emphasise(mediaLabel(media))).then(
+          () => logEvent("sent_item", { ref, label: itemLabel(item) }),
+          (error) => console.error("Could not send the item:", error),
+        );
       return;
     }
     const text = `${itemLabel(item)}${item.url ? `\n${item.url}` : item.description ? `\n${item.description}` : ""}`;
     await sendMarkdown(bot, chatId, text);
     await logMessage("tony", text);
+    await logEvent("sent_item", { ref, label: itemLabel(item) });
   };
 
   const showUndo = async (chatId: number) => {
@@ -1132,9 +1155,12 @@ export function getBot(): Bot | undefined {
         for (const id of found) {
           const item = await loadMedia(id);
           if (!item) continue;
-          // Counted only once Telegram has confirmed the send.
+          // Counted only once Telegram has confirmed the send, and noted, so "no, not this one" knows what went out.
           await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
-            () => mediaSent++,
+            () => {
+              mediaSent++;
+              return logEvent("sent_item", { ref: `media:${id}`, label: mediaLabel(item) });
+            },
             (error) => console.error("Could not resend media:", error),
           );
         }
@@ -1186,6 +1212,8 @@ export function getBot(): Bot | undefined {
         const view = await rulesView();
         if (view.rows.length) keyboard = keyboardOf(view.rows);
       }
+      // He asked for a file or link and nothing went out: the closest few, one tap each (never a second guess, 21 Nov 20:21).
+      if (thought.libraryChoices?.length) keyboard = keyboardOf(thought.libraryChoices.map((option) => [option]));
       const sent = await sendMarkdown(bot, ctx.chat!.id, boldTimes(named), { keyboard });
       // Which message this reply became, so a 👎 on it finds its words (phase e).
       await markSent(reply, sent);

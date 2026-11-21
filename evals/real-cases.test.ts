@@ -986,3 +986,70 @@ describe("Phase 2 · a companion first: Tony's own words, one receipt line", () 
     expect(state.depths).toEqual(["deep", undefined]);
   });
 });
+
+// ── 21 Nov 20:21: the video he labelled "ideas for my reels" ─────────────
+const { libraryForPrompt } = await import("../src/lib/library");
+
+describe("21 Nov 20:21 · the video he labelled 'ideas for my reels'", () => {
+  const PROMO = "​​Спасибо, что пользуетесь - @SaveAsBot'ом";
+  const atSecond = (local: string) => new Date(`${local}+05:00`).toISOString();
+  /** His library as it stood at 20:21: the Sevara reel (18:10), the motivation video (18:11), the reels video (18:47), the Freya album (18:52), the 19:17 video. */
+  const seed = () => {
+    const shoot = task({ title: "Shoot videos like this reel", notes: "https://www.instagram.com/reel/Df6Ja3OR_PK/?jplx=dWZldTc4cTgzNzJp — the style of video I want to shoot." });
+    state.db.insert("library", { kind: "link", url: "https://www.instagram.com/reel/Df6Ja3OR_PK/?jplx=dWZldTc4cTgzNzJp", title: "Sevara on Instagram", description: "i have to shoot this type of videos", source: "sent", task_id: shoot.id, created_at: at("2026-11-21T18:10").toISOString() });
+    state.db.insert("library", { kind: "link", url: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi", title: "THE Instagram Masterclass: How To Grow in 2027 (Brock Johnson)", description: "Brock Johnson's Instagram masterclass, about 4 hours", source: "sent", created_at: at("2026-11-20T23:22").toISOString() });
+    const motivation = media({ kind: "video", caption: PROMO, note: "Video for when I need motivation", created_at: at("2026-11-21T18:11").toISOString() });
+    const reels = media({ kind: "video", caption: PROMO, note: "ideas for my reels", created_at: at("2026-11-21T18:47").toISOString() });
+    const posts = task({ title: "Write Telegram posts like Freya's Talking", free_time: true });
+    const album = [0, 1, 2, 3, 4].map((index) =>
+      media({ kind: "photo", caption: index === 2 ? "You know why a lot of people don’t feel truly fulfilled having achieved their goals?" : "", description: "Shows: an autumn scene", task_id: posts.id, created_at: at("2026-11-21T18:52").toISOString() }),
+    );
+    const watch = task({ title: "Watch saved video", due_at: "2026-11-22T12:00" });
+    const later = media({ kind: "video", caption: PROMO, task_id: watch.id, created_at: at("2026-11-21T19:17").toISOString() });
+    return { motivation, reels, album, later };
+  };
+
+  it("20:21 'Send me one video Like ideas for my reels': the file he filed under that label, sent by code; no model call, no guess", async () => {
+    const { reels } = seed();
+    const result = await run("Send me one video Like ideas for my reels", "2026-11-21T20:21", []);
+    expect(result.handled[0]).toMatchObject({ kind: "send", refs: [`media:${reels.id}`], reply: "Here it is, sir." });
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it("20:21:31 'No, I didn't mean this one. I meant the video which I sent it to you as the ideas for my reels.': the labelled file, never the reel just sent", async () => {
+    const { reels } = seed();
+    state.db.insert("events", { kind: "sent_item", detail: { ref: "library:1", label: "▶️ Sevara on Instagram · today" }, created_at: atSecond("2026-11-21T20:21:14") });
+    const result = await run("No, I didn't mean this one. I meant the video which I sent it to you as the ideas for my reels.", "2026-11-21T20:22", []);
+    expect(result.handled[0]).toMatchObject({ kind: "send", refs: [`media:${reels.id}`] });
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it("a correction with no label after the wrong reel: the brain is told, the reel is refused if chosen again, and he gets the closest few as buttons, the reel not among them", async () => {
+    const { reels, motivation, later } = seed();
+    state.db.insert("events", { kind: "sent_item", detail: { ref: "library:1", label: "▶️ Sevara on Instagram · today" }, created_at: atSecond("2026-11-21T20:21:14") });
+    const result = await run("No, not this one. The other video", "2026-11-21T20:22", [tools(["library", { action: "send", items: ["library:1"] }]), says("Which one do you mean, sir?")]);
+    const latest = state.calls[0].messages.at(-1)?.content;
+    expect(String(latest)).toContain("NOT the one");
+    const refusal = state.calls[1].messages.filter((message) => message.role === "tool").map((message) => String(message.content)).join("\n");
+    expect(refusal).toMatch(/not the one/);
+    const thought = result.handled[0].kind === "thought" ? result.handled[0].thought : undefined;
+    expect(thought?.sendItems).toEqual([]);
+    const buttons = thought?.libraryChoices?.map((option) => option.data) ?? [];
+    expect(buttons).toEqual(expect.arrayContaining([`lib:send:media:${reels.id}`, `lib:send:media:${motivation.id}`, `lib:send:media:${later.id}`]));
+    expect(buttons).not.toContain("lib:send:library:1");
+    expect(result.replies[0]).toBe("Which one do you mean, sir?");
+  });
+
+  it("the library list the brain sees: both labelled videos are there behind the 5-photo album and the newer video; the album is one line; his label leads 'Fits his words best'", async () => {
+    const { reels, motivation, album } = seed();
+    const text = (await libraryForPrompt(at("2026-11-21T20:21"), { message: "Send me one video Like ideas for my reels" })) ?? "";
+    expect(text).toContain(`media:${reels.id} 🎞 ideas for my reels`);
+    expect(text).toContain(`media:${motivation.id} 🎞 Video for when I need motivation`);
+    expect(text).toContain(`media:${album[0].id} 📰 5 photos`);
+    expect(text.split("\n").filter((line) => /^media:\d+ 🖼/.test(line))).toHaveLength(0);
+    const lines = text.split("\n");
+    expect(lines[0]).toMatch(/^Fits his words best/);
+    expect(lines[1]).toContain(`media:${reels.id} 🎞 ideas for my reels`);
+    expect(lines[1]).toMatch(/his label/i);
+  });
+});
