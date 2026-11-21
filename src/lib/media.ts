@@ -107,6 +107,9 @@ export const asksForVoiceBack = (text: string) => /\b(voice ?notes?|voice messag
 export const pointsAtMedia = (text: string) =>
   /\b(there (was|is|were)|where('?s| is| are| was)|remember|looking for|i need|the one)\b[^.?!]{0,30}\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|videos?)\b/i.test(text);
 
+/** Any request to hand something over ("okay share iit with me", "yes send"), whatever the object is called. */
+export const askedToSend = (text: string) => /\b(send|share|show|give|forward|resend|pass)\b/i.test(text);
+
 export const asksForMedia = (text: string) =>
   /\b(send|show|resend|forward|give|find|share)\b/i.test(text) && /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|videos?|posts?|ideas?|voice ?notes?|audio|it|them|that|this|these)\b/i.test(text);
 

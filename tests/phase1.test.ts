@@ -129,3 +129,12 @@ describe("pictures he points at", () => {
     expect(pointsAtMedia("remind me to call the barber at 2")).toBe(false);
   });
 });
+
+describe("a picture Tony found is sent when he asks in any words", () => {
+  it("'okay share iit with me' asks for it", async () => {
+    const { askedToSend, asksForMedia } = await import("../src/lib/media");
+    expect(asksForMedia("okay share iit with me")).toBe(false); // the strict check alone missed it
+    expect(askedToSend("okay share iit with me")).toBe(true);
+    expect(askedToSend("I posted it yesterday")).toBe(false);
+  });
+});

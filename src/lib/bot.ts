@@ -30,7 +30,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { asksForMedia, findMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { askedToSend, asksForMedia, findMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -1080,12 +1080,14 @@ export function getBot(): Bot | undefined {
       let reply = thought.reply;
       // Whatever he was asked before has now been answered or overtaken.
       await updateSettings({ pending_note: null, pending_note_at: null, ...(choices ? {} : { pending_choices: null }) }).catch(() => undefined);
-      // Originals go back only when he asked for them in so many words; never on the model's say-so alone.
-      // Originals he asked for come back: what the model found, or failing that, a search of his words.
+      // Originals go back when he asks for them in so many words ("send me the photo"), or when Tony
+      // found one and he points at it or asks for it in any words: "there was a picture of…",
+      // "okay share iit with me" (21 Nov: found, then "I couldn't find that one").
       let mediaSent = 0;
-      // Also when he points at one he sent before ("there was a picture of…") and the model found it.
-      if (ctx.chat && (asksForMedia(text) || (mediaIds?.length && pointsAtMedia(text)))) {
-        const ids = mediaIds?.length ? mediaIds : (await findMedia(text).catch(() => [])).map((item) => item.id);
+      const found = mediaIds?.length ? mediaIds : undefined;
+      const wanted = asksForMedia(text) || (found !== undefined && (pointsAtMedia(text) || askedToSend(text) || claimsSent(reply)));
+      if (ctx.chat && wanted) {
+        const ids = found ?? (await findMedia(text).catch(() => [])).map((item) => item.id);
         for (const id of ids) {
           const item = await loadMedia(id);
           if (!item) continue;
@@ -1098,7 +1100,7 @@ export function getBot(): Bot | undefined {
       }
       // "Here it is" is only said if something was really sent: otherwise those words go.
       if (mediaSent === 0 && claimsSent(reply) && !tools.includes("save_link")) {
-        reply = withoutSendClaims(reply) || "I couldn't find that one, sir.";
+        reply = withoutSendClaims(reply) || (found ? "I found it, sir, but it would not send. Ask me again in a moment." : "I couldn't find that one, sir.");
       }
       if (planId !== undefined && ctx.chat) {
         await showPlan(ctx.chat.id, planId);
