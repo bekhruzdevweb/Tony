@@ -446,6 +446,12 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
     case "update_task": {
       const task = await loadTask(args.id);
       if (!task) return fail(`no task #${args.id}`);
+      // A task he has finished (or dropped) is never reopened, moved or sent to the inbox unless his own words
+      // name it (21 Nov 20:25: "Put it inbox" about a NEW task reopened "Posting reel on Instagram", done at 20:15).
+      const reopens = args.status !== undefined || args.due_at !== undefined || args.clear_due === true || args.free_time !== undefined;
+      if (!OPEN_STATUSES.includes(task.status) && reopens && said !== undefined && !mentions(ownWords(said), task.title)) {
+        return fail(`#${task.id} "${task.title}" is already ${task.status}, and his message does not name it: leave it alone. His "it" means something in this message.`);
+      }
       // His time holds for the task his words are about ("move IELTS prep to 10:00"), not for another one moved alongside.
       const fields = await readFields(args, now, { said, heard, hold: said !== undefined && mentions(said, task.title) }, task.due_at);
       if ("error" in fields) return fail(fields.error);

@@ -166,7 +166,7 @@ export function recentReminderNote(sent: { task_id: number | null; title: string
     .filter((row) => row.task_id !== null && now.getTime() - new Date(row.sent_at).getTime() <= 15 * 60_000)
     .sort((a, b) => b.sent_at.localeCompare(a.sent_at))[0];
   if (!recent) return undefined;
-  return `You reminded him about task #${recent.task_id} "${recent.title}" at ${formatTime(new Date(recent.sent_at))}. If he says "this one", "it" or "that" with no other task named, he means that task.`;
+  return `You reminded him about task #${recent.task_id} "${recent.title}" at ${formatTime(new Date(recent.sent_at))}. If he says "this one", "it" or "that" and his message names no other task and asks for no new one, he means that task; when his message also asks for something new ("put it in the inbox, remind me to study…"), "it" is that new thing.`;
 }
 
 /** The newest message, marked so it is never mistaken for an earlier one. */

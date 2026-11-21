@@ -3,7 +3,7 @@ import { requireDb } from "./db";
 import { linksIn, mergeNotes } from "./brain/reliability";
 import { asksForLink, ownWords, wordsAround } from "./link-rules";
 import { OPEN_STATUSES } from "./tasks";
-import { describeUrl, groupAlbums, isPromoCaption, itemLabel, labelHit, labelMatch, labelOf, libraryLine, pickItem, rankItems, refOf, type LibraryItem } from "./library-rules";
+import { describeUrl, groupAlbums, isPromoCaption, itemLabel, labelHit, labelMatch, libraryLine, pickItem, rankItems, refOf, type LibraryItem } from "./library-rules";
 import { askedToSend, asksForMedia, updateMedia } from "./media";
 
 /**
@@ -185,13 +185,15 @@ async function adoptTaskLinks(): Promise<void> {
  * model guessed). What he just rejected ("no, not this one") is left out.
  */
 export async function libraryForPrompt(now = new Date(), options: { message?: string; rejected?: string[]; links?: number; files?: number } = {}): Promise<string | undefined> {
-  const { links = 15, files = 10, rejected = [] } = options;
+  const { links = 15, files = 30, rejected = [] } = options;
   await adoptTaskLinks().catch((error) => console.warn("adoptTaskLinks:", error instanceof Error ? error.message : error));
   const items = groupAlbums(await libraryItems(150).catch(() => [] as LibraryItem[]));
   const linkItems = items.filter((item) => item.source === "library").slice(0, links);
   const fileItems = items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio");
   const fortnight = now.getTime() - 14 * 24 * 60 * 60_000;
-  const named = fileItems.filter((item) => labelOf(item) && new Date(item.created_at).getTime() >= fortnight).slice(0, files);
+  // A file he named: the label he filed it under, or a short caption of his own (a forwarded post's long text is not a name).
+  const labelled = (item: LibraryItem) => Boolean(item.note?.trim()) || Boolean(item.title && item.title.length <= 60 && !item.album);
+  const named = fileItems.filter((item) => labelled(item) && new Date(item.created_at).getTime() >= fortnight).slice(0, files);
   const unnamed = fileItems.filter((item) => !named.includes(item)).slice(0, 3);
   const newest = (a: LibraryItem, b: LibraryItem) => b.created_at.localeCompare(a.created_at);
   const chosen = [...linkItems, ...named, ...unnamed].filter((item) => !rejected.includes(refOf(item))).sort(newest);
