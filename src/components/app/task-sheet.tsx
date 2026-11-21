@@ -99,7 +99,7 @@ export function TaskSheet(props: {
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={item.url} alt={item.note ?? item.caption ?? "Attached photo"} className="max-h-72 w-full object-contain" loading="lazy" />
                     )}
-                    {item.url && item.kind === "video" && <video src={item.url} controls preload="metadata" className="max-h-72 w-full" />}
+                    {item.url && (item.kind === "video" || item.kind === "video_note") && <video src={item.url} controls preload="metadata" className="max-h-72 w-full" />}
                     {item.url && (item.kind === "voice" || item.kind === "audio") && <audio src={item.url} controls className="w-full" />}
                     <p className="px-3.5 py-2.5 text-sub">
                       <span className="font-medium capitalize">{item.kind}</span>

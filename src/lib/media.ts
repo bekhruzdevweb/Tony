@@ -11,7 +11,7 @@ import { plain } from "./html";
  * copy in a private storage bucket (so the app can show it), what he wrote
  * with it, and what Tony made of it.
  */
-export type MediaKind = "photo" | "video" | "document" | "voice" | "audio" | "animation";
+export type MediaKind = "photo" | "video" | "document" | "voice" | "audio" | "animation" | "video_note";
 
 export type Media = {
   id: number;
@@ -206,6 +206,9 @@ export async function sendMedia(
         return bot.api.sendVideo(chatId, item.file_id, other, signal);
       case "animation":
         return bot.api.sendAnimation(chatId, item.file_id, other, signal);
+      case "video_note":
+        // A round video takes no caption: it goes as it was sent.
+        return bot.api.sendVideoNote(chatId, item.file_id, { reply_markup: options.keyboard, disable_notification: options.silent }, signal);
       case "voice":
         return bot.api.sendVoice(chatId, item.file_id, other, signal);
       case "audio":

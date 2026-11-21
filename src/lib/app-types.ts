@@ -41,7 +41,7 @@ export type AppPlan = {
 export type AppMedia = {
   id: number;
   task_id: number;
-  kind: "photo" | "video" | "document" | "voice" | "audio" | "animation";
+  kind: "photo" | "video" | "document" | "voice" | "audio" | "animation" | "video_note";
   url: string | null;
   caption: string | null;
   description: string | null;

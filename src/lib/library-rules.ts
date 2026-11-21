@@ -134,7 +134,7 @@ export function pickItem(items: LibraryItem[], query: string, now: Date): { foun
 
 /** An item in a few words, for a list or a button: "▶️ Instagram reel · Thu 20 Nov". */
 export function itemLabel(item: LibraryItem, now = new Date()): string {
-  const icon = item.kind === "link" ? (kindMatches(item, ["video"]) ? "▶️" : "🔗") : item.kind === "post" ? "📰" : item.kind === "photo" ? "🖼" : item.kind === "voice" || item.kind === "audio" ? "🎙" : item.kind === "video" || item.kind === "animation" ? "🎞" : "📎";
+  const icon = item.kind === "link" ? (kindMatches(item, ["video"]) ? "▶️" : "🔗") : item.kind === "post" ? "📰" : item.kind === "photo" ? "🖼" : item.kind === "voice" || item.kind === "audio" ? "🎙" : item.kind === "video" || item.kind === "animation" || item.kind === "video_note" ? "🎞" : "📎";
   const site = siteOf(item.url);
   const name = (item.title?.trim() || item.note?.trim() || item.description?.split("\n").pop()?.replace(/^Shows:\s*/, "").trim() || (site ? `${site} ${item.kind}` : `Saved ${item.kind}`)).replace(/\s+/g, " ");
   const at = new Date(item.created_at);

@@ -1254,7 +1254,9 @@ export function getBot(): Bot | undefined {
           ? { kind: "animation" as const, id: message.animation.file_id, unique: message.animation.file_unique_id, mime: message.animation.mime_type ?? "video/mp4", size: message.animation.file_size }
           : message.document
             ? { kind: "document" as const, id: message.document.file_id, unique: message.document.file_unique_id, mime: message.document.mime_type ?? "application/octet-stream", size: message.document.file_size }
-            : undefined;
+            : message.video_note
+              ? { kind: "video_note" as const, id: message.video_note.file_id, unique: message.video_note.file_unique_id, mime: "video/mp4", size: message.video_note.file_size }
+              : undefined;
 
     let imageText: string | undefined;
     let imageFailed = false;
@@ -1284,7 +1286,7 @@ export function getBot(): Bot | undefined {
     if (!words && !imageText && !file) return undefined;
 
     const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
-    const thing = file ? (file.kind === "photo" ? "photo" : file.kind === "animation" ? "GIF" : file.kind) : "post";
+    const thing = file ? (file.kind === "photo" ? "photo" : file.kind === "animation" ? "GIF" : file.kind === "video_note" ? "round video" : file.kind) : "post";
     const image = imageText ? `Text in the image: ${imageText}` : imageFailed ? "(Its image could not be read.)" : file && file.kind !== "photo" ? `(A ${thing}; you cannot see inside it.)` : undefined;
     // What Tony keeps as "the last thing he shared".
     const shared = [
@@ -1348,8 +1350,9 @@ export function getBot(): Bot | undefined {
         }
         continue;
       }
-      if (message.photo || message.video || message.document || message.animation || message.forward_origin || (!message.text && message.caption)) {
-        if (message.media_group_id && !(message.text ?? message.caption ?? "").trim() && !message.photo) continue;
+      if (message.photo || message.video || message.video_note || message.document || message.animation || message.forward_origin || (!message.text && message.caption)) {
+        // An album's photos and videos are all kept (a post he forwards is all of them); its extra files without words are not.
+        if (message.media_group_id && !(message.text ?? message.caption ?? "").trim() && !message.photo && !message.video) continue;
         const read = await readShare(message);
         if (read) {
           parts.push(read.asked);
@@ -1453,7 +1456,10 @@ export function getBot(): Bot | undefined {
   });
 
   // Photos, and any other media that carries a caption or was forwarded.
-  tasks.on(["message:photo", "message:video", "message:document", "message:animation", "message:caption"], (ctx) => shareItem(ctx));
+  tasks.on(["message:photo", "message:video", "message:video_note", "message:document", "message:animation", "message:caption"], (ctx) => shareItem(ctx));
+
+  // A sticker is a nod, not a request: a 👍 back, never "I cannot read that".
+  tasks.on("message:sticker", (ctx) => ctx.react("👍").catch(() => undefined));
 
   tasks.on("message", (ctx) => ctx.reply("Text, a voice note, a photo or a forwarded post, sir; I cannot read that kind of message yet."));
 
