@@ -31,7 +31,11 @@ const keyboardOf = (rows: Row[]) => {
   const keyboard = new InlineKeyboard();
   rows.forEach((row, index) => {
     if (index > 0) keyboard.row();
-    for (const button of row) keyboard.text(button.text, button.data);
+    // "url:<address>" is a link button (the reel a follow-up is about); a callback could not hold it.
+    for (const button of row) {
+      if (button.data.startsWith("url:")) keyboard.url(button.text, button.data.slice(4));
+      else keyboard.text(button.text, button.data);
+    }
   });
   return keyboard;
 };
