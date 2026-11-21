@@ -1,7 +1,8 @@
 import "server-only";
 import { requireDb } from "../db";
 import { higherLayer, readLayer, type MemoryLayer } from "../memory-rules";
-import { attachmentCounts, findMedia, updateMedia, mediaLabel } from "../media";
+import { attachmentCounts, findMedia, loadMedia, storedBytes, updateMedia, mediaLabel } from "../media";
+import { readDocument, readableDocument } from "../vision";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { getSettings } from "../settings";
@@ -708,6 +709,20 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       }
       if (action === "read") {
         if (!item) return fail("read needs an item from the Library list, e.g. \"media:7\"");
+        // A PDF or text file kept before Tony could read them (the IELTS plan, 22 Nov 01:59): read now, from its stored copy.
+        if (item.source === "media" && item.kind === "document" && !/^Summary:|\n/m.test(item.description ?? "")) {
+          const media = await loadMedia(item.id);
+          const name = item.description?.trim() || undefined;
+          if (media && readableDocument(media.mime ?? "", name)) {
+            const bytes = await storedBytes(media).catch(() => undefined);
+            const text = bytes ? await readDocument(bytes, media.mime ?? "", name).catch((error) => (console.error("Could not read the stored document:", error), undefined)) : undefined;
+            if (text) {
+              const description = [name, text].filter(Boolean).join("\n");
+              await updateMedia(media.id, { description });
+              item.description = description;
+            }
+          }
+        }
         const text = item.description?.trim();
         if (!text) return { ok: true, item: itemLabel(item, now), text: "", note: "Tony could not read anything in it" };
         return { ok: true, item: itemLabel(item, now), text: text.slice(0, 12_000), ...(text.length > 12_000 ? { note: "only the first part" } : {}) };

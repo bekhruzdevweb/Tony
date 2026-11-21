@@ -1176,4 +1176,10 @@ describe("22 Nov 01:49–01:59: 'post stories in this format', the preview, the 
     expect(JSON.stringify(state.calls[1].messages)).toContain("Week 1: True/False/Not Given");
     expect(result.replies[0]).toBe("Week 1 is True/False/Not Given, every day at 9:00, sir.");
   });
+
+  it("a PDF kept before Tony could read them, with no copy to read: library read says so, and nothing breaks", async () => {
+    const old = state.db.insert("media", { kind: "document", file_id: "OLD", mime: "application/pdf", caption: "can u see my ielts plan?", description: "", created_at: at("2026-11-22T01:59").toISOString() });
+    await run("what does my ielts plan say?", "2026-11-22T02:30", [tools(["library", { action: "read", item: `media:${old.id}` }]), says("I can't read that copy, sir: send the PDF again and I'll go through it.")]);
+    expect(JSON.stringify(state.calls[1].messages)).toContain("Tony could not read anything in it");
+  });
 });

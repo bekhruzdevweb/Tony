@@ -86,6 +86,14 @@ export async function updateMedia(id: number, patch: Partial<Pick<Media, "task_i
   if (error) throw new Error(`updateMedia: ${error.message}`);
 }
 
+/** The private copy of a file, when one was kept (files up to 20 MB). */
+export async function storedBytes(item: Pick<Media, "storage_path">): Promise<ArrayBuffer | undefined> {
+  if (!item.storage_path) return undefined;
+  const { data, error } = await requireDb().storage.from(MEDIA_BUCKET).download(item.storage_path);
+  if (error || !data) return undefined;
+  return data.arrayBuffer();
+}
+
 /** The first thing attached to a task, if anything is. */
 /** Every file kept with a task (a forwarded post's photos), in the order he sent them; voice notes are not examples. */
 export async function mediaListForTask(taskId: number): Promise<Media[]> {
