@@ -1,12 +1,13 @@
 import "server-only";
 import { requireDb } from "./db";
+import { getSettings } from "./settings";
 import { logEvent } from "./events";
 import { nearestFreeFor } from "./routine";
 import { budgetLeft, notify } from "./safety";
 import { openButton } from "./link-rules";
 import { missedToday, openLine, slippedDays, staleInbox, stillOpen, type OpenTask } from "./smart-rules";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, TIMEZONE } from "./time";
+import { addMinutes, dayBounds, hisDate, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
  * The follow-up ladder (phase d, 21 Nov): no task may silently disappear.
@@ -112,6 +113,13 @@ export async function sameDayFollowUp(now: Date): Promise<{ text: string; rows: 
   // 21 Nov: seven separate "still open" pings, one per task as each became two hours late. Now they are grouped.
   const last = await lastFollowUpToday(now);
   if (last && now.getTime() - last.getTime() < FOLLOW_UP_GAP_MS) return undefined;
+  // Within two hours of the evening review, it waits for the review, which lists everything still open.
+  const { brief_evening: evening } = await getSettings().catch(() => ({ brief_evening: null as string | null }));
+  if (evening) {
+    const [h, m] = String(evening).slice(0, 5).split(":").map(Number);
+    const review = parseLocalDateTime(`${hisDate(now, TIMEZONE)}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    if (review && review.getTime() - now.getTime() < 2 * HOUR && now.getTime() < review.getTime() + 3 * HOUR) return undefined;
+  }
   // A task he snoozed or that has another reminder still to come is handled: no "still open" for it.
   const skip = new Set([...(await followedUpToday(now)), ...(await waitingOnReminder(now))]);
   const tasks = missedToday(await openTasks(), now, skip);
