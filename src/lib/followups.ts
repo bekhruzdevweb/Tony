@@ -97,7 +97,21 @@ async function waitingOnReminder(now: Date): Promise<number[]> {
  * past its time and still open goes into one message, at most once each,
  * outside quiet hours (the caller checks) and within the budget.
  */
+/** At most one "still open" message every three hours: what slipped in between waits and comes together. */
+export const FOLLOW_UP_GAP_MS = 3 * HOUR;
+
+/** When today's last same-day follow-up went out (the brief's "Still open" does not count). */
+async function lastFollowUpToday(now: Date): Promise<Date | undefined> {
+  const { start } = dayBounds(now, TIMEZONE);
+  const { data } = await requireDb().from("events").select("created_at, detail").eq("kind", "followup").gte("created_at", start.toISOString()).order("created_at", { ascending: false }).limit(10);
+  const row = ((data ?? []) as { created_at: string; detail: { brief?: boolean } }[]).find((entry) => !entry.detail?.brief);
+  return row ? new Date(row.created_at) : undefined;
+}
+
 export async function sameDayFollowUp(now: Date): Promise<{ text: string; rows: Row[]; taskIds: number[] } | undefined> {
+  // 21 Nov: seven separate "still open" pings, one per task as each became two hours late. Now they are grouped.
+  const last = await lastFollowUpToday(now);
+  if (last && now.getTime() - last.getTime() < FOLLOW_UP_GAP_MS) return undefined;
   // A task he snoozed or that has another reminder still to come is handled: no "still open" for it.
   const skip = new Set([...(await followedUpToday(now)), ...(await waitingOnReminder(now))]);
   const tasks = missedToday(await openTasks(), now, skip);

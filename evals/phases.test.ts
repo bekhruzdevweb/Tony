@@ -277,6 +277,23 @@ describe("d) Follow-up ladder: no task silently disappears", () => {
     await noteFollowUp(followUp.taskIds, now);
     expect(await sameDayFollowUp(now)).toBeUndefined();
   });
+  it("21 Nov: seven separate 'still open' pings in a day; now at most one every three hours, the rest grouped", async () => {
+    task({ title: "Call the barber", due_at: "2026-11-21T08:30" });
+    task({ title: "IELTS prep", due_at: "2026-11-21T10:00" });
+    task({ title: "Post stories", due_at: "2026-11-21T12:00" });
+    const first = at("2026-11-21T10:30");
+    vi.setSystemTime(first);
+    const morning = (await sameDayFollowUp(first))!;
+    expect(morning.text).toMatch(/Call the barber/);
+    await noteFollowUp(morning.taskIds, first);
+    // IELTS is two hours late at 12:00, but the last ping was 90 minutes ago: it waits.
+    expect(await sameDayFollowUp(at("2026-11-21T12:00"))).toBeUndefined();
+    // Three hours on, everything missed since comes in one message.
+    const later = at("2026-11-21T14:05");
+    vi.setSystemTime(later);
+    const grouped = (await sameDayFollowUp(later))!;
+    expect(grouped.text).toMatch(/^⏰ 2 still open from today:\n1\. \*\*IELTS prep\*\* · was 10:00\n2\. \*\*Post stories\*\* · was 12:00/);
+  });
   it("next morning: '⚠️ Still open' first in the brief; after three days, firmer: steps, a fixed slot, or drop", async () => {
     task({ title: "Call the bank", due_at: "2026-11-20T10:00" });
     task({ title: "Message teacher about launching group", due_at: "2026-11-18T10:00" });
