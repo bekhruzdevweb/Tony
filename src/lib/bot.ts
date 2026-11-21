@@ -463,6 +463,11 @@ export function getBot(): Bot | undefined {
     // The evening review's own buttons ("ev:...").
     if (payload.startsWith("ev:")) {
       const [, action, id] = payload.split(":");
+      if (tapped && Date.now() - tapped.date * 1000 > 15 * 60 * 60_000) {
+        await ctx.answerCallbackQuery({ text: "That review was for an earlier evening, sir. Send /today for what is open now." }).catch(() => undefined);
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+        return;
+      }
       let evening: Awaited<ReturnType<typeof runEvening>> | undefined;
       try {
         evening = await runEvening(action, id === undefined ? undefined : Number(id));
@@ -499,7 +504,10 @@ export function getBot(): Bot | undefined {
           toast = "That plan is gone, sir.";
           return;
         }
-        if (action === "ap") {
+        if (action === "ap" && plan.day.slice(0, 10) < localDate(new Date())) {
+          toast = "That plan was for a day that has passed, sir. Send /plan for a new one.";
+          mode = "view";
+        } else if (action === "ap") {
           const done = await applyPlan(planId);
           plan = done.plan;
           mode = "view";
@@ -596,8 +604,16 @@ export function getBot(): Bot | undefined {
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
+        // An old question's slot never undoes a time he set since (he typed one, or tapped another question).
+        const current = (await requireDb().from("tasks").select("title, due_at, updated_at, status").eq("id", taskId).maybeSingle()).data as Pick<Task, "title" | "due_at" | "updated_at" | "status"> | null;
+        const chosen = new Date(Number(value) * 60_000);
+        if (current?.due_at && tapped && current.status !== "draft" && new Date(current.due_at).getTime() !== chosen.getTime() && new Date(current.updated_at).getTime() > tapped.date * 1000 + 60_000) {
+          const when = new Date(current.due_at);
+          await showOutcome(`**${current.title}** is already set for ${when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: TIMEZONE })}, **${formatTime(when)}**. Tell me if you want it changed.`);
+          return;
+        }
         // A slot he tapped is his choice: placed, and it teaches Tony when he likes this kind of task.
-        const result = await placeTask(taskId, new Date(Number(value) * 60_000), { learn: true });
+        const result = await placeTask(taskId, chosen, { learn: true });
         await showOutcome(result.text);
         return;
       }
@@ -841,6 +857,17 @@ export function getBot(): Bot | undefined {
 
     const parsed = parseAction(payload);
     if (!parsed) return ctx.answerCallbackQuery({ text: "I no longer recognise that button, sir." });
+    // A one-tap move on an older reminder never undoes a move he made since (as on the follow-ups).
+    if (["snooze", "tomorrow", "today", "weekend"].includes(parsed.action) && tapped) {
+      const current = (await requireDb().from("tasks").select("title, due_at, updated_at, status").eq("id", parsed.taskId).maybeSingle()).data as Pick<Task, "title" | "due_at" | "updated_at" | "status"> | null;
+      if (current && OPEN_STATUSES.includes(current.status) && current.due_at && new Date(current.due_at).getTime() > Date.now() && new Date(current.updated_at).getTime() > tapped.date * 1000 + 60_000) {
+        const when = new Date(current.due_at);
+        const text = `↪️ ${b(current.title)} is already moved to ${when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: TIMEZONE })}, ${formatTime(when)}.`;
+        await ctx.answerCallbackQuery({ text: plain(text).slice(0, 180) }).catch(() => undefined);
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+        return;
+      }
+    }
     let outcome;
     try {
       outcome = await runAction(parsed.action, parsed.taskId, parsed.arg);
