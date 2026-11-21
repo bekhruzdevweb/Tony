@@ -691,6 +691,14 @@ describe("Links", () => {
     expect(result.replies[0]).not.toMatch(/\?/);
   });
 
+  it("a forwarded event post says 20:00 but he says 'at 9': his time wins; with no time of his own, the post's time stands", async () => {
+    const post = "\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Barno Mukimova\"\n2 kun. 2 ta dars. 20-21-noyabr | 20:00!\n»»»";
+    await run(`remind me to join this tomorrow at 9am${post}`, "2026-11-21T12:00", [tools(["add_task", { title: "Join the free lessons", due_at: "2026-11-22T20:00" }]), says("Set, sir.")]);
+    expect(local(byTitle("Join the free lessons").due_at)).toBe("2026-11-22T09:00");
+    await run(`remind me about this tomorrow${post}`, "2026-11-21T12:05", [tools(["add_task", { title: "Free lessons by Barno", due_at: "2026-11-22T20:00" }]), says("Set, sir.")]);
+    expect(local(byTitle("Free lessons by Barno").due_at)).toBe("2026-11-22T20:00");
+  });
+
   it("21 Nov 18:52: a forwarded album with an elevator notice ('…пользования лифтом') in a photo: the task keeps the model's title, not words from the photo", async () => {
     const message =
       "I have to write posts like that on my Telegram channel. Remind me. some day\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nText in the image: The only text is a notice in the elevator: \"...пользования лифтом\" (a Russian line, mirrored)\nShows: A person takes a mirror selfie in an elevator.\n(Saved. It can be attached to a task or filed under a label.)\n»»»\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nDirection matters more than hard work. Sooner or later I will find out. Show up at 20:00.\n»»»";
@@ -748,12 +756,18 @@ const FIRST_LINK = "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi";
 const SECOND_LINK = "https://www.youtube.com/watch?v=Ch4Sl0POBhU (Caleb Ralston, How to Build a Personal Brand, 6h 22min)";
 
 describe("Phase 1 · sends: the original at once, never a claim without it", () => {
-  it("15:41 'can you send it to me with this image?': the website-feature screenshot goes out at once, no model call", async () => {
+  it("15:41 'can you send it to me with this image?': the brain sees the screenshot in his library and sends exactly that one (no keyword search of every file)", async () => {
     const website = task({ title: "Add this feature to website", status: "done", due_at: "2026-11-20T09:30" });
-    const photo = media({ kind: "photo", task_id: website.id, description: "Abdulla Jabborow\nKUNLIK ME'YOR 4 100 kuniga kkal\nShows: a nutrition app screen with daily targets", created_at: at("2026-11-20T02:58").toISOString() });
-    const result = await run("If you remember I sent you a one-post like add this feature to my website, can you send it to me with this image?", "2026-11-20T15:41", []);
-    expect(result.handled[0]).toMatchObject({ kind: "media", ids: [photo.id] });
-    expect(state.calls).toHaveLength(0);
+    const photo = media({ kind: "photo", task_id: website.id, caption: "add this feature to webstie", description: "Abdulla Jabborow\nKUNLIK ME'YOR 4 100 kuniga kkal\nShows: a nutrition app screen with daily targets", created_at: at("2026-11-20T02:58").toISOString() });
+    // Another saved photo that shares words ("website"): it must not go out too.
+    media({ kind: "photo", caption: "website colours I like", created_at: at("2026-11-20T03:10").toISOString() });
+    const result = await run("If you remember I sent you a one-post like add this feature to my website, can you send it to me with this image?", "2026-11-20T15:41", [
+      tools(["library", { action: "send", items: [`media:${photo.id}`] }]),
+      says("Here it is, sir."),
+    ]);
+    expect(state.calls[0].system).toContain(`media:${photo.id} 🖼 add this feature to webstie`);
+    const thought = result.handled[0].kind === "thought" ? result.handled[0].thought : undefined;
+    expect(thought?.sendItems).toEqual([`media:${photo.id}`]);
   });
 
   it("22:39 'where it is picture tho?' with nothing sent: 'Here it is, sir' is never said", async () => {

@@ -1,6 +1,6 @@
 import "server-only";
 import { requireDb } from "../db";
-import { attachmentCounts, findMedia, updateMedia } from "../media";
+import { attachmentCounts, findMedia, updateMedia, mediaLabel } from "../media";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { getSettings } from "../settings";
@@ -155,7 +155,7 @@ export const TOOLS: ToolDefinition[] = [
   ),
   tool(
     "media",
-    "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' sends back the ones matching the text.",
+    "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' lists saved files matching the text (to send one, use library send).",
     { action: { type: "string", enum: ["note", "find"] }, text: { type: "string" }, reply },
     ["action", "text"],
   ),
@@ -165,7 +165,7 @@ export const TOOLS: ToolDefinition[] = [
     "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes).",
     {
       action: { type: "string", enum: ["send", "find", "attach"] },
-      items: { type: "array", items: { type: "string" }, description: "send: the items, e.g. [\"library:3\"]; usually one" },
+      items: { type: "array", items: { type: "string" }, description: "send: exactly the item(s) he asked for, e.g. [\"library:3\"]: one, unless he asked for several" },
       text: { type: "string", description: "His words for the item" },
       item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
       task_id: { type: "integer", description: "attach: the task" },
@@ -307,16 +307,18 @@ async function readFields(
     if (!parsed) return { error: `could not read due_at "${args.due_at}"; use YYYY-MM-DDTHH:MM` };
     dueAt = toWholeMinute(parsed);
     // After midnight, "tomorrow" is the day after he sleeps: a date the model put a day later comes back.
-    if (said !== undefined) dueAt = nightTomorrow(dueAt, said, now) ?? dueAt;
-    if (said !== undefined) {
-      const his = givenTimes(said, now);
+    // Only the words he typed count as his; a forwarded post or a photo's text is material (21 Nov).
+    const typed = said !== undefined ? ownWords(said) : undefined;
+    if (typed !== undefined) dueAt = nightTomorrow(dueAt, typed, now) ?? dueAt;
+    if (typed !== undefined && said !== undefined) {
+      const his = givenTimes(typed, now);
       if (his.length === 1 && hold) {
         // The time he named is final: if the model picked another, his stands.
-        dueAt = heldToGivenTime(dueAt, said, now) ?? dueAt;
+        dueAt = heldToGivenTime(dueAt, typed, now) ?? dueAt;
       } else if (his.length === 0) {
         // He gave no time. The model's time stands only if it is the one he is answering
-        // ("Shall I set it for 20:00?" "Yes") or the task's own time on another day.
-        const answering = matchesTime(givenTimes(heard ?? "", now), dueAt);
+        // ("Shall I set it for 20:00?" "Yes"), the time in the post he forwarded with it ("20:00" on an event), or the task's own time on another day.
+        const answering = matchesTime(givenTimes(heard ?? "", now), dueAt) || matchesTime(givenTimes(said, now), dueAt);
         const sameTime = existingDue ? minuteOfDay(new Date(existingDue)) === minuteOfDay(dueAt) : false;
         if (!answering && !sameTime) {
           dayOnly = localDate(dueAt);
@@ -756,7 +758,8 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       }
       const found = await findMedia(text);
       if (found.length === 0) return fail(`nothing saved matches "${text}"`);
-      return { ok: true, media_ids: found.map((item) => item.id), count: found.length };
+      // A list to choose from, never sent as it is: send the one he means with library send.
+      return { ok: true, items: found.map((item) => `media:${item.id} ${mediaLabel(item)}`), note: "send the one he asked for with library send (usually one)" };
     }
 
     case "ask": {

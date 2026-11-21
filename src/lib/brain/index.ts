@@ -15,7 +15,7 @@ import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
-import { asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims } from "./reliability";
+import { asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims, ownWords } from "./reliability";
 import { buildPlan } from "../planner";
 import { decideFor, getRoutine, nearestFreeFor } from "../routine";
 import { partsOfDay, routineLines } from "../routine-rules";
@@ -390,7 +390,8 @@ export async function think(
     if (added.length === 1) {
       const row = ((await db.from("tasks").select().eq("id", added[0]).maybeSingle()).data ?? undefined) as Task | undefined;
       const own = linksIn(text)[0];
-      const earlier = own || !refersToLink(text) ? undefined : await recentLink(now, history, { lastOnly: true });
+      // "Watch this" in his own words; a forwarded post that says "watch" is not him pointing at a link.
+      const earlier = own || !refersToLink(ownWords(text)) ? undefined : await recentLink(now, history, { lastOnly: true });
       const url = own ?? earlier?.url;
       if (row && url) {
         const patch: Partial<Task> = {};
@@ -518,8 +519,8 @@ export async function think(
     const known = [text, confirmation, ...slotLines, context.prayers ?? "", ...context.tasks.map((task) => (task.due_at ? formatTime(new Date(task.due_at)) : ""))].join(" ");
     const words = keepWords(tidyReply([...spoken, reply ?? ""].filter(Boolean).join("\n\n"), [...taskIds]), { times: clockTimes(known) });
     // A question of his own does not stand next to Tony's question about the slot.
-    const ownWords = slotLines.length && slot && slot.kind !== "auto" ? words.replace(/[^.?!\n]*\?+/g, "").trim() : words;
-    reply = [ownWords, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
+    const tonyWords = slotLines.length && slot && slot.kind !== "auto" ? words.replace(/[^.?!\n]*\?+/g, "").trim() : words;
+    reply = [tonyWords, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
     clash = await findClash([...stored.values()].filter((task) => !decided.has(task.id)), now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;

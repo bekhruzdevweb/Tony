@@ -4,13 +4,12 @@ import { think } from "./index";
 import { splitIntents } from "./reliability";
 import { logEvent } from "../events";
 import { carriesMedia, ownWords } from "../link-rules";
-import { asksForMedia, findMedia } from "../media";
 import { logMessage, type Channel } from "../messages";
 import { setPendingSlot, waitingSlot } from "../settings";
 import { addStepsInCode, placeTypedTime } from "../slots";
 import { rulesView } from "../rules";
 import { suggestFreeTime } from "../free-time";
-import { asksForRules, isRuleRequest, saysFree } from "../smart-rules";
+import { asksForRules, saysFree } from "../smart-rules";
 import { requireDb } from "../db";
 
 export type Thought = Awaited<ReturnType<typeof think>>;
@@ -130,28 +129,9 @@ export async function handleMessage(
       handled.push({ text: part, kind: "undo" });
       continue;
     }
-    // His own words: the block Tony adds about what he forwarded or attached is not part of the request.
-    const own = ownWords(part);
-    // "When I'm not motivated…, send me this video" / "send me this video when I need motivation":
-    // a rule to keep (the brain saves it), never "send it now".
-    const conditional = isRuleRequest(own);
-    // A video, photo or file came with these words: "this video" is that one, so the brain handles it
-    // (21 Nov 18:11: "send me this video when i needed motivation" + a video got two old links).
-    const shortcut = !conditional && !carriesMedia(part);
-    // "Send me that photo": the original, at once. A video counts only if a saved video matches; otherwise it is a link.
-    const wantsFile = /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?)\b/i.test(own);
-    if (shortcut && asksForMedia(own) && (wantsFile || /\bvideos?\b/i.test(own))) {
-      const found = await findMedia(own, 3, clock()).catch((error) => (console.error("Media lookup failed:", error), []));
-      const usable = wantsFile ? found : found.filter((item) => item.kind === "video" || item.kind === "animation");
-      if (usable.length > 0) {
-        await logHis();
-        handled.push({ text: part, kind: "media", ids: usable.map((item) => item.id) });
-        continue;
-      }
-    }
-    // Links ("send me the video", "the reel", "this link") are no longer picked here by matching words:
-    // the brain picks by meaning from his library, with what he said about each, and code sends it
-    // (21 Nov: word matching sent the wrong links again and again).
+    // Links and files ("send me the video", "the reel", "that photo") are never picked here by matching
+    // words: the brain picks by meaning from his library, with what he said about each, and code sends
+    // exactly that one (21 Nov: word matching sent wrong links, and several files when he asked for one).
     const piece = parts.length > 1 ? { index, total: parts.length, full: text } : undefined;
     // The brain logs his message itself unless it already is in the history (and not again on a retry).
     const run = async () => {

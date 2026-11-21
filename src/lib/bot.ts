@@ -1378,7 +1378,7 @@ export function getBot(): Bot | undefined {
     // Every link he sends goes into his library, with its title (phase b).
     for (const url of linksIn(text)) await saveToLibrary({ kind: "link", url, title: await pageTitle(url).catch(() => describeUrl(url)), description: wordsAround(text), source: "sent" });
     // "Tell me what's left", "say it": he asked to hear it, so the summary is spoken too.
-    if (asksForVoice(text)) {
+    if (asksForVoice(ownWords(text))) {
       const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), "reply", { asked: true });
       if (voiceId !== undefined) await track(voiceId, "voice", { deleteAfter: hoursFromNow(VOICE_REPLY_HOURS) });
     }
@@ -1416,7 +1416,7 @@ export function getBot(): Bot | undefined {
     // cheerfully when a task was just ticked off, softly late in the evening.
     // Answered in text. Spoken only when he asks for it ("say it", "tell me") or with /voice on:
     // then the reply's prose, a short natural summary; the list or table stays in the chat.
-    const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), completed ? "completed" : "reply", { asked: asksForVoice(text) });
+    const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), completed ? "completed" : "reply", { asked: asksForVoice(ownWords(text)) });
     if (voiceId !== undefined && confirmed) await track(voiceId, "voice", { deleteAfter: hoursFromNow(VOICE_REPLY_HOURS) });
   });
 
