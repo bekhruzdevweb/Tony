@@ -1,3 +1,4 @@
+import { currentGoals, isAlive, normalNote } from "./memory-rules";
 import { LATE_LEAD, allClashes, clashSentence, planDay } from "./brain/checks";
 import { busyIntervals, dayWindow, estimateMinutes, isDeep, placeAll, type ToPlace } from "./schedule";
 import "server-only";
@@ -151,7 +152,7 @@ async function modelProposal(input: {
   const system = [
     "You schedule tasks for Behruzbek, an English teacher and content creator in Tashkent. Choose a day and start time for each task.",
     `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never within an hour of a fixed event or of another task; at most ${MAX_PER_DAY} new tasks a day.`,
-    "Follow his habits where one applies, and put urgent (P1, P2) and overdue tasks first. If a task does not fit, leave it out and say why.",
+    "Follow his habits where one applies. Put first, and earliest in the day, tasks that serve one of his goals (lines starting 'Goal'), then urgent (P1, P2) and overdue tasks. If a task does not fit, leave it out and say why.",
     "Each reason is short, plain, and addressed to him: 'you work out in the evenings', 'free hour after classes'.",
   ].join(" ");
   const user = [
@@ -253,14 +254,17 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   const [taskRows, memoryRows, projectRows] = await Promise.all([
     // Drafts (tasks he just gave, not yet confirmed) are included only when planning those.
     db.from("tasks").select().in("status", options.taskIds ? [...OPEN_STATUSES, "draft"] : OPEN_STATUSES).limit(500),
-    db.from("memory").select("fact").order("id"),
+    db.from("memory").select("id, fact, layer, goal, mentions, confirmed_at, created_at").order("id"),
     db.from("projects").select("id, name"),
   ]);
   const projectName = new Map(((projectRows.data ?? []) as { id: number; name: string }[]).map((project) => [project.id, project.name]));
   if (taskRows.error || memoryRows.error) throw new Error(`buildPlan: ${(taskRows.error ?? memoryRows.error)!.message}`);
   const tasks = taskRows.data as Task[];
   // What the planner knows of his days: his routine first, then what he has told Tony.
-  const memory = [...routineLines(routine).map((line) => `Routine: ${line}`), ...(memoryRows.data as { fact: string }[]).map((row) => row.fact)];
+  const notes = ((memoryRows.data ?? []) as Parameters<typeof normalNote>[0][]).map(normalNote).filter((note) => isAlive(note, now));
+  // His goals right now (this week, this month): what the plan serves first.
+  const goals = currentGoals(notes, now).map((note) => `Goal (${note.layer === "week" ? "this week" : "this month"}): ${note.fact}`);
+  const memory = [...routineLines(routine).map((line) => `Routine: ${line}`), ...goals, ...notes.filter((note) => !note.goal).map((note) => note.fact)];
 
   // Fixed: anything that already has a time still ahead in the days being planned.
   const horizonEnd = dayBounds(days[days.length - 1]).end.getTime();

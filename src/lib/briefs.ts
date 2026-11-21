@@ -1,3 +1,4 @@
+import { currentGoals } from "./memory-rules";
 import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { runAction } from "./actions";
@@ -140,7 +141,11 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const coach = await coachForBrief(now);
   // Two things at once today: flagged so they can be sorted before the day starts.
   const clashLines = allClashes(view.open).map(([a, c]) => `⚠️ ${esc(`Clash: ${clashSentence(a, c)}`)}`);
-  const html = ["Good morning, sir.", open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  // His focus right now (this week's and this month's goals), right under the greeting.
+  const goalRows = ((await requireDb().from("memory").select("id, fact, layer, goal, mentions, confirmed_at, created_at").eq("goal", true)).data ?? []) as Parameters<typeof currentGoals>[0];
+  const goals = currentGoals(goalRows, now).slice(0, 3);
+  const focus = goals.length ? `🎯 ${b("Focus")}: ${goals.map((goal) => esc(goal.fact)).join(" · ")}` : undefined;
+  const html = ["Good morning, sir.", focus, open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 
