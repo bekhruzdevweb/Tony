@@ -120,3 +120,12 @@ describe("10. Never mention tools, filters or internal errors (22:38)", () => {
     expect(withoutInternals("For your agent, keep the system prompt short and give it examples.")).toBe("For your agent, keep the system prompt short and give it examples.");
   });
 });
+
+describe("pictures he points at", () => {
+  it("'there was a picture of…' means one he sent before", async () => {
+    const { pointsAtMedia } = await import("../src/lib/media");
+    expect(pointsAtMedia("there was a picture of adding new features to website")).toBe(true);
+    expect(pointsAtMedia("where is the photo of my homework")).toBe(true);
+    expect(pointsAtMedia("remind me to call the barber at 2")).toBe(false);
+  });
+});

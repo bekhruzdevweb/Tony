@@ -351,7 +351,8 @@ const filterSentences = (reply: string, keep: (sentence: string) => boolean) =>
     .map((line) => {
       if (!line.trim()) return line;
       const marker = /^\s*(?:[-*•]|\d+\.)\s+(?:\[[ xX]\]\s+)?/.exec(line)?.[0] ?? "";
-      const sentences = line.slice(marker.length).split(/(?<=[.!?])\s+/);
+      // "2 p.m. has passed" is one sentence: no split after a.m., p.m., e.g., i.e., etc. (21 Nov: a lone "2 p.m." was left).
+      const sentences = line.slice(marker.length).split(/(?<=[.!?])(?<!\b(?:[ap]\.m|e\.g|i\.e|etc|vs|mr|mrs|dr)\.)\s+/i);
       const kept = sentences.filter((sentence) => sentence.trim() && keep(sentence));
       if (kept.length === sentences.length) return line;
       return kept.length ? `${marker}${kept.join(" ")}` : null;

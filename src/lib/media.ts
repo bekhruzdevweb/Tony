@@ -103,6 +103,10 @@ export const asksForVoiceBack = (text: string) => /\b(voice ?notes?|voice messag
  * He asked to see or get something back: a verb like send/show/forward
  * and a thing like photo/post/file/it. Only then are saved originals resent.
  */
+/** "There was a picture of the website features", "where is the photo of…": he means one he sent before. */
+export const pointsAtMedia = (text: string) =>
+  /\b(there (was|is|were)|where('?s| is| are| was)|remember|looking for|i need|the one)\b[^.?!]{0,30}\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|videos?)\b/i.test(text);
+
 export const asksForMedia = (text: string) =>
   /\b(send|show|resend|forward|give|find|share)\b/i.test(text) && /\b(photos?|pictures?|pics?|images?|screenshots?|files?|documents?|videos?|posts?|ideas?|voice ?notes?|audio|it|them|that|this|these)\b/i.test(text);
 

@@ -101,3 +101,10 @@ describe("His Uzbek and Russian words are the title (23:17: 'Zamokli ko'ynak oli
     expect(hisTitle("Update workout app", "for tomorrow adding a updates for my workout app is the main priority of today")).toBe("Update workout app");
   });
 });
+
+describe("21 Nov fixes", () => {
+  it("keeps 'p.m.' inside its sentence (a lone '2 p.m.' was left at the top of a reply)", () => {
+    expect(keepWords("2 p.m. has already passed today, so it is tomorrow. Good luck with the call!", { times: [] })).not.toMatch(/^2 p\.m\.$/m);
+    expect(keepWords("2 p.m. has already passed today, so it is tomorrow. Good luck with the call!", { times: [] })).toContain("Good luck with the call!");
+  });
+});

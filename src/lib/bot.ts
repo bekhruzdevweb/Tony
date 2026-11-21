@@ -30,7 +30,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { asksForMedia, findMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { asksForMedia, findMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -1083,7 +1083,8 @@ export function getBot(): Bot | undefined {
       // Originals go back only when he asked for them in so many words; never on the model's say-so alone.
       // Originals he asked for come back: what the model found, or failing that, a search of his words.
       let mediaSent = 0;
-      if (ctx.chat && asksForMedia(text)) {
+      // Also when he points at one he sent before ("there was a picture of…") and the model found it.
+      if (ctx.chat && (asksForMedia(text) || (mediaIds?.length && pointsAtMedia(text)))) {
         const ids = mediaIds?.length ? mediaIds : (await findMedia(text).catch(() => [])).map((item) => item.id);
         for (const id of ids) {
           const item = await loadMedia(id);
