@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
-import { mediaForTask, sendMedia, sendTaskExample } from "./media";
+import { mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { busyAround, getRoutine } from "./routine";
@@ -59,9 +59,15 @@ export async function settleReminders(taskId: number): Promise<void> {
 /** Replace whatever is pending for the task with a fresh reminder at `at`. */
 export async function scheduleReminder(taskId: number, at: Date): Promise<void> {
   await settleReminders(taskId);
-  const { error } = await requireDb()
-    .from("reminders")
-    .insert({ task_id: taskId, fire_at: toWholeMinute(at).toISOString(), kind: "due", attempt: 0 });
+  const fireAt = toWholeMinute(at).toISOString();
+  const { error } = await requireDb().from("reminders").insert({ task_id: taskId, fire_at: fireAt, kind: "due", attempt: 0 });
+  // Two writes at once made two reminders for one task (22 Nov: task 52, 0.1 s apart). One scheduled
+  // reminder per task (migration 0028): the second write moves it to its time instead.
+  if ((error as { code?: string } | null)?.code === "23505") {
+    const moved = await requireDb().from("reminders").update({ fire_at: fireAt, claimed_at: null }).eq("task_id", taskId).eq("kind", "due").eq("state", "scheduled");
+    fail("scheduleReminder", moved.error);
+    return;
+  }
   fail("scheduleReminder", error);
 }
 
@@ -157,6 +163,17 @@ export async function runTick(
   fail("runTick: due", due.error);
   let reminders = (due.data ?? []) as (Reminder & { task: Task | null })[];
   if (reminders.length === 0) return finish();
+  // The same task twice at once (two reminders written together): it goes out once, the copy is cancelled.
+  const seen = new Set<string>();
+  const copies: number[] = [];
+  reminders = reminders.filter((reminder) => {
+    if (reminder.kind !== "due" || reminder.task_id === null) return true;
+    const key = `${reminder.task_id}:${reminder.attempt}`;
+    if (seen.has(key)) return (copies.push(reminder.id), false);
+    seen.add(key);
+    return true;
+  });
+  if (copies.length) await db.from("reminders").update({ state: "cancelled" }).in("id", copies).eq("state", "scheduled");
 
   // After downtime (phase e): what came due while Tony was away goes out as ONE catch-up message, not a flood.
   const away = downtime(settings.last_tick_at, now);
@@ -217,6 +234,12 @@ export async function runTick(
         result.sent++;
         const ids = new Set(together.map((reminder) => reminder.id));
         reminders = reminders.filter((reminder) => !ids.has(reminder.id));
+        // What is kept with each of them comes with it, under its name (22 Nov: the stories format and the
+        // IELTS plan would have stayed behind when their reminders went out together at 13:00 and 20:15).
+        for (const reminder of together) {
+          const files = await mediaListForTask(reminder.task!.id).catch(() => []);
+          if (files.length) await sendTogether(bot, chatId, files, reminder.task!.title, { silent: true }).catch((error) => console.error("Could not send a task's files with the reminders:", error));
+        }
       }
     }
   }

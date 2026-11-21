@@ -226,7 +226,7 @@ export const mediaCaption = (item: Pick<Media, "note" | "caption">) => item.note
  * task they are kept with) and his own words; any other file after them. "Send it to me as a preview"
  * gets the photo and the video kept with the task, not one of them (22 Nov 01:53). Returns the ids sent.
  */
-export async function sendTogether(bot: Bot, chatId: number, files: Media[], title?: string): Promise<number[]> {
+export async function sendTogether(bot: Bot, chatId: number, files: Media[], title?: string, options: { silent?: boolean } = {}): Promise<number[]> {
   const sent: number[] = [];
   const caption = (items: Media[]) =>
     [title ? `<b>${esc(title)}</b>` : undefined, ...[...new Set(items.map(mediaCaption).filter(Boolean))].map(esc)].filter(Boolean).join("\n");
@@ -235,19 +235,20 @@ export async function sendTogether(bot: Bot, chatId: number, files: Media[], tit
   for (let at = 0; at < visual.length; at += 10) {
     const group = visual.slice(at, at + 10);
     if (group.length === 1) {
-      await sendMedia(bot, chatId, group[0], caption(group));
+      await sendMedia(bot, chatId, group[0], caption(group), options);
     } else {
       const words = at === 0 ? caption(group) : "";
       const fits = words.length <= CAPTION_LIMIT;
       await bot.api.sendMediaGroup(
         chatId,
         group.map((item, index) => ({ type: item.kind as "photo" | "video", media: item.file_id, ...(index === 0 && words ? (fits ? { caption: words, parse_mode: "HTML" as const } : { caption: plain(words).slice(0, CAPTION_LIMIT) }) : {}) })),
+        ...(options.silent ? [{ disable_notification: true }] : []),
       );
     }
     sent.push(...group.map((item) => item.id));
   }
   for (const item of rest) {
-    await sendMedia(bot, chatId, item, visual.length ? "" : caption([item]));
+    await sendMedia(bot, chatId, item, visual.length ? "" : caption([item]), options);
     sent.push(item.id);
   }
   return sent;

@@ -388,6 +388,35 @@ describe("e) Safety and monitoring", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/2 reminders together:\n1\. <b>10:00<\/b> <b>Call the bank<\/b>\n2\. <b>10:10<\/b> <b>Post stories<\/b>/);
   });
+  it("22 Nov 13:00: two reminders together still bring what is kept with each (the stories format: its photo and video)", async () => {
+    const stories = task({ title: "Post stories in this format", due_at: "2026-11-22T13:00" });
+    const chatbot = task({ title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00" });
+    state.db.insert("media", { kind: "photo", file_id: "SHOT", task_id: stories.id, created_at: at("2026-11-22T01:49").toISOString() });
+    state.db.insert("media", { kind: "video", file_id: "VID", caption: "this is how i should be uploading stories daily", task_id: stories.id, created_at: at("2026-11-22T01:53").toISOString() });
+    for (const row of [stories, chatbot]) state.db.insert("reminders", { task_id: row.id, fire_at: at("2026-11-22T13:00").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T12:59").toISOString();
+    const calls: [string, unknown[]][] = [];
+    const api = new Proxy({}, { get: (_target, name) => async (...args: unknown[]) => (calls.push([String(name), args]), { message_id: 980 + calls.length }) });
+    vi.setSystemTime(at("2026-11-22T13:00"));
+    await runTick({ api } as never, 42, new Date());
+    expect(calls.map(([name]) => name)).toEqual(["sendMessage", "sendMediaGroup"]);
+    expect(String(calls[0][1][1])).toContain("2 reminders together");
+    const album = calls[1][1][1] as { type: string; media: string; caption?: string }[];
+    expect(album.map((item) => item.media)).toEqual(["SHOT", "VID"]);
+    expect(album[0].caption).toBe("<b>Post stories in this format</b>\nthis is how i should be uploading stories daily");
+  });
+  it("one task with two reminders written at once (task 52, 17:45): it goes out once, the copy is cancelled", async () => {
+    const workout = task({ title: "Add my workout days to Tony", due_at: "2026-11-22T17:45" });
+    for (let n = 0; n < 2; n++) state.db.insert("reminders", { task_id: workout.id, fire_at: at("2026-11-22T17:45").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T17:44").toISOString();
+    const sent: string[] = [];
+    const bot = { api: new Proxy({}, { get: (_target, name) => async (_chat: number, text?: unknown) => (String(name).startsWith("send") && sent.push(String(text)), { message_id: 990 + sent.length }) }) };
+    vi.setSystemTime(at("2026-11-22T17:45"));
+    await runTick(bot as never, 42, new Date());
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).not.toContain("reminders together");
+    expect(state.db.rows("reminders").map((row) => row.state).sort()).toEqual(["cancelled", "sent"]);
+  });
   it("the daily backup keeps tasks, memory and the library; /backup gives the newest", async () => {
     task({ title: "Call the bank", due_at: "2026-11-21T10:00" });
     state.db.insert("memory", { fact: "I work out in the evenings", source: "user" });
