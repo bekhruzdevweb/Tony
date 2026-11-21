@@ -236,7 +236,7 @@ export async function think(
     if (!answer.tool_calls) {
       const content = answer.content ?? "";
       // Act first: a task with no time goes to the inbox; asking for a time he did not offer is not allowed.
-      if (!nudged && changes.size === 0 && isCapture(text) && asksForTime(content) && round < MAX_ROUNDS - 1) {
+      if (!nudged && changes.size === 0 && isCapture(ownWords(text)) && asksForTime(content) && round < MAX_ROUNDS - 1) {
         nudged = true;
         messages.push({ role: "assistant", content });
         messages.push({ role: "user", content: "[Do not ask for a time: he gave none, so save it now with add_task and no due_at; it goes to his inbox. Then stop.]" });
@@ -468,7 +468,8 @@ export async function think(
     // Tony picks the slot himself only for a kind he said "decide yourself" for. No day: the inbox, no time proposed.
     const named = new Map(dayOnly);
     const undated = [...changes].filter(([id, change]) => change.tool === "add_task" && stored.get(id) && !stored.get(id)!.due_at && !named.has(id)).map(([id]) => id);
-    const spokenDay = undated.length > 0 && planId === undefined ? (dayFromText(text, now) ?? (part ? dayFromText(part.full, now) : undefined)) : undefined;
+    // The day he named in his own words ("tomorrow"), never one inside a forwarded post.
+    const spokenDay = undated.length > 0 && planId === undefined ? (dayFromText(ownWords(text), now) ?? (part ? dayFromText(ownWords(part.full), now) : undefined)) : undefined;
     if (spokenDay) for (const id of undated) named.set(id, localDate(spokenDay));
     for (const [id] of named) if (!stored.get(id) || !OPEN_STATUSES.includes(stored.get(id)!.status)) named.delete(id);
     const decided = new Set<number>();
