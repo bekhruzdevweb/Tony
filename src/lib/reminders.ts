@@ -11,6 +11,7 @@ import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
 import { progress, subtasksFor } from "./subtasks";
 import { data, dueReminder, persistentReminder } from "./reminder-messages";
+import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { downtime, MERGE_MS, mergeable } from "./smart-rules";
@@ -340,6 +341,9 @@ export async function runTick(
         : chained
           ? persistentReminder(task, attempt, now, nextAt, isFree)
           : dueReminder(task);
+    // A task with a link (a reel to watch): the link itself as a button, so he never has to ask for it.
+    const open = prayer ? undefined : openButton(task.notes);
+    if (open) message.keyboard = (message.keyboard ?? new InlineKeyboard()).row().url(open.text, open.url);
     // A task with parts: "Post stories 1/3" and the parts still to do.
     if (!prayer) {
       const list = (await subtasksFor([task.id])).get(task.id) ?? [];

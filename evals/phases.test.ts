@@ -168,6 +168,16 @@ describe("b) Situation rules: 'when X, do Y'", () => {
     expect(result.replies[0]).toMatch(/📏 Rule saved: when I need motivation → send this video · 🎞 Video for when I need motivation/);
     expect(result.replies[0]).not.toMatch(/youtu|SaveAsBot/);
   });
+  it("21 Nov 18:47 'ideas for my reels' + a forwarded video: the receipt says where it went and how to get it back", async () => {
+    const clip = state.db.insert("media", { kind: "video", file_id: "IDEA", caption: "Спасибо, что пользуетесь - @SaveAsBot'ом", created_at: at("2026-11-21T18:47").toISOString() });
+    state.db.rows("settings")[0].last_shared_media_id = clip.id;
+    const result = await run("ideas for my reels\n\n[He forwarded this to you]\n«««\nA video forwarded from Save As Bot — скачать\n(A video; you cannot see inside it.)\n»»»", "2026-11-21T18:47", [
+      tools(["media", { action: "note", text: "ideas for my reels" }]),
+      says("Filed, sir."),
+    ]);
+    expect(state.db.rows("media").find((row) => row.id === clip.id)!.note).toBe("ideas for my reels");
+    expect(result.replies[0]).toMatch(/💾 Kept in your library as \*\*ideas for my reels\*\* · get it back with \/library/);
+  });
   it("'I'm tired, don't want to work out': the brain is pointed at the rule; rule_fire sends the video with Tony's words", async () => {
     const clip = video();
     const rule = state.db.insert("rules", { situation: "I'm not motivated to work out", action: "send me this video", media_id: clip.id, skip_kind: "workout", skip_days: 3 });

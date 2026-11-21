@@ -96,3 +96,13 @@ describe("the brain's list of his links", () => {
     expect(wordsAround("https://www.instagram.com/reel/Df6Ja3OR_PK/?jplx=1\n\ni have to shoot this type of videos")).toBe("i have to shoot this type of videos");
   });
 });
+
+describe("a task's link rides on its reminder", () => {
+  it("names the button by what the link is", async () => {
+    const { openButton } = await import("../src/lib/link-rules");
+    expect(openButton("https://www.instagram.com/reel/DfoBspQhNjO/?fqnt=MW9saDhkYjlwNDB1ag==")).toEqual({ text: "▶️ Watch the reel", url: "https://www.instagram.com/reel/DfoBspQhNjO/?fqnt=MW9saDhkYjlwNDB1ag==" });
+    expect(openButton("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi — THE Instagram Masterclass")?.text).toBe("▶️ Watch the video");
+    expect(openButton("https://behruznrl-nurullayevbehruzbek185-4463s-projects.vercel.app")?.text).toBe("🔗 Open the link");
+    expect(openButton("English File Elementary")).toBeUndefined();
+  });
+});

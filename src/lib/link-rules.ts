@@ -108,3 +108,11 @@ export function rankLinks(request: string, candidates: LinkCandidate[], recent: 
   }
   return [...unique.values()].sort((a, b) => b.points - a.points || b.at - a.at);
 }
+
+/** The link a task holds, as a button to open it: "▶️ Watch the reel", "▶️ Watch the video", "🔗 Open the link". */
+export function openButton(notes: string | null | undefined): { text: string; url: string } | undefined {
+  const url = /https?:\/\/[^\s<>"')\]]+/.exec(notes ?? "")?.[0];
+  if (!url) return undefined;
+  const text = /instagram\.com\/reel/i.test(url) ? "▶️ Watch the reel" : verbFor(url) === "Watch" ? "▶️ Watch the video" : "🔗 Open the link";
+  return { text, url };
+}

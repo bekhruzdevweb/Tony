@@ -133,7 +133,7 @@ export function freeTimeText(item: FreeItem, until: Date | undefined, now: Date)
 
 // ── d) Follow-up ladder ─────────────────────────────────────────────────
 
-export type OpenTask = { id: number; title: string; due_at: string | null; status: string; kind?: string | null; duration_minutes?: number | null; updated_at: string; free_time?: boolean | null };
+export type OpenTask = { id: number; title: string; due_at: string | null; status: string; kind?: string | null; duration_minutes?: number | null; updated_at: string; free_time?: boolean | null; notes?: string | null };
 
 /** Whole days a task has slipped, by the day he lives: due yesterday is 1. */
 export function slippedDays(task: Pick<OpenTask, "due_at">, now: Date): number {

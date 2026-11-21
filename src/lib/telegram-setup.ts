@@ -14,6 +14,7 @@ export const COMMANDS = [
   { command: "undo", description: "The last 10 changes to your tasks, to undo with a tap" },
   { command: "memory", description: "What I remember about you, to forget with a tap" },
   { command: "rules", description: "Your rules (\"when X, do Y\"), to remove with a tap" },
+  { command: "library", description: "Everything you saved: links, videos, photos" },
   { command: "freetime", description: "Your 🌙 Free Time list" },
   { command: "backup", description: "Today's backup of your tasks, memory and library" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },

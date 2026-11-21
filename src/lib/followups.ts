@@ -3,6 +3,7 @@ import { requireDb } from "./db";
 import { logEvent } from "./events";
 import { nearestFreeFor } from "./routine";
 import { budgetLeft, notify } from "./safety";
+import { openButton } from "./link-rules";
 import { missedToday, openLine, slippedDays, staleInbox, stillOpen, type OpenTask } from "./smart-rules";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, TIMEZONE } from "./time";
@@ -54,6 +55,9 @@ export function followUpMessage(tasks: OpenTask[], now: Date, lead: string): { t
     const rows: Row[] = firm
       ? [[{ text: "🧩 Steps", data: `fu:steps:${task.id}` }, { text: "📌 Fixed slot", data: `fu:slot:${task.id}` }, { text: "🗑 Drop", data: `fu:drop:${task.id}` }]]
       : [[{ text: "✓ Done", data: `fu:done:${task.id}` }, { text: "⏰ Later today", data: `fu:later:${task.id}` }], [{ text: "📅 Tomorrow", data: `fu:tom:${task.id}` }, { text: "🗑 Drop", data: `fu:drop:${task.id}` }]];
+    // A task with a link (a reel to watch): the link itself, one tap away (21 Nov: "send me now" got the wrong reel).
+    const open = openButton(task.notes);
+    if (open) rows.unshift([{ text: open.text, data: `url:${open.url}` }]);
     return { text, rows };
   }
   const shown = tasks.slice(0, 8);

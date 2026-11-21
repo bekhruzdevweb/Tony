@@ -207,6 +207,8 @@ export async function think(
   // What really changed, by task, in order: the reply is built from these, read back from the database.
   const changes = new Map<number, { tool: DoneAction["tool"]; reminder_at?: string; wrote?: Record<string, unknown> }>();
   const saved: string[] = [];
+  // Files he filed under a label this turn ("ideas for my reels").
+  const filed: string[] = [];
   // Memory notes written or removed this turn, each read back before it is confirmed.
   const remembered: { id: number; fact: string }[] = [];
   const forgotten: { id: number; fact: string }[] = [];
@@ -274,6 +276,7 @@ export async function think(
           }
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
+          if (call.function.name === "media" && typeof (outcome as { saved_as?: unknown }).saved_as === "string") filed.push(String((outcome as { saved_as?: unknown }).saved_as));
           if (name === "rule_fire" && typeof (outcome as { send_item?: unknown }).send_item === "string") sendItems.push(String((outcome as { send_item?: unknown }).send_item));
           const sending = (outcome as { send_items?: unknown }).send_items;
           if (name === "library" && Array.isArray(sending)) for (const ref of sending) if (!sendItems.includes(String(ref))) sendItems.push(String(ref));
@@ -538,6 +541,11 @@ export async function think(
     const kept = ((data ?? []) as { title: string | null }[]).map((row) => row.title ?? "");
     const lines = saved.map((title) => (kept.some((known) => known.includes(title) || title.includes(known)) ? `💾 Saved to your library: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
     reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time.`;
+  }
+  if (filed.length > 0) {
+    // Where it went and how to get it back, in one line (21 Nov: "how did it save it?").
+    const lines = filed.map((label) => `💾 Kept in your library as **${label}** · get it back with /library or "send me ${label}"`).join("\n");
+    reply = reply ? `${reply}\n${lines}` : lines;
   }
   if (remembered.length > 0 || forgotten.length > 0) {
     const ids = [...remembered, ...forgotten].map((note) => note.id);

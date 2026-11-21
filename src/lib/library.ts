@@ -3,7 +3,7 @@ import { requireDb } from "./db";
 import { linksIn, mergeNotes } from "./brain/reliability";
 import { wordsAround } from "./link-rules";
 import { OPEN_STATUSES } from "./tasks";
-import { describeUrl, isPromoCaption, libraryLine, pickItem, type LibraryItem } from "./library-rules";
+import { describeUrl, isPromoCaption, itemLabel, libraryLine, pickItem, type LibraryItem } from "./library-rules";
 import { updateMedia } from "./media";
 
 /**
@@ -143,4 +143,21 @@ export async function libraryForPrompt(now = new Date(), links = 15, files = 6):
   const tasks = ids.length ? (((await requireDb().from("tasks").select("id, title").in("id", ids)).data ?? []) as { id: number; title: string }[]) : [];
   const titles = new Map(tasks.map((task) => [task.id, task.title]));
   return chosen.map((item) => libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined)).join("\n");
+}
+
+/**
+ * /library: what he has saved, newest first, each under the label he gave it
+ * ("ideas for my reels"), with a numbered button that sends it back. Voice
+ * notes are left out (they are his messages, not saved things).
+ */
+export async function libraryView(now = new Date(), count = 20): Promise<{ text: string; rows: { text: string; data: string }[][] }> {
+  const items = (await libraryItems(80).catch(() => [] as LibraryItem[])).filter((item) => item.kind !== "voice" && item.kind !== "audio").slice(0, count);
+  if (items.length === 0) return { text: "Your library is empty, sir. Send me a link, a photo or a video and say what it is for.", rows: [] };
+  const lines = items.map((item, index) => `${index + 1}. ${itemLabel(item, now)}`);
+  const rows: { text: string; data: string }[][] = [];
+  items.forEach((item, index) => {
+    if (index % 5 === 0) rows.push([]);
+    rows[rows.length - 1].push({ text: `📤 ${index + 1}`, data: `lib:send:${item.source}:${item.id}` });
+  });
+  return { text: ["📚 **Your library**, newest first. Tap a number to get it back:", ...lines].join("\n"), rows };
 }

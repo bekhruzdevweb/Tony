@@ -19,7 +19,11 @@ export function keyboardOf(rows: Button[][]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   rows.forEach((row, index) => {
     if (index > 0) keyboard.row();
-    for (const button of row) keyboard.text(button.text, button.data);
+    // "url:<address>" is a link button (a reel to watch), every other button calls back.
+    for (const button of row) {
+      if (button.data.startsWith("url:")) keyboard.url(button.text, button.data.slice(4));
+      else keyboard.text(button.text, button.data);
+    }
   });
   return keyboard;
 }

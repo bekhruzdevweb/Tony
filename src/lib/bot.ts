@@ -5,7 +5,7 @@ import { askForSlot, keyboardOf, runAction } from "./actions";
 import { answerFreeTime, freeTimeList } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
-import { loadItem, saveToLibrary } from "./library";
+import { libraryView, loadItem, saveToLibrary } from "./library";
 import { markSent, saveMistake } from "./mistakes";
 import { deleteRule, rulesView } from "./rules";
 import { latestBackup } from "./safety";
@@ -292,6 +292,12 @@ export function getBot(): Bot | undefined {
   // "Show my rules": each with 🗑 (phase b).
   tasks.command("rules", async (ctx) => {
     const view = await rulesView();
+    await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
+  });
+
+  // His library: everything he saved, each sent back with a tap.
+  tasks.command("library", async (ctx) => {
+    const view = await libraryView();
     await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
   });
 
@@ -788,7 +794,9 @@ export function getBot(): Bot | undefined {
     if (payload.startsWith("lib:send:")) {
       const [, , source, id] = payload.split(":");
       await ctx.answerCallbackQuery().catch(() => undefined);
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      // On the /library list the buttons stay (he may want another); on a "which one?" question they go.
+      const isList = Boolean(tapped && "text" in tapped && tapped.text?.startsWith("📚"));
+      if (!isList) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
       if (chatId !== undefined) await sendLibraryItem(chatId, `${source}:${id}`);
       return;
     }
