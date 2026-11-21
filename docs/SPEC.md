@@ -176,7 +176,7 @@ Six tables hold everything; seven tools are all Tony can do.
 
 | Table | Key columns |
 |---|---|
-| tasks | id, title, notes, project_id, priority, status (inbox, todo, in_progress, done, skipped, dropped), due_at, repeat_rule, persistent (bool), created_at, updated_at, completed_at |
+| tasks | id, title, notes, project_id, priority, status (inbox, todo, in_progress, done, skipped, dropped), due_at, repeat_rule, repeat_until (last date a repeat comes round), persistent (bool), created_at, updated_at, completed_at |
 | reminders | id, task_id, fire_at, kind (due, nudge, stale, brief), attempt, state (scheduled, sent, acknowledged, cancelled), telegram_message_id |
 | projects | id, name, color, order |
 | memory | id, fact, source (user), layer (week, month, always), goal (bool), mentions, confirmed_at, created_at |
