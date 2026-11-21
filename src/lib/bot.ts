@@ -10,7 +10,7 @@ import { markSent, saveMistake } from "./mistakes";
 import { deleteRule, rulesView } from "./rules";
 import { latestBackup } from "./safety";
 import { describeUrl } from "./library-rules";
-import { linksIn } from "./brain/reliability";
+import { linksIn, ownWords } from "./brain/reliability";
 import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
@@ -30,7 +30,7 @@ import { requireDb } from "./db";
 import { refuseRepeats } from "./dedupe";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { askedToSend, asksForMedia, findMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
+import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -1092,12 +1092,15 @@ export function getBot(): Bot | undefined {
       // Originals go back when he asks for them in so many words ("send me the photo"), or when Tony
       // found one and he points at it or asks for it in any words: "there was a picture of…",
       // "okay share iit with me" (21 Nov: found, then "I couldn't find that one").
+      // Judged on his own words only: a forwarded post's text ("I will find out…") never asks for anything
+      // (21 Nov 18:52: a forwarded post made Tony send back five old photos and videos).
       let mediaSent = 0;
+      const said = ownWords(text);
       const found = mediaIds?.length ? mediaIds : undefined;
-      const wanted = asksForMedia(text) || (found !== undefined && (pointsAtMedia(text) || askedToSend(text) || claimsSent(reply)));
+      const wanted = found !== undefined && (asksForMedia(said) || pointsAtMedia(said) || askedToSend(said) || claimsSent(reply));
       if (ctx.chat && wanted) {
-        const ids = found ?? (await findMedia(text).catch(() => [])).map((item) => item.id);
-        for (const id of ids) {
+        // Only what Tony found for this request: never a search of every saved file by matching words.
+        for (const id of found) {
           const item = await loadMedia(id);
           if (!item) continue;
           // Counted only once Telegram has confirmed the send.

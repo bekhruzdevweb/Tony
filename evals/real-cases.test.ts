@@ -691,6 +691,20 @@ describe("Links", () => {
     expect(result.replies[0]).not.toMatch(/\?/);
   });
 
+  it("21 Nov 18:52: a forwarded album with an elevator notice ('…пользования лифтом') in a photo: the task keeps the model's title, not words from the photo", async () => {
+    const message =
+      "I have to write posts like that on my Telegram channel. Remind me. some day\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nText in the image: The only text is a notice in the elevator: \"...пользования лифтом\" (a Russian line, mirrored)\nShows: A person takes a mirror selfie in an elevator.\n(Saved. It can be attached to a task or filed under a label.)\n»»»\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nDirection matters more than hard work. Sooner or later I will find out. Show up at 20:00.\n»»»";
+    await run(message, "2026-11-21T18:52", [
+      tools(["add_task", { title: "Write Telegram posts like Freya's Talking", free_time: true, notes: "Short reflective posts on intentions, each with a calm photo." }]),
+      says("Good format to copy, sir."),
+    ]);
+    const made = tasks()[0];
+    expect(made.title).toBe("Write Telegram posts like Freya's Talking");
+    // "Some day": the Free Time list; the 20:00 inside the forwarded post is not his time.
+    expect(made.free_time).toBe(true);
+    expect(made.due_at).toBeNull();
+  });
+
   it("23:25 'send me the video to just to check': the brain picks it from his library by meaning; code sends the exact link (21 Nov: word matching mixed links up)", async () => {
     task({ title: "Watch: Instagram Masterclass (Brock Johnson)", due_at: "2026-11-23T10:00", notes: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi" });
     // The link only lived in the task's notes: it joins the library (library:1), named by its task, and the brain sees it.

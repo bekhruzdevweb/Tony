@@ -391,11 +391,13 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if ("error" in fields) return fail(fields.error);
       if (!fields.patch.title) return fail("title is required");
       // His Uzbek or Russian words are the title, never a translation of them (23:17: "Zamokli ko'ynak olish").
-      if (said !== undefined) fields.patch.title = hisTitle(fields.patch.title, said);
+      // Only words he typed: a forwarded post or a photo's description is not his (21 Nov 18:52: an elevator
+      // notice in a forwarded photo, "...пользования лифтом", became the title).
+      if (said !== undefined) fields.patch.title = hisTitle(fields.patch.title, ownWords(said));
       // Notes that only repeat the title (his words, once translated by the model) say nothing.
       if (fields.patch.notes && fields.patch.notes.trim().toLowerCase() === fields.patch.title.trim().toLowerCase()) delete fields.patch.notes;
       // A saved link or note gets no date unless his own words gave one: it goes to the inbox.
-      if (fields.dueAt && said !== undefined && isLinkTask(fields.patch.title, fields.patch.notes) && !givesTime(said)) {
+      if (fields.dueAt && said !== undefined && isLinkTask(fields.patch.title, fields.patch.notes) && !givesTime(ownWords(said))) {
         fields.dueAt = undefined;
         delete fields.patch.due_at;
       }
@@ -421,7 +423,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const task = data as Task;
       if (fields.dueAt) await scheduleReminder(task.id, fields.dueAt);
       // A time of his own for this kind of task: Tony learns where it belongs.
-      if (fields.dueAt && said !== undefined && givenTimes(said, now).length > 0) await recordSample(task, fields.dueAt);
+      if (fields.dueAt && said !== undefined && givenTimes(ownWords(said), now).length > 0) await recordSample(task, fields.dueAt);
       // Its parts, as subtasks (never as a list in the notes).
       const parts = Array.isArray(args.subtasks) ? args.subtasks.map(String).filter((t) => t.trim()) : [];
       if (parts.length) await addSubtasks(task.id, parts);

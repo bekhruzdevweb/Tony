@@ -138,3 +138,16 @@ describe("a picture Tony found is sent when he asks in any words", () => {
     expect(askedToSend("I posted it yesterday")).toBe(false);
   });
 });
+
+describe("21 Nov 18:52: a forwarded post never asks for files", () => {
+  it("only his own words are read", async () => {
+    const { asksForMedia, askedToSend, pointsAtMedia } = await import("../src/lib/media");
+    const { ownWords } = await import("../src/lib/brain/reliability");
+    const message = "I have to write posts like that on my Telegram channel. Remind me. some day\n\n[He forwarded this to you]\n«««\nA photo forwarded from the channel \"Freya’s Talking\"\nSooner or later I will find out. Show this to everyone.\n»»»";
+    // The whole message, post included, looked like "find … this" and sent back five old files.
+    expect(asksForMedia(message)).toBe(true);
+    const said = ownWords(message);
+    expect(said).toBe("I have to write posts like that on my Telegram channel. Remind me. some day");
+    expect(asksForMedia(said) || askedToSend(said) || pointsAtMedia(said)).toBe(false);
+  });
+});
