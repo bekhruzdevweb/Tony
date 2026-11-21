@@ -58,7 +58,7 @@ function recentNote(row: { pending_note: string | null; pending_note_at: string 
 async function loadContext(input: { message?: string; rejected?: string[]; now?: Date } = {}) {
   const db = requireDb();
   const [memory, tasks, projects, settings, habits, routine] = await Promise.all([
-    db.from("memory").select("id, fact").order("id"),
+    db.from("memory").select("id, fact, layer, goal, mentions, confirmed_at, created_at").order("id"),
     db.from("tasks").select().in("status", OPEN_STATUSES).order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(60),
     db.from("projects").select("id, name").order("sort_order"),
     db.from("settings").select("last_shared_text, last_shared_at, pending_note, pending_note_at").limit(1).maybeSingle(),
@@ -221,7 +221,7 @@ export async function think(
   // Files he filed under a label this turn ("ideas for my reels").
   const filed: string[] = [];
   // Memory notes written or removed this turn, each read back before it is confirmed.
-  const remembered: { id: number; fact: string }[] = [];
+  const remembered: { id: number; fact: string; layer: string }[] = [];
   const forgotten: { id: number; fact: string }[] = [];
   // Asked once to save instead of asking for a time he never offered.
   let nudged = false;
@@ -303,7 +303,7 @@ export async function think(
             if ((outcome as { rule_deleted?: unknown }).rule_deleted) ruleLines.push("🗑 Rule removed.");
             if ((outcome as { show_rules?: unknown }).show_rules) showRules = true;
           }
-          if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) remembered.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { fact?: unknown }).fact ?? "") });
+          if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) remembered.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { fact?: unknown }).fact ?? ""), layer: String((outcome as { layer?: unknown }).layer ?? "always") });
           if (call.function.name === "forget" && Number.isFinite(Number((outcome as { id?: unknown }).id))) forgotten.push({ id: Number((outcome as { id?: unknown }).id), fact: String((outcome as { forgot?: unknown }).forgot ?? "") });
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
           const dayAsked = (outcome as { day_only?: unknown }).day_only;
@@ -592,7 +592,7 @@ export async function think(
     const { data } = await requireDb().from("memory").select("id").in("id", ids);
     const present = new Set(((data ?? []) as { id: number }[]).map((row) => Number(row.id)));
     const lines = [
-      ...remembered.map((note) => (present.has(note.id) ? `📝 Remembered: ${note.fact}` : `⚠️ I could not keep that note, sir.`)),
+      ...remembered.map((note) => (present.has(note.id) ? `📝 ${note.layer === "week" ? "This week" : note.layer === "month" ? "This month" : "Remembered"}: ${note.fact}` : `⚠️ I could not keep that note, sir.`)),
       ...forgotten.map((note) => (present.has(note.id) ? `⚠️ I could not forget that note, sir.` : `🗑 Forgotten: ${note.fact}`)),
     ].join("\n");
     reply = reply ? `${withoutClaims(reply) || ""}\n${lines}`.trim() : lines;

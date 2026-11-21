@@ -1,5 +1,6 @@
 import "server-only";
 import { requireDb } from "../db";
+import { higherLayer, readLayer, type MemoryLayer } from "../memory-rules";
 import { attachmentCounts, findMedia, updateMedia, mediaLabel } from "../media";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
@@ -98,9 +99,15 @@ export const TOOLS: ToolDefinition[] = [
   ),
   tool(
     "remember",
-    "Save a lasting fact about him (a project, goal, person, preference, habit). One fact per call, as a short line he would agree with.",
-    { fact: { type: "string" }, reply },
-    ["fact"],
+    "Keep something about him, in one short line in his words, in the right layer. week: true now (this week's plans, focus, goals). month: holds for weeks (a monthly goal, a project under way). always: who he is, his people, preferences, routine, how he wants you to work. When he repeats or confirms a note already in Memory, pass same_as with its number: it counts as confirmed and can move up a layer.",
+    {
+      fact: { type: "string" },
+      layer: { type: "string", enum: ["week", "month", "always"] },
+      goal: { type: "boolean", description: "A goal he set himself (\"get IELTS 7.5\", \"post a reel every day this week\")" },
+      same_as: { type: "integer", description: "The number of the Memory note he repeated or confirmed" },
+      reply,
+    },
+    [],
   ),
   // "Save this" with a link: saved at once as a bookmark, with a proper title. Nothing is asked.
   tool(
@@ -597,17 +604,34 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
 
     case "remember": {
       const fact = typeof args.fact === "string" ? args.fact.trim().slice(0, 300) : "";
-      if (!fact) return fail("fact is required");
+      const layer = readLayer(args.layer);
+      const goal = args.goal === true;
       // Only what he said himself: never Tony's own replies, never a guess ("Khiva area" for Khanqa).
-      if (his !== undefined && !statedByHim(fact, his)) {
+      if (fact && his !== undefined && !statedByHim(fact, his)) {
         return fail("Only remember what he said himself, in his own words: most of this fact is not in his messages. Leave it out, or use his words.");
       }
-      // Already known (same words, any case): nothing to add.
-      const known = await db.from("memory").select("id, fact").ilike("fact", fact.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(1);
-      if (!known.error && (known.data ?? []).length > 0) return { ok: true, id: (known.data as { id: number }[])[0].id, fact, already_known: true };
-      const { data, error } = await db.from("memory").insert({ fact, source: "user" }).select("id").single();
+      type Kept = { id: number; fact: string; layer: MemoryLayer; mentions: number; goal: boolean };
+      // Said again: the note is confirmed, counts one more mention, and may move up a layer (never down).
+      const confirm = async (note: Kept) => {
+        const patch: Record<string, unknown> = { mentions: note.mentions + 1, confirmed_at: now.toISOString(), layer: higherLayer(note.layer, layer) };
+        if (goal && !note.goal) patch.goal = true;
+        if (fact && fact.toLowerCase() !== note.fact.toLowerCase()) patch.fact = fact;
+        const { error } = await db.from("memory").update(patch).eq("id", note.id);
+        check("remember", error);
+        return { ok: true as const, id: note.id, fact: String(patch.fact ?? note.fact), layer: patch.layer, confirmed: true };
+      };
+      const sameAs = Number(args.same_as);
+      if (Number.isSafeInteger(sameAs) && sameAs > 0) {
+        const note = (await db.from("memory").select("id, fact, layer, mentions, goal").eq("id", sameAs).maybeSingle()).data as Kept | null;
+        if (note) return confirm(note);
+      }
+      if (!fact) return fail("fact is required");
+      // Already known (same words, any case): confirmed, not duplicated.
+      const known = await db.from("memory").select("id, fact, layer, mentions, goal").ilike("fact", fact.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(1);
+      if (!known.error && (known.data ?? []).length > 0) return confirm((known.data as Kept[])[0]);
+      const { data, error } = await db.from("memory").insert({ fact, source: "user", layer, goal, confirmed_at: now.toISOString() }).select("id").single();
       check("remember", error);
-      return { ok: true, id: (data as { id: number }).id, fact };
+      return { ok: true, id: (data as { id: number }).id, fact, layer };
     }
 
     case "subtask": {

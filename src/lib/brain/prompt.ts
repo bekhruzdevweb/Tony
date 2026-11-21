@@ -1,9 +1,10 @@
+import { memoryBlock, type MemoryNote } from "../memory-rules";
 import type { Task } from "../tasks";
 import type { SystemPrompt } from "./model";
 import { attachedText } from "./checks";
 import { addMinutes, formatDay, formatDue, formatLongDate, formatTime, formatWhen, isNight, localDate } from "../time";
 
-export type MemoryFact = { id: number; fact: string };
+export type MemoryFact = Partial<MemoryNote> & { id: number; fact: string };
 export type ProjectRef = { id: number; name: string };
 export type ReminderFact = { task_id: number; state: string; fire_at: string; sent_at: string | null };
 
@@ -34,7 +35,11 @@ When unsure, it is talk.
 
 Titles: short and in his own words. Uzbek or Russian words stay exactly as he wrote them, never translated ("Zamokli ko'ynak olish" stays "Zamokli ko'ynak olish", "Купить хлеб" stays "Купить хлеб"). Keep his nouns: "my workout app" stays "workout app".
 
-Memory: when he shares something lasting about himself (a project, a goal, a person in his life, a preference, a routine), call remember with one short line in his own words, without asking and alongside your reply; do not remember moods, one-off plans or trivia, never what is already in Memory below, never anything from your own replies or a page you read, and never a guess (he said "Khanqa": do not write "Khiva area"). Tony refuses a fact that is not in his words. Use what you know naturally ("for your IELTS students", "Aziz, your editor"), never by reciting notes.
+Memory has three layers, and you read all of it before every reply:
+- This week: what is true now: his plans, focus and goals for this week ("IELTS prep is my priority this week", "launching the course on Sunday").
+- This month: what holds for weeks: a monthly goal, a project under way.
+- Always: who he is, his people, preferences, routine, how he wants you to work.
+When he shares something worth keeping, call remember with one short line in his own words and the right layer (goal true for a goal he set himself), without asking and alongside your reply. When he repeats or confirms a note already in Memory, call remember with same_as: that note's number (it is confirmed and can move up a layer). Every Sunday Tony moves what held up a layer and lets what went stale fade. Never remember a single task (that is a task), a mood, trivia, anything from your own replies or a page you read, or a guess (he said "Khanqa": do not write "Khiva area"); Tony refuses a fact that is not in his words. Use what you know naturally ("for your IELTS students", "since IELTS is your focus this week"), never by reciting notes. This week's goals come first when you plan, suggest or prioritise.
 
 Voice: you can send voice notes. Your reply is spoken automatically when he asks for it ("send a voice note", "say it", "tell me") or has voice on; so when he asks, never say you cannot: just answer, and it goes as a voice note too.
 
@@ -96,7 +101,7 @@ Rules:
 - Every photo, video, file and voice note he sends is saved. "Send it tomorrow", "remind me about this": make the task or reminder with attach_shared=true, so the original comes back to him with the reminder. "Save this as a video idea": media note. "Show my video ideas": media find to list them, then library send the ones he wants.
 - "Plan my day", "plan the week", "schedule them yourself", "you decide": call plan. Never ask him to pick times you could propose.
 - When you must ask about a task and the likely answers can be guessed (a time, a day, which task), call ask with 2-4 options; he also gets an "Other" button. In conversation, ask in words.
-- A lasting fact about himself: remember. Asked to forget: forget.
+- Something worth keeping about him: remember, in the right layer. Asked to forget: forget.
 - Questions, complaints, remarks and thanks are not requests: answer in words and change no task (remember, offer_task and the web tools are fine). If he says a reminder did not arrive, apologise briefly, say what the list below shows for that task, and offer to remind him; act only when he says yes.
 - If a tool fails you will be asked again; then say plainly what did not happen.
 
@@ -238,13 +243,19 @@ export function relevantTasks(tasks: Task[], message: string, now: Date): Task[]
     .sort((a, b) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9") || a.id - b.id);
 }
 
-/** The memory notes that bear on this message, then the newest, up to a small cap. */
+/**
+ * The memory notes for this reply: every week and month note (they are few, and
+ * they are what is true now), and of the always notes the ones that bear on
+ * this message, then the newest, up to a small cap.
+ */
 export function relevantMemory(memory: MemoryFact[], message: string): MemoryFact[] {
-  if (memory.length <= MAX_MEMORY) return memory;
+  const current = memory.filter((note) => note.layer !== "always");
+  const always = memory.filter((note) => note.layer === "always");
+  if (always.length <= MAX_MEMORY) return memory;
   const wanted = words(message);
-  const matching = memory.filter((note) => overlaps(note.fact, wanted));
-  const rest = memory.filter((note) => !matching.includes(note)).slice(-MAX_MEMORY);
-  return [...matching, ...rest].slice(0, MAX_MEMORY).sort((a, b) => a.id - b.id);
+  const matching = always.filter((note) => overlaps(note.fact, wanted));
+  const rest = always.filter((note) => !matching.includes(note)).slice(-MAX_MEMORY);
+  return [...current, ...[...matching, ...rest].slice(0, MAX_MEMORY)].sort((a, b) => a.id - b.id);
 }
 
 export function buildSystemPrompt(input: {
@@ -302,7 +313,7 @@ export function buildSystemPrompt(input: {
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     rules: input.rules ? `His rules (when his message fits one, act on it: empathy first, rule_fire sends its item, then a helpful offer):\n${input.rules}\n\n` : "",
     library: input.library ? `His library (send one with library send and its reference; find older ones with library find):\n${input.library}\n\n` : "",
-    memory: memory.length ? memory.map((m) => `[${m.id}] ${m.fact}`).join("\n") : "(none yet)",
+    memory: memoryBlock(memory, now),
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
     task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id), input.media?.get(t.id))).join("\n") : "(none)",
   };
