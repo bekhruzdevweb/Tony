@@ -84,7 +84,7 @@ export function savedMarks(action: Pick<DoneAction, "parts" | "link" | "media" |
  * model said it would do. One line per change, so a message with several
  * requests gets each one listed.
  */
-export function confirmationFor(actions: DoneAction[], now: Date): string {
+export function confirmationFor(actions: DoneAction[], now: Date, said?: string): string {
   const line = (action: DoneAction) => `${baseLine(action)}${savedMarks(action, action.tool !== "subtask")}`;
   const baseLine = (action: DoneAction) => {
     const title = `**${action.title}**`;
@@ -93,7 +93,7 @@ export function confirmationFor(actions: DoneAction[], now: Date): string {
     if (action.status === "skipped") return `✓ ${title} skipped`;
     if (action.tool === "subtask" && action.parts) return `☑ ${title}: ${action.parts} parts done`;
     // Every time named with its weekday and date ("tomorrow, Sat 21 Nov, 08:30"), the clock time in bold.
-    const bold = (at: Date) => formatWhen(at, now).replace(/(\d{2}:\d{2})$/, "**$1**");
+    const bold = (at: Date) => formatWhen(at, now, undefined, said).replace(/(\d{2}:\d{2})$/, "**$1**");
     if (action.reminder_at) {
       return `🔔 ${title}: reminder ${bold(new Date(action.reminder_at))}${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
     }

@@ -950,18 +950,25 @@ describe("Phase 2 · a companion first: Tony's own words, one receipt line", () 
     expect(result.replies[0]).toBe("✓ **Milk** in the inbox");
   });
 
-  it("17:31 the barber at 8.30: Tony's own words stay, the receipt under them", async () => {
+  it("17:31 the barber at 8.30: a plain request gets the receipt alone (22 Nov: a comment on top made it too long)", async () => {
     const result = await run("remind me to call the barber tomorrow at 8.30", "2026-11-20T17:31", [
       tools(["add_task", { title: "Call the barber", due_at: "2026-11-21T08:30", reply: "Early start: Saturday queues at the barber are brutal, so 8:30 is smart." }]),
     ]);
-    expect(result.replies[0]).toBe("Early start: Saturday queues at the barber are brutal, so 8:30 is smart.\n\n✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
+    expect(result.replies[0]).toBe("✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
   });
 
-  it("his words never claim or state a time that is not stored: 'Done, sir, set for 9:00' goes, the receipt shows 08:30", async () => {
-    const result = await run("remind me to call the barber tomorrow at 8.30", "2026-11-20T17:31", [
-      tools(["add_task", { title: "Call the barber", due_at: "2026-11-21T08:30", reply: "Done, sir, set for 9:00. Good luck with the haircut!" }]),
+  it("asked for a view as well, Tony's own words stay above the receipt, but never claim or state a time that is not stored", async () => {
+    const result = await run("remind me to call the barber tomorrow at 8.30, what do you think, too early?", "2026-11-20T17:31", [
+      tools(["add_task", { title: "Call the barber", due_at: "2026-11-21T08:30", reply: "Done, sir, set for 9:00. Not too early: Saturday queues are brutal." }]),
     ]);
-    expect(result.replies[0]).toBe("Good luck with the haircut!\n\n✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
+    expect(result.replies[0]).toBe("Not too early: Saturday queues are brutal.\n\n✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**");
+  });
+
+  it("'Remind me to work out at 6 p.m.': persistent mode still says itself", async () => {
+    const result = await run("Remind me to work out at 6 p.m.", "2026-11-20T12:00", [
+      tools(["add_task", { title: "Workout", due_at: "2026-11-20T18:00", persistent: true, reply: "Persistent mode on: I'll keep at you until you go. Legs day, I hope." }]),
+    ]);
+    expect(result.replies[0]).toBe("Persistent mode on: I'll keep at you until you go.\n\n✓ **Workout** → today, Fri 20 Nov, **18:00**");
   });
 
   it("'help me plan my course launch': the whole answer reaches him, lists, headings and the closing question intact; no task, no buttons", async () => {
@@ -1083,5 +1090,90 @@ describe("21 Nov 20:21 · the video he labelled 'ideas for my reels'", () => {
     expect(lines[0]).toMatch(/^Fits his words best/);
     expect(lines[1]).toContain(`media:${reels.id} 🎞 ideas for my reels`);
     expect(lines[1]).toMatch(/his label/i);
+  });
+});
+
+// ── 22 Nov 01:49–01:59: a stories format, a preview, a PDF ───────────────
+describe("22 Nov 01:49–01:59: 'post stories in this format', the preview, the IELTS plan", () => {
+  const SHOT = "tmr remind me at 1:00 p.m to post stories at this format\n\n[He sent you a photo]\n«««\nText in the image: 22:36\n43\nmosseri\n19h\nAsk me anything\nType something...\n\nShows: A screenshot of an Instagram story posted by the account \"mosseri\".\n»»»";
+  const setUp = () => {
+    task({ title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00" });
+    const photo = state.db.insert("media", { kind: "photo", file_id: "SHOT", caption: "", description: "22:36\nmosseri\nAsk me anything\n\nShows: A screenshot of an Instagram story posted by the account \"mosseri\".", created_at: at("2026-11-22T01:49").toISOString() });
+    state.db.rows("settings")[0].last_shared_media_id = photo.id;
+    return photo;
+  };
+  const addStories = () =>
+    run(SHOT, "2026-11-22T01:49", [
+      tools([
+        "add_task",
+        {
+          title: "Post stories in this format",
+          due_at: "2026-11-22T13:00",
+          notes: "Format: an \"Ask me anything\" question-box story, like the Mosseri screenshot.",
+          attach_shared: true,
+          reply: "An \"Ask me anything\" box is a smart pick for @behruznrl: your audience's questions become next week's reels.",
+        },
+      ]),
+    ]);
+
+  it("01:49: the receipt alone (no comment on the screenshot, no note Tony wrote himself), and the clash once", async () => {
+    setUp();
+    const first = await addStories();
+    expect(first.replies[0]).toBe("✓ **Post stories in this format** → tomorrow, Sun 22 Nov, **13:00** · 🖼 1 photo\n\n⚠️ Plan new chatbot agent features and Post stories in this format are both at 13:00.");
+    // The note is kept in the task all the same.
+    expect(byTitle("Post stories in this format").notes).toContain("Ask me anything");
+  });
+
+  it("01:50 'sorry i meant today': the same Sunday, named his way ('today'), and the clash is not told again", async () => {
+    setUp();
+    await addStories();
+    const id = byTitle("Post stories in this format").id;
+    const again = await run("sorry i meant today", "2026-11-22T01:50", [tools(["update_task", { id, due_at: "2026-11-22T13:00" }])]);
+    expect(again.replies[0]).toBe("✓ **Post stories in this format** → today, Sun 22 Nov, **13:00** · 🖼 1 photo");
+  });
+
+  it("01:53 a video added to the task: no clash line (no time was set); with no day word after midnight, just the weekday and date", async () => {
+    setUp();
+    await addStories();
+    const id = Number(byTitle("Post stories in this format").id);
+    const video = state.db.insert("media", { kind: "video", file_id: "VID", caption: "this is how i should be uploading stories daily", created_at: at("2026-11-22T01:53").toISOString() });
+    const added = await run("can u add this one to stories task\n\nthis is how i should be uploading stories daily\n\n[He attached a video. (A video; you cannot see inside it.)]", "2026-11-22T01:53", [
+      tools(["library", { action: "attach", item: `media:${video.id}`, task_id: id }]),
+    ]);
+    expect(added.replies[0]).toBe("✓ **Post stories in this format** → Sun 22 Nov, **13:00** · 🖼 1 photo · 🎞 1 video");
+  });
+
+  it("01:53 'send it to me as preview pls': everything kept with the task goes, together; 'send me the video' sends the video only", async () => {
+    const photo = setUp();
+    await addStories();
+    const id = Number(byTitle("Post stories in this format").id);
+    const video = state.db.insert("media", { kind: "video", file_id: "VID", caption: "this is how i should be uploading stories daily", task_id: id, created_at: at("2026-11-22T01:53").toISOString() });
+    const preview = await run("send it to me as preview pls", "2026-11-22T01:54", [tools(["library", { action: "send", items: [`media:${video.id}`] }]), says("Sending it now, sir.")]);
+    expect(thoughtOf(preview)?.sendItems).toEqual([`task:${id}`]);
+    const one = await run("send me the video", "2026-11-22T01:55", [tools(["library", { action: "send", items: [`media:${video.id}`] }]), says("Here it is, sir.")]);
+    expect(thoughtOf(one)?.sendItems).toEqual([`media:${video.id}`]);
+    // The model may name the task itself.
+    const whole = await run("what did I save for the stories task?", "2026-11-22T01:56", [tools(["library", { action: "send", items: [`task:${id}`] }]), says("Both of them, sir.")]);
+    expect(thoughtOf(whole)?.sendItems).toEqual([`task:${id}`]);
+    void photo;
+  });
+
+  it("01:59 the IELTS plan: what was read from the PDF is material (never his words), and library read gives its text later", async () => {
+    const plan = state.db.insert("media", {
+      kind: "document",
+      file_id: "PDF",
+      mime: "application/pdf",
+      caption: "can u see my ielts plan?",
+      description: "IELTS_Question_Type_Mastery_Plan.pdf\nSummary: A four-week plan to master each IELTS question type.\nText:\nWeek 1: True/False/Not Given, every day at 9:00",
+      created_at: at("2026-11-22T01:59").toISOString(),
+    });
+    // The library list names it by its file and says what it is about.
+    expect(await libraryForPrompt(at("2026-11-22T02:00"))).toContain(`media:${plan.id} 📎 IELTS_Question_Type_Mastery_Plan.pdf · today 01:59 · he said: "can u see my ielts plan?" · about: A four-week plan to master each IELTS question type.`);
+    const result = await run("what does my ielts plan say about week 1?", "2026-11-22T02:05", [
+      tools(["library", { action: "read", item: `media:${plan.id}` }]),
+      says("Week 1 is True/False/Not Given, every day at 9:00, sir."),
+    ]);
+    expect(JSON.stringify(state.calls[1].messages)).toContain("Week 1: True/False/Not Given");
+    expect(result.replies[0]).toBe("Week 1 is True/False/Not Given, every day at 9:00, sir.");
   });
 });

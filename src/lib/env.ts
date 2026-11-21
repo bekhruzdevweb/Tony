@@ -34,6 +34,10 @@ export const env = {
   get anthropicModel() {
     return read("ANTHROPIC_MODEL") ?? "claude-haiku-5-5";
   },
+  /** The model that reads PDFs he sends: fast, since it runs before Tony answers. */
+  get anthropicReaderModel() {
+    return read("ANTHROPIC_READER_MODEL") ?? "claude-haiku-5-5";
+  },
   /** The larger model, for multi-step turns (several requests, moving or planning things). */
   get anthropicDeepModel() {
     return read("ANTHROPIC_DEEP_MODEL") ?? "claude-sonnet-5-5";

@@ -229,7 +229,13 @@ export function itemLabel(item: LibraryItem, now = new Date()): string {
   const site = siteOf(item.url);
   const name = item.album
     ? `${item.album} ${item.kind === "photo" ? "photos" : "files"} (one forwarded post)`
-    : (item.title?.trim() || item.note?.trim() || item.description?.split("\n").pop()?.replace(/^Shows:\s*/, "").trim() || (site ? `${site} ${item.kind}` : `Saved ${item.kind}`)).replace(/\s+/g, " ");
+    : (
+        (item.kind === "document" ? item.note?.trim() || fileNameOf(item) : undefined) ||
+        item.title?.trim() ||
+        item.note?.trim() ||
+        item.description?.split("\n").pop()?.replace(/^Shows:\s*/, "").trim() ||
+        (site ? `${site} ${item.kind}` : `Saved ${item.kind}`)
+      ).replace(/\s+/g, " ");
   const at = new Date(item.created_at);
   const when = localDate(at) === localDate(now) ? "today" : new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, weekday: "short", day: "numeric", month: "short" }).format(at).replace(",", "");
   return `${icon} ${name.length > 60 ? `${name.slice(0, 59)}…` : name} · ${when}`;
@@ -250,10 +256,29 @@ export function describeUrl(url: string): string {
  * he sent it, and its task. `library:3 ▶️ Sevara on Instagram · today 18:10 ·
  * he said: "i have to shoot this type of videos" · task #48 Shoot videos like this reel`
  */
+/** A document's file name: the first line of what Tony kept about it ("IELTS_Plan.pdf"). */
+function fileNameOf(item: Pick<LibraryItem, "kind" | "description">): string | undefined {
+  const first = item.kind === "document" ? item.description?.split("\n")[0]?.trim() : undefined;
+  return first && /\.\w{2,5}$/.test(first) && first.length <= 120 ? first : undefined;
+}
+
 export function libraryLine(item: LibraryItem, now: Date, taskTitle?: string): string {
   const at = new Date(item.created_at);
   const time = new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(at);
   const label = itemLabel(item, now);
+  // A document: what he wrote with it, and what it is about (its text is for library read, not this list).
+  if (item.kind === "document") {
+    const summary = /^Summary:\s*(.+)$/m.exec(item.description ?? "")?.[1]?.trim();
+    const words = item.note?.trim() || item.title?.trim();
+    return [
+      `${item.source}:${item.id} ${label} ${time}`,
+      words ? `he said: "${words.replace(/\s+/g, " ").slice(0, 140)}"` : undefined,
+      summary ? `about: ${summary.slice(0, 200)}` : undefined,
+      item.task_id ? `task #${item.task_id}${taskTitle ? ` ${taskTitle}` : ""}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
   const said = item.note?.trim() || (item.description && item.description !== describeUrl(item.url ?? "") && item.description !== item.title ? item.description.trim() : "");
   const kind = item.url ? describeUrl(item.url) : item.kind;
   return [

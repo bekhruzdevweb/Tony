@@ -5,9 +5,9 @@ import { env } from "./env";
 import { logEvent } from "./events";
 import { countFreeTime, shouldSuggestFreeTime, suggestFreeTime } from "./free-time";
 import { noteFollowUp, sameDayFollowUp, weeklyInboxReview, type Row } from "./followups";
-import { plain } from "./html";
+import { esc, plain } from "./html";
 import type { LibraryItem } from "./library-rules";
-import { loadMedia, mediaLabel, sendMedia } from "./media";
+import { loadMedia, mediaCaption, sendMedia } from "./media";
 import { weeklyMemoryReview } from "./memory-review";
 import { logMessage } from "./messages";
 import { markdownToHtml } from "./rich";
@@ -79,7 +79,7 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
           const id = await send(bot, chatId, text);
           if (item?.source === "media") {
             const media = await loadMedia(item.id);
-            if (media) await sendMedia(bot, chatId, media, mediaLabel(media)).catch(() => undefined);
+            if (media) await sendMedia(bot, chatId, media, esc(mediaCaption(media))).catch(() => undefined);
           } else if (item?.url) {
             await send(bot, chatId, `${item.title ?? "The link"}\n${item.url}`);
           }

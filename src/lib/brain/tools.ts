@@ -169,10 +169,10 @@ export const TOOLS: ToolDefinition[] = [
   // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
   tool(
     "library",
-    "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes).",
+    "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. A task's whole material (\"send it as a preview\", \"send both\", \"what did I save for it\"): items [\"task:<id>\"], and Tony sends its photos and videos together in one album. read: the full text Tony read from a saved PDF, text file or photo (to answer what it says). find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes).",
     {
-      action: { type: "string", enum: ["send", "find", "attach"] },
-      items: { type: "array", items: { type: "string" }, description: "send: exactly the item(s) he asked for, e.g. [\"library:3\"]: one, unless he asked for several" },
+      action: { type: "string", enum: ["send", "read", "find", "attach"] },
+      items: { type: "array", items: { type: "string" }, description: "send: exactly the item(s) he asked for, e.g. [\"library:3\"]: one, unless he asked for several; [\"task:12\"] for everything kept with task 12" },
       text: { type: "string", description: "His words for the item" },
       item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
       task_id: { type: "integer", description: "attach: the task" },
@@ -688,13 +688,29 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (action === "send") {
         const refs = [...(Array.isArray(args.items) ? args.items.map(String) : []), ...(typeof args.item === "string" ? [args.item] : [])].map((ref) => ref.trim()).filter(Boolean).slice(0, 3);
         const found: LibraryItem[] = [];
+        const wholeTasks: { ref: string; label: string }[] = [];
         for (const ref of refs) {
+          // "task:12": everything kept with that task, sent together.
+          const taskRef = /^task:#?(\d+)$/.exec(ref);
+          if (taskRef) {
+            const task = await loadTask(Number(taskRef[1]));
+            const files = task ? await attachmentCounts([task.id]) : undefined;
+            const counts = files?.get(task!.id);
+            if (task && counts && (counts.photo || counts.video || counts.file)) wholeTasks.push({ ref: `task:${task.id}`, label: `${task.title}: ${[counts.photo ? `${counts.photo} photo${counts.photo > 1 ? "s" : ""}` : "", counts.video ? `${counts.video} video${counts.video > 1 ? "s" : ""}` : "", counts.file ? `${counts.file} file${counts.file > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}` });
+            continue;
+          }
           const entry = await loadItem(ref);
           if (entry) found.push(entry);
         }
-        if (found.length === 0) return fail("no such item: use a reference from the Library list (\"library:3\", \"media:7\") or find it first");
+        if (found.length === 0 && wholeTasks.length === 0) return fail("no such item: use a reference from the Library list (\"library:3\", \"media:7\", \"task:12\" for a task's files) or find it first");
         // Tony sends them after the reply; the reply only says a word around them.
-        return { ok: true, send_items: found.map(itemRef), sending: found.map((entry) => itemLabel(entry, now)) };
+        return { ok: true, send_items: [...wholeTasks.map((task) => task.ref), ...found.map(itemRef)], sending: [...wholeTasks.map((task) => task.label), ...found.map((entry) => itemLabel(entry, now))] };
+      }
+      if (action === "read") {
+        if (!item) return fail("read needs an item from the Library list, e.g. \"media:7\"");
+        const text = item.description?.trim();
+        if (!text) return { ok: true, item: itemLabel(item, now), text: "", note: "Tony could not read anything in it" };
+        return { ok: true, item: itemLabel(item, now), text: text.slice(0, 12_000), ...(text.length > 12_000 ? { note: "only the first part" } : {}) };
       }
       if (action === "attach") {
         const task = await loadTask(args.task_id);

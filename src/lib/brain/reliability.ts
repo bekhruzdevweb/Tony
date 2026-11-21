@@ -285,6 +285,9 @@ export function withoutInstructions(message: string): string {
     .replace(/\bsave (?:this|it|that)(?: (?:youtube |instagram )?(?:video|link|reel|post|photo))?\b/gi, " ")
     .replace(/\b(?:after|in|within|for) (?:a|an|one|two|three|four|five|six|seven|ten|\d{1,2}) (?:days?|weeks?|hours?|minutes?)\b/gi, " ")
     .replace(/\bremind me(?: about it| of it)?\b[.!]?/gi, " ")
+    // What he asks Tony ("what do you think, too early?") is a question for the reply, not a detail of the task.
+    .replace(/\b(?:what do you think|wdyt|your thoughts|any (?:ideas|tips|advice))\b[^.?!]*[?.!]?/gi, " ")
+    .replace(/(?:^|(?<=[.!,;]))[^.!?,;]*\?/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -399,6 +402,22 @@ const filterSentences = (reply: string, keep: (sentence: string) => boolean) =>
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+/**
+ * A plain request to add, move or remind gets the receipt alone, whatever he shared with it (22 Nov 01:49:
+ * "remind me to post stories in this format" with a screenshot came back with a paragraph about question
+ * boxes). Of what the model added, only "persistent mode on" still says itself.
+ */
+export function receiptOnly(words: string): string {
+  return filterSentences(words, (sentence) => /\bpersistent mode\b/i.test(sentence));
+}
+
+/** He asked for a view or a reply, not only for something to be done: a question of his own, or "what do you think". */
+export function asksForReply(said: string): boolean {
+  // "can you add …?" is a polite request, not a question.
+  const questions = said.replace(/\b(can|could|would|will|pls|please)\s+(you|u)\b[^?]*\?/gi, " ");
+  return wantsThought(said) || /\?/.test(questions);
+}
 
 /** The reply without sentences about tools, filters or errors (22:38: "The overdue filter came back empty"). */
 export function withoutInternals(reply: string): string {

@@ -246,6 +246,36 @@ export async function readImageWithClaude(client: Anthropic, bytes: ArrayBuffer,
     .trim();
 }
 
+/**
+ * Reads a PDF with Claude (22 Nov: "can u see my ielts plan?" got "I can't open that document"). Fast
+ * model, a bounded answer and a time limit: it runs before Tony answers, inside the webhook's minute.
+ */
+export async function readPdfWithClaude(client: Anthropic, bytes: ArrayBuffer, instruction: string, title?: string): Promise<{ text: string; cut: boolean }> {
+  const response = await client.messages.create(
+    {
+      model: env.anthropicReaderModel,
+      max_tokens: 3000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from(bytes).toString("base64") }, ...(title ? { title } : {}) },
+            { type: "text", text: instruction },
+          ],
+        },
+      ],
+    },
+    { timeout: 30_000, maxRetries: 0 },
+  );
+  if (response.stop_reason === "refusal") throw new Error("Claude declined to read the document");
+  const text = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  return { text, cut: response.stop_reason === "max_tokens" };
+}
+
 /** A short description of an Anthropic failure for the log, by kind. */
 export function describeClaudeError(error: unknown): string {
   if (error instanceof Anthropic.RateLimitError) return `rate limited (429): ${error.message}`;

@@ -150,9 +150,23 @@ export function relativeDay(at: Date, now = new Date(), timeZone = TIMEZONE): "t
   return undefined;
 }
 
-/** "tomorrow, Sat 21 Nov, 08:30" or "Mon 23 Nov, 10:00": every confirmation names the weekday and the date. */
-export function formatWhen(at: Date, now = new Date(), timeZone = TIMEZONE): string {
-  const relative = relativeDay(at, now, timeZone);
+/** The word he used for a day, in his own words: "tomorrow" (tmr, ertaga, завтра) or "today" (bugun, сегодня). */
+export function dayWordIn(said: string): "today" | "tomorrow" | undefined {
+  const words = said.toLowerCase();
+  if (/\b(tomorrow|tomorow|tmr|tmrw|tmrrw|ertaga|ertangi)\b|завтра/.test(words)) return "tomorrow";
+  if (/\b(today|tonight|bugun|bugungi)\b|сегодня/.test(words)) return "today";
+  return undefined;
+}
+
+/**
+ * "tomorrow, Sat 21 Nov, 08:30" or "Mon 23 Nov, 10:00": every confirmation names the weekday and the date.
+ * With his words (`said`): after midnight the day just begun is "tomorrow" by the night rule, but he may call
+ * it "today" ("sorry i meant today", 22 Nov 01:50, got "tomorrow, Sun 22 Nov" back). It is named his way,
+ * and with no day word of his, by its weekday and date alone.
+ */
+export function formatWhen(at: Date, now = new Date(), timeZone = TIMEZONE, said?: string): string {
+  let relative: string | undefined = relativeDay(at, now, timeZone);
+  if (said !== undefined && relative === "tomorrow" && isNight(now, timeZone) && localDate(at, timeZone) === localDate(now, timeZone)) relative = dayWordIn(said);
   return `${relative ? `${relative}, ` : ""}${formatDay(at, now, timeZone)}, ${formatTime(at, timeZone)}`;
 }
 

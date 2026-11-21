@@ -31,7 +31,7 @@ import { refuseRepeats } from "./dedupe";
 import { logEvent } from "./events";
 import { env } from "./env";
 import { b, code, emphasise, plain } from "./html";
-import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaLabel, saveMedia, sendMedia, type Media, sendTaskExample } from "./media";
+import { askedToSend, asksForMedia, pointsAtMedia, loadMedia, mediaCaption, mediaLabel, mediaListForTask, saveMedia, sendMedia, sendTogether, type Media, sendTaskExample } from "./media";
 import { logMessage } from "./messages";
 import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
@@ -65,7 +65,7 @@ import { wordsAround } from "./link-rules";
 import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
-import { readImage } from "./vision";
+import { readDocument, readableDocument, readImage } from "./vision";
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
 import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
 
@@ -1073,7 +1073,7 @@ export function getBot(): Bot | undefined {
     for (const id of ids) {
       const item = ctx.chat ? await loadMedia(id) : undefined;
       if (!item || !ctx.chat) continue;
-      await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
+      await sendMedia(bot, ctx.chat.id, item, emphasise(mediaCaption(item))).then(
         () => {
           sent.push(mediaLabel(item));
           return logEvent("sent_item", { ref: `media:${id}`, label: mediaLabel(item) });
@@ -1116,16 +1116,48 @@ export function getBot(): Bot | undefined {
    * What went out is noted ("sent_item"), so "no, not this one" knows what it is about
    * and that item is never sent again (21 Nov 20:21).
    */
+  /** A task's name, for the caption of what is kept with it. */
+  const taskTitle = async (taskId: number | null) =>
+    taskId === null ? undefined : (((await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle()).data as { title: string } | null)?.title ?? undefined);
+
+  /**
+   * What he asked for, after Tony's words: files together (photos and videos in one album), under the
+   * name of the task they are kept with when he wrote nothing with them; links and posts one by one.
+   * "task:<id>" is everything kept with that task (22 Nov 01:53: "send it as a preview" got the video only).
+   */
+  const sendLibraryItems = async (chatId: number, refs: string[]) => {
+    const files: Media[] = [];
+    let title: string | undefined;
+    const others: string[] = [];
+    for (const ref of refs) {
+      const whole = /^task:(\d+)$/.exec(ref);
+      if (whole) {
+        title ??= await taskTitle(Number(whole[1]));
+        for (const file of await mediaListForTask(Number(whole[1]))) if (!files.some((known) => known.id === file.id)) files.push(file);
+        continue;
+      }
+      const item = await loadItem(ref).catch(() => undefined);
+      if (item?.source === "media") {
+        const media = await loadMedia(item.id);
+        if (media && !files.some((known) => known.id === media.id)) files.push(media);
+      } else if (item) others.push(ref);
+    }
+    if (files.length > 0) {
+      const owners = [...new Set(files.map((file) => file.task_id))];
+      if (!title && owners.length === 1 && files.every((file) => !mediaCaption(file))) title = await taskTitle(owners[0]);
+      await sendTogether(bot, chatId, files, title).then(
+        (ids) => Promise.all(ids.map((id) => logEvent("sent_item", { ref: `media:${id}`, label: title ?? mediaLabel(files.find((file) => file.id === id)!) }))),
+        (error) => console.error("Could not send the files:", error),
+      );
+    }
+    for (const ref of others) await sendLibraryItem(chatId, ref);
+  };
+
   const sendLibraryItem = async (chatId: number, ref: string) => {
     const item = await loadItem(ref).catch(() => undefined);
     if (!item) return;
     if (item.source === "media") {
-      const media = await loadMedia(item.id);
-      if (media)
-        await sendMedia(bot, chatId, media, emphasise(mediaLabel(media))).then(
-          () => logEvent("sent_item", { ref, label: itemLabel(item) }),
-          (error) => console.error("Could not send the item:", error),
-        );
+      await sendLibraryItems(chatId, [ref]);
       return;
     }
     const text = `${itemLabel(item)}${item.url ? `\n${item.url}` : item.description ? `\n${item.description}` : ""}`;
@@ -1181,18 +1213,15 @@ export function getBot(): Bot | undefined {
       const wanted = found !== undefined && (asksForMedia(said) || pointsAtMedia(said) || askedToSend(said) || claimsSent(reply));
       if (ctx.chat && wanted) {
         // Only what Tony found for this request: never a search of every saved file by matching words.
-        for (const id of found) {
-          const item = await loadMedia(id);
-          if (!item) continue;
-          // Counted only once Telegram has confirmed the send, and noted, so "no, not this one" knows what went out.
-          await sendMedia(bot, ctx.chat.id, item, emphasise(mediaLabel(item))).then(
-            () => {
-              mediaSent++;
-              return logEvent("sent_item", { ref: `media:${id}`, label: mediaLabel(item) });
-            },
-            (error) => console.error("Could not resend media:", error),
-          );
-        }
+        const items = (await Promise.all(found.map((id) => loadMedia(id)))).filter((item): item is Media => item !== undefined);
+        // Counted only once Telegram has confirmed the send, and noted, so "no, not this one" knows what went out.
+        await sendTogether(bot, ctx.chat.id, items).then(
+          (ids) => {
+            mediaSent += ids.length;
+            return Promise.all(ids.map((id) => logEvent("sent_item", { ref: `media:${id}`, label: mediaLabel(items.find((item) => item.id === id)!) })));
+          },
+          (error) => console.error("Could not resend media:", error),
+        );
       }
       // "Here it is" is only said if something was really sent: otherwise those words go. Items the brain
       // chose with library send (or a rule sends) go out right after these words, so they count
@@ -1247,8 +1276,8 @@ export function getBot(): Bot | undefined {
       // Which message this reply became, so a 👎 on it finds its words (phase e).
       await markSent(reply, sent);
       if (confirmed) await track(sent, "confirmation", { deleteAfter: hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
-      // What one of his rules sends: the item itself, after the words (phase b).
-      for (const ref of thought.sendItems ?? []) await sendLibraryItem(ctx.chat!.id, ref);
+      // What he asked for (or one of his rules sends), after the words: files together, links one by one.
+      if (thought.sendItems?.length) await sendLibraryItems(ctx.chat!.id, thought.sendItems);
       // A small acknowledgement on his own message when something was written down or ticked off.
       const reaction = tools.includes("complete_task")
         ? "👌"
@@ -1317,6 +1346,10 @@ export function getBot(): Bot | undefined {
 
     let imageText: string | undefined;
     let imageFailed = false;
+    // A PDF or text file is read as well (22 Nov 01:59: "can u see my ielts plan?" got "I can't open that document").
+    let docText: string | undefined;
+    let docFailed = false;
+    const docName = message.document?.file_name?.replace(/[[\]«»]/g, "").trim() || undefined;
     let saved: Media | undefined;
     if (file) {
       // A copy goes to private storage when Telegram lets a bot download it (up to 20 MB).
@@ -1335,21 +1368,51 @@ export function getBot(): Bot | undefined {
           console.error("Could not read the image:", error);
           imageFailed = true;
         }
+      } else if (file.kind === "document" && readableDocument(file.mime, docName)) {
+        // Kept with its name first, so the library can name it and "library read" can give its text later.
+        try {
+          docText = bytes ? await readDocument(bytes, file.mime, docName) : undefined;
+          if (!bytes || !docText) docFailed = true;
+        } catch (error) {
+          console.error("Could not read the document:", error);
+          docFailed = true;
+        }
       }
-      saved = await saveMedia({ kind: file.kind, fileId: file.id, uniqueId: file.unique, mime: file.mime, caption: words, description: imageText, bytes }).catch(
+      const description = imageText ?? (file.kind === "document" ? [docName, docText].filter(Boolean).join("\n") || undefined : undefined);
+      saved = await saveMedia({ kind: file.kind, fileId: file.id, uniqueId: file.unique, mime: file.mime, caption: words, description, bytes }).catch(
         (error) => (console.error("Could not save the media:", error), undefined),
       );
     }
     if (!words && !imageText && !file) return undefined;
 
     const forwarded = message.forward_origin ? originOf(message.forward_origin) : undefined;
-    const thing = file ? (file.kind === "photo" ? "photo" : file.kind === "animation" ? "GIF" : file.kind === "video_note" ? "round video" : file.kind) : "post";
-    const image = imageText ? `Text in the image: ${imageText}` : imageFailed ? "(Its image could not be read.)" : file && file.kind !== "photo" ? `(A ${thing}; you cannot see inside it.)` : undefined;
+    const thing = file
+      ? file.kind === "photo"
+        ? "photo"
+        : file.kind === "animation"
+          ? "GIF"
+          : file.kind === "video_note"
+            ? "round video"
+            : file.kind === "document" && docName
+              ? `document "${docName}"`
+              : file.kind
+      : "post";
+    // What was read from it (fenced as material below), or a word on why nothing was.
+    const content = imageText ? `Text in the image: ${imageText}` : docText ? `Text in the document${docName ? ` "${docName}"` : ""}:\n${docText}` : undefined;
+    const remark = content
+      ? undefined
+      : imageFailed
+        ? "(Its image could not be read.)"
+        : docFailed
+          ? "(The document could not be read.)"
+          : file && file.kind !== "photo"
+            ? `(A ${file.kind === "document" ? "document" : thing}; you cannot see inside it.)`
+            : undefined;
     // What Tony keeps as "the last thing he shared".
     const shared = [
       forwarded ? `${file ? `A ${thing}` : "Post"} forwarded from ${forwarded}` : `A ${thing} he sent`,
       forwarded ? words : words ? `He wrote with it: ${words}` : undefined,
-      image,
+      content ?? remark,
       saved ? "(Saved. It can be attached to a task or filed under a label.)" : undefined,
     ]
       .filter(Boolean)
@@ -1357,8 +1420,14 @@ export function getBot(): Bot | undefined {
     // A forwarded post (with no file) goes into his library; files are kept in media already (phase b).
     if (forwarded && !file && words) await saveToLibrary({ kind: "post", title: `Post from ${forwarded}`, description: words.slice(0, 800), source: "forwarded" });
     for (const url of linksIn(words)) await saveToLibrary({ kind: "link", url, title: await fetchTitle(url, 3_000).catch(() => describeUrl(url)), description: wordsAround(words), source: forwarded ? "forwarded" : "sent" });
-    // What the brain is asked: his own caption is his words; a forwarded post is all material, fenced off as such.
-    const asked = forwarded ? `[He forwarded this to you]\n«««\n${shared}\n»»»` : words ? `${words}\n\n[He attached a ${thing}. ${image ?? ""}]` : `[He sent you a ${thing}]\n${image ?? ""}`;
+    // What the brain is asked: his own caption is his words; what was read from the file (the text in a photo,
+    // a PDF) and a forwarded post are material, fenced off as such, so they never count as his words.
+    const fenced = content ? `\n«««\n${content}\n»»»` : "";
+    const asked = forwarded
+      ? `[He forwarded this to you]\n«««\n${shared}\n»»»`
+      : words
+        ? `${words}\n\n[He attached a ${thing}${remark ? `. ${remark}` : ""}]${fenced}`
+        : `[He sent you a ${thing}${remark ? `. ${remark}` : ""}]${fenced}`;
     return { asked, shared, saved };
   };
 

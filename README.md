@@ -599,10 +599,25 @@ Migration `0023_decide.sql` adds `routine.auto_kinds` and
   answer for "help me plan my course launch". Advice and discussion get more
   thinking time and room; Tony remembers the last 10 turns, each up to 1,200
   characters (was 6 × 280).
-- **Tasks happen quietly:** Tony's own words stay, with one small receipt line
-  under them built from what is stored ("✓ **Call the barber** → tomorrow, Sat
-  21 Nov, **08:30**"). Only a sentence that claims an action, names a time that
-  is not stored, or mentions tools is removed from his words.
+- **Tasks happen quietly:** a plain request (add, move, remind, attach,
+  remember) gets one small receipt line built from what is stored ("✓ **Call
+  the barber** → tomorrow, Sat 21 Nov, **08:30**") and nothing else; only
+  "persistent mode on" still says itself (22 Nov: a comment about the
+  screenshot made a reminder too long). When you also ask what Tony thinks, his
+  words stay above the receipt, less any sentence that claims an action, names
+  a time that is not stored, or mentions tools. A note is read back in the
+  receipt only when it is your own words, and a clash is told once.
+- **After midnight** the day just begun is named your way: "tmr" gives
+  "tomorrow, Sun 22 Nov", "today" gives "today, Sun 22 Nov", and with no day
+  word, just "Sun 22 Nov".
+- **What you share comes back together:** "send it as a preview" (or "both")
+  sends everything kept with that task as one album, under the task's name and
+  your own words; "send me the video" sends the video only. A file goes back
+  under your caption or the task's name, never the description Tony read.
+- **PDFs and text files are read** (22 Nov: "can u see my ielts plan?"): a
+  summary and the text, given to Tony as material (never as your words); the
+  library names the file and says what it is about, and Tony reads its text
+  again when you ask about it later.
 - **Buttons only for real task actions** (choosing a slot, confirming a
   change); a question in conversation is answered in words.
 - **Your words for titles:** Uzbek or Russian stays exactly as you wrote it

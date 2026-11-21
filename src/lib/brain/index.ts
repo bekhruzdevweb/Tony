@@ -10,12 +10,13 @@ import type { SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
+import { logEvent } from "../events";
 import { logMessage, recentMessages, type Channel } from "../messages";
 import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
-import { asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims, ownWords } from "./reliability";
+import { asksForReply, asksForTime, claimsAction, clockTimes, isCapture, keepWords, linksIn, notesToKeep, oneQuestion, receiptOnly, statedByHim, unsaved, wantsThought, withoutClaims, withoutInternals, withoutSendClaims, ownWords } from "./reliability";
 import { buildPlan } from "../planner";
 import { decideFor, getRoutine, nearestFreeFor } from "../routine";
 import { partsOfDay, routineLines } from "../routine-rules";
@@ -371,6 +372,15 @@ export async function think(
     }
   }
 
+  // "Send it to me as a preview", "send both": everything kept with that task goes, together; never one of its
+  // files alone (22 Nov 01:53: the video went without the photo kept with it). Naming one ("the video") sends that one.
+  if (sendItems.length > 0 && wantsWholeTask(ownWords(text)) && !sendItems.some((ref) => ref.startsWith("task:"))) {
+    const owners = new Set<number | null>();
+    for (const ref of sendItems) owners.add((await loadItem(ref).catch(() => undefined))?.task_id ?? null);
+    const [owner] = [...owners];
+    if (owners.size === 1 && owner !== null) sendItems.splice(0, sendItems.length, `task:${owner}`);
+  }
+
   // He asked for a file or link (or said the one sent is not it), and nothing went out, nothing was asked,
   // nothing changed: the closest few as buttons, never a second guess (21 Nov 20:21).
   let libraryChoices: { text: string; data: string }[] | undefined;
@@ -493,6 +503,10 @@ export async function think(
     }
     // What each task holds, for its receipt: parts, a link, photos and files (read back), notes written now, a check-in.
     const [parts, attached] = await Promise.all([subtasksFor([...changes.keys()]), attachmentCounts([...changes.keys()])]);
+    const noteLine = (notes: string) =>
+      notes.replace(/https?:\/\/\S+/g, "").replace(/^From your message: /m, "").trim()
+        ? notes.split("\n").find((line) => line.trim() && !/^https?:\/\//.test(line.trim()))?.replace(/^From your message: /, "")
+        : undefined;
     const marks = (id: number) => {
       const wroteNotes = String(changes.get(id)?.wrote?.notes ?? "");
       const list = parts.get(id);
@@ -500,7 +514,9 @@ export async function think(
         ...(list?.length ? { parts: progress(list) } : {}),
         ...(/https?:\/\//.test(stored.get(id)?.notes ?? "") ? { link: true } : {}),
         ...(attached.has(id) ? { media: attached.get(id) } : {}),
-        ...(wroteNotes.replace(/https?:\/\/\S+/g, "").replace(/^From your message: /m, "").trim() ? { note: wroteNotes.split("\n").find((line) => line.trim() && !/^https?:\/\//.test(line.trim()))?.replace(/^From your message: /, "") } : {}),
+        // The note is read back only when it is his own words ("add a note: the black one"); a note the model wrote
+        // from what he shared stays in the task without lengthening the receipt (22 Nov 01:49).
+        ...(noteLine(wroteNotes) && statedByHim(noteLine(wroteNotes)!, ownWords(text)) ? { note: noteLine(wroteNotes) } : {}),
         ...(checkIns.has(id) ? { checkIn: checkIns.get(id) } : {}),
       };
     };
@@ -555,15 +571,19 @@ export async function think(
       if (!task || decided.has(id)) return [];
       return [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, free_time: task.free_time, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...marks(id) }];
     });
-    const confirmation = done.length ? confirmationFor(done, now) : "";
+    const confirmation = done.length ? confirmationFor(done, now, ownWords(text)) : "";
     // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
     // His own words first (kept as he said them, less any claim, wrong time or internals), then the receipt from what is stored.
     const known = [text, confirmation, ...slotLines, context.prayers ?? "", ...context.tasks.map((task) => (task.due_at ? formatTime(new Date(task.due_at)) : ""))].join(" ");
-    const words = keepWords(tidyReply([...spoken, reply ?? ""].filter(Boolean).join("\n\n"), [...taskIds]), { times: clockTimes(known) });
+    const kept = keepWords(tidyReply([...spoken, reply ?? ""].filter(Boolean).join("\n\n"), [...taskIds]), { times: clockTimes(known) });
+    // A plain request (add, move, remind, attach, remember) gets the receipt alone; a comment only when he asked for one.
+    const plainRequest = sendItems.length === 0 && tools.every((name) => CAPTURE_TOOLS.has(name)) && !asksForReply(ownWords(text));
+    const words = plainRequest ? receiptOnly(kept) : kept;
     // A question of his own does not stand next to Tony's question about the slot.
     const tonyWords = slotLines.length && slot && slot.kind !== "auto" ? words.replace(/[^.?!\n]*\?+/g, "").trim() : words;
     reply = [tonyWords, confirmation, ...slotLines, ...problems].filter(Boolean).join("\n\n");
-    clash = await findClash([...stored.values()].filter((task) => !decided.has(task.id)), now);
+    // Only a time set in this turn can make a clash worth saying (adding a video to a task makes none).
+    clash = await findClash([...stored.values()].filter((task) => !decided.has(task.id) && changes.get(task.id)?.wrote?.due_at !== undefined), now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
     // A clash is stated, never asked about: the buttons offer the move.
@@ -633,6 +653,11 @@ export { dayLabel };
 const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine"]);
 
 const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library"]);
+/** "As a preview", "both", "everything", "all the files": he wants all that is kept with the task, not one file. */
+export const wantsWholeTask = (said: string) => /\b(previews?|both|everything|all of (it|them)|all (the |its |my )?(files|materials?|attachments|examples|photos|videos|pictures))\b/i.test(said);
+
+/** Tools that only file or change what he asked for: a turn made only of these is a plain request. */
+const CAPTURE_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library", "remember", "forget", "media"]);
 
 /** A call that changes something: the write tools, a library attach, a rule added or removed. */
 function isWrite(name: string, args: Record<string, unknown>): boolean {
@@ -672,6 +697,13 @@ async function proposeInstead(name: string, args: Record<string, unknown>, now: 
   return runTool("propose", { say, tool: name, args }, now, said, heard);
 }
 
+/** Two tasks at their times, the same whichever is named first. */
+const clashKey = (a: Pick<Task, "id" | "due_at">, b: Pick<Task, "id" | "due_at">) =>
+  [a, b]
+    .sort((x, y) => x.id - y.id)
+    .map((task) => `${task.id}@${task.due_at ? new Date(task.due_at).toISOString() : ""}`)
+    .join("|");
+
 /** A clash a change created, and where the changed task could go instead. */
 export type Clash = { taskId: number; title: string; sentence: string; suggestAt?: Date };
 
@@ -682,9 +714,13 @@ async function findClash(changed: Task[], now: Date): Promise<Clash | undefined>
   const { data, error } = await requireDb().from("tasks").select().in("status", OPEN_STATUSES).not("due_at", "is", null).gte("due_at", now.toISOString());
   if (error) return undefined;
   const others = (data ?? []) as Task[];
+  // A clash is told once: the same two tasks at the same times are not flagged again (22 Nov 01:49–01:53: three times in four minutes).
+  const told = await requireDb().from("events").select("detail").eq("kind", "clash_told").gte("created_at", new Date(now.getTime() - 24 * 60 * 60_000).toISOString()).limit(100);
+  const toldKeys = new Set(((told.data ?? []) as { detail: { key?: string } }[]).map((row) => row.detail?.key));
   for (const task of timed) {
-    const clashing = clashesWith(task, others);
+    const clashing = clashesWith(task, others).filter((other) => !toldKeys.has(clashKey(task, other)));
     if (clashing.length === 0) continue;
+    await logEvent("clash_told", { key: clashKey(task, clashing[0]) });
     // The nearest time that is really free for its whole length, in his waking hours and out of his teaching hours.
     const free = await nearestFreeFor(task, new Date(task.due_at!), now).catch(() => undefined);
     const suggestAt = free && free.getTime() !== new Date(task.due_at!).getTime() ? free : undefined;

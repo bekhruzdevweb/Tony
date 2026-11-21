@@ -3,7 +3,7 @@ import { isPromoCaption } from "./library-rules";
 import { randomUUID } from "node:crypto";
 import type { Bot, InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
-import { plain } from "./html";
+import { esc, plain } from "./html";
 
 /**
  * Tony's memory for photos, videos, documents and voice notes. Each item
@@ -179,6 +179,44 @@ export async function findMedia(query: string, limit = 5, now = new Date()): Pro
     })
     .filter((entry) => entry.score > 0 && (wanted.length === 0 || entry.score >= Math.min(2, wanted.length)));
   return scored.sort((x, y) => y.score - x.score || y.item.id - x.item.id).slice(0, limit).map((entry) => entry.item);
+}
+
+/**
+ * The caption a file goes back with: his note or his own caption, never the long description Tony read
+ * from it (22 Nov 01:51: a screenshot came back under "A screenshot of an Instagram story posted by…").
+ */
+export const mediaCaption = (item: Pick<Media, "note" | "caption">) => item.note?.trim() || (isPromoCaption(item.caption) ? "" : (item.caption?.trim() ?? ""));
+
+/**
+ * Files sent back together: the photos and videos as one album (ten at most each), under a title (the
+ * task they are kept with) and his own words; any other file after them. "Send it to me as a preview"
+ * gets the photo and the video kept with the task, not one of them (22 Nov 01:53). Returns the ids sent.
+ */
+export async function sendTogether(bot: Bot, chatId: number, files: Media[], title?: string): Promise<number[]> {
+  const sent: number[] = [];
+  const caption = (items: Media[]) =>
+    [title ? `<b>${esc(title)}</b>` : undefined, ...[...new Set(items.map(mediaCaption).filter(Boolean))].map(esc)].filter(Boolean).join("\n");
+  const visual = files.filter((item) => item.kind === "photo" || item.kind === "video");
+  const rest = files.filter((item) => !visual.includes(item));
+  for (let at = 0; at < visual.length; at += 10) {
+    const group = visual.slice(at, at + 10);
+    if (group.length === 1) {
+      await sendMedia(bot, chatId, group[0], caption(group));
+    } else {
+      const words = at === 0 ? caption(group) : "";
+      const fits = words.length <= CAPTION_LIMIT;
+      await bot.api.sendMediaGroup(
+        chatId,
+        group.map((item, index) => ({ type: item.kind as "photo" | "video", media: item.file_id, ...(index === 0 && words ? (fits ? { caption: words, parse_mode: "HTML" as const } : { caption: plain(words).slice(0, CAPTION_LIMIT) }) : {}) })),
+      );
+    }
+    sent.push(...group.map((item) => item.id));
+  }
+  for (const item of rest) {
+    await sendMedia(bot, chatId, item, visual.length ? "" : caption([item]));
+    sent.push(item.id);
+  }
+  return sent;
 }
 
 /** What to say under a saved item when it is sent back: his note, or his caption. */
