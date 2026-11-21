@@ -48,7 +48,7 @@ import { CLEANED, handleMessage, type Thought } from "./brain/handle";
 import { choicesFor, getRoutine } from "./routine";
 import { routineLines } from "./routine-rules";
 import { placeTask, runProposal, splitTask } from "./slots";
-import { dayLabel, slotButtons, slotQuestion } from "./slot-text";
+import { awaitsAnswer, dayLabel, slotButtons, slotQuestion } from "./slot-text";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
 import { HistoryOff, recentChanges, undoChange } from "./history";
 import { forgetFact, memoryList } from "./memory";
@@ -622,9 +622,16 @@ export function getBot(): Bot | undefined {
       const taskId = Number(id);
       // [✏️ Other time] answers with a small note on the screen, not a message.
       await ctx.answerCallbackQuery(action === "other" ? { text: "Type the time" } : undefined).catch(() => undefined);
-      const showOutcome = async (text: string, keyboard?: InlineKeyboard) => {
+      // The question stays in the chat until he answers it (the day he named lives only in its buttons;
+      // 21 Nov 20:25: "…23 November" was asked, never answered, and removed with the receipts at 23:26).
+      // Answered, it becomes a receipt and is tidied away like one; a new question in its place stays.
+      const showOutcome = async (text: string, keyboard?: InlineKeyboard, fate: "answered" | "waiting" = "answered") => {
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
-        if (!edited && chatId !== undefined) await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
+        if (!edited && chatId !== undefined) {
+          const sent = await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
+          await track(sent, "confirmation", { deleteAfter: fate === "waiting" ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
+        }
+        if (edited && tapped) await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: fate === "waiting" ? null : hoursFromNow(CONFIRMATION_HOURS) });
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
@@ -656,7 +663,7 @@ export function getBot(): Bot | undefined {
         const options = (await choicesFor({ ...task, due_at: null } as Task, parseLocalDateTime(`${value}T12:00`)!, new Date())).filter((option) => !task.due_at || option.at.getTime() !== new Date(task.due_at).getTime());
         if (options.length === 0) return showOutcome(`**${task.title}**: nothing else is free that day, sir.`, keyboardOf([[{ text: "✏️ Other time", data: `sl:other:${taskId}:${value}` }]]));
         const text = slotQuestion({ title: task.title, marks: "", when: dayLabel(value, new Date()).when, options });
-        await showOutcome(text, keyboardOf(slotButtons({ kind: "ask", taskId, day: value, options })));
+        await showOutcome(text, keyboardOf(slotButtons({ kind: "ask", taskId, day: value, options })), "waiting");
         return;
       }
       if (action === "other") {
@@ -766,8 +773,8 @@ export function getBot(): Bot | undefined {
           toast = plain(line).slice(0, 180);
         } else if (action === "done" || action === "drop" || action === "tom") {
           const outcome = await runAction(action === "tom" ? "tomorrow" : action, taskId, undefined);
-          // An undated task's "tomorrow" is a question with its slots: it comes as its own message.
-          if (outcome.keyboard && outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard, kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+          // An undated task's "tomorrow" is a question with its slots: it comes as its own message, kept until he answers it.
+          if (outcome.keyboard && outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard, kind: "confirmation", deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
           else line = outcome.text;
           toast = plain(outcome.text ?? "Done").slice(0, 180);
         } else if (action === "snooze") {
@@ -785,7 +792,7 @@ export function getBot(): Bot | undefined {
           toast = "Type the steps";
         } else if (action === "slot" || action === "sched") {
           const outcome = await askForSlot(task, hisTomorrow(new Date()), new Date());
-          if (outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard ?? undefined, kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+          if (outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard ?? undefined, kind: "confirmation", deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
           toast = "Pick a time";
         } else if (action === "keep") {
           await requireDb().from("tasks").update({ updated_at: new Date().toISOString() }).eq("id", taskId);
@@ -908,17 +915,18 @@ export function getBot(): Bot | undefined {
     }
 
     const edited = base !== undefined && chatId !== undefined && tapped ? await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${outcome.text}`, keyboard, isCaption) : false;
-    // A message too old to edit still gets its answer, as a new message.
-    if (!edited) await say(ctx, outcome.text, { kind: "confirmation", taskId: parsed.taskId, deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+    // A message too old to edit still gets its answer, as a new message (with its buttons, if it asks something).
+    if (!edited) await say(ctx, outcome.text, { keyboard, kind: "confirmation", taskId: parsed.taskId, deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
     await logMessage("tony", plain(outcome.text));
 
     if (tapped) {
       // Settling the task marked all its messages for removal. The one just
       // tapped now carries the answer: after Start it waits for Done and
-      // stays; otherwise it is a confirmation and goes in a few hours.
+      // stays; a question about the time still waits for his answer and stays;
+      // otherwise it is a confirmation and goes in a few hours.
       await setFate(
         tapped.message_id,
-        parsed.action === "start" ? { kind: "reminder", deleteAfter: null } : { kind: "confirmation", deleteAfter: hoursFromNow(CONFIRMATION_HOURS) },
+        parsed.action === "start" ? { kind: "reminder", deleteAfter: null } : { kind: "confirmation", deleteAfter: outcome.waiting && edited ? null : hoursFromNow(CONFIRMATION_HOURS) },
       );
     }
     // Until the tick removes them, this task's other reminders at least lose their buttons.
@@ -1278,7 +1286,8 @@ export function getBot(): Bot | undefined {
       const sent = await sendMarkdown(bot, ctx.chat!.id, boldTimes(named), { keyboard });
       // Which message this reply became, so a 👎 on it finds its words (phase e).
       await markSent(reply, sent);
-      if (confirmed) await track(sent, "confirmation", { deleteAfter: hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
+      // A question about the time for a day he named stays until he answers it (see awaitsAnswer).
+      if (confirmed) await track(sent, "confirmation", { deleteAfter: awaitsAnswer(slot) ? undefined : hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
       // What he asked for (or one of his rules sends), after the words: files together, links one by one.
       if (thought.sendItems?.length) await sendLibraryItems(ctx.chat!.id, thought.sendItems);
       // A small acknowledgement on his own message when something was written down or ticked off.

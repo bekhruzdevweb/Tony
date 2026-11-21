@@ -58,6 +58,13 @@ export function splitQuestion(input: { title: string; marks: string; when: strin
   return `**${input.title}**${input.marks}: ${lengthText(input.total)} won't fit in one go ${input.when.replace(/,$/, "")}. Split it in two? **${clock(a)}** and **${clock(b)}**, ${lengthText(input.minutes)} each.`;
 }
 
+/**
+ * A question still waiting for his answer (the free times, or the two halves) stays in the chat until he
+ * answers it: the day he named lives only in its buttons (21 Nov 20:25: "…23 November" was asked, never
+ * answered, and tidied away with the receipts three hours later). Tony's own pick is a receipt.
+ */
+export const awaitsAnswer = (slot: { kind: "ask" | "auto" | "split" } | undefined): boolean => slot !== undefined && slot.kind !== "auto";
+
 /** The buttons under the question: best first (⭐), then [✏️ Other time]; [✏️ Change] under Tony's own pick; [✂️ Split …] for halves. */
 export function slotButtons(
   slot: { kind: "ask"; taskId: number; day: string; options: SlotOption[] } | { kind: "auto"; taskId: number; day: string } | { kind: "split"; taskId: number; day: string; parts: Date[] },

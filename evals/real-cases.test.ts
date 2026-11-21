@@ -562,10 +562,13 @@ describe("Change 1 · a day without a time: always asked, never picked", () => {
     const buttons = JSON.stringify(outcome.keyboard);
     expect(buttons).toMatch(/sl:at:/);
     expect(buttons).toMatch(/sl:other:/);
+    // The question waits for his answer: it is kept in the chat, not tidied away with the receipts (21 Nov 20:25).
+    expect(outcome.waiting).toBe(true);
     const timed = task({ title: "Workout", due_at: "2026-11-20T18:00", duration_minutes: 60 });
     vi.setSystemTime(at("2026-11-20T21:00"));
-    await runAction("tomorrow", Number(timed.id), undefined, at("2026-11-20T21:00"));
+    const moved = await runAction("tomorrow", Number(timed.id), undefined, at("2026-11-20T21:00"));
     expect(local(byTitle("Workout").due_at)).toBe("2026-11-21T18:00");
+    expect(moved.waiting).toBeUndefined();
   });
 
   it("never 'inbox' and a time in one message, and the question names the day with its date", async () => {

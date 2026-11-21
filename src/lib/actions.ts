@@ -47,10 +47,10 @@ async function askOnDay(task: Task, day: Date, now: Date): Promise<ActionOutcome
   }
   if (decision.decision === "split") {
     const text = splitQuestion({ title: task.title, marks, when: label.when, minutes: decision.minutes, total: task.duration_minutes ?? decision.minutes * 2, parts: decision.parts });
-    return { text: markdownToHtml(text), keyboard: keyboardOf(slotButtons({ kind: "split", taskId: task.id, day: dayKey, parts: decision.parts })) };
+    return { text: markdownToHtml(text), keyboard: keyboardOf(slotButtons({ kind: "split", taskId: task.id, day: dayKey, parts: decision.parts })), waiting: true };
   }
   const text = slotQuestion({ title: task.title, marks, when: label.when, options: decision.options, taken: decision.taken });
-  return { text: markdownToHtml(text), keyboard: keyboardOf(slotButtons({ kind: "ask", taskId: task.id, day: dayKey, options: decision.options })) };
+  return { text: markdownToHtml(text), keyboard: keyboardOf(slotButtons({ kind: "ask", taskId: task.id, day: dayKey, options: decision.options })), waiting: true };
 }
 
 const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -65,6 +65,8 @@ export type ActionOutcome = {
   text?: string;
   /** New buttons for the tapped message; null removes them. */
   keyboard: InlineKeyboard | null;
+  /** A question still waiting for his answer (the free slots on a day): kept in the chat until he answers it. */
+  waiting?: boolean;
 };
 
 async function updateTask(id: number, patch: Partial<Task>): Promise<void> {

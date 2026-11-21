@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ROUTINE, kindsFromWords, routineLines, typedTime, type Routine } from "../src/lib/routine-rules";
-import { autoReceipt, slotButtons, slotQuestion, splitQuestion } from "../src/lib/slot-text";
+import { autoReceipt, awaitsAnswer, slotButtons, slotQuestion, splitQuestion } from "../src/lib/slot-text";
 import { notesToKeep } from "../src/lib/brain/reliability";
 import { hisTomorrow, localDate } from "../src/lib/time";
 
@@ -113,5 +113,15 @@ describe("#309: his instructions are never quoted into a task's notes", () => {
     const kept = notesToKeep("prepare a presentation for the student from New York, level elementary, about travel", [{ title: "Prepare presentation", notes: null }]);
     expect(kept).toMatch(/New York/);
     expect(kept).toMatch(/elementary/);
+  });
+});
+
+describe("21 Nov 20:25 'Remind me to study Thinking fast and slow on notebooklm 23 November': the question waits for his answer", () => {
+  it("a question about the time stays in the chat until he answers it; Tony's own pick is a receipt and is tidied away", () => {
+    // The question was removed with the receipts at 23:26, unanswered: the day he named (Mon 23 Nov) lived only in its buttons.
+    expect(awaitsAnswer({ kind: "ask" })).toBe(true);
+    expect(awaitsAnswer({ kind: "split" })).toBe(true);
+    expect(awaitsAnswer({ kind: "auto" })).toBe(false);
+    expect(awaitsAnswer(undefined)).toBe(false);
   });
 });
