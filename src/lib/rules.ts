@@ -1,6 +1,6 @@
 import "server-only";
 import { requireDb } from "./db";
-import { itemLabel, type LibraryItem } from "./library-rules";
+import { isPromoCaption, itemLabel, type LibraryItem } from "./library-rules";
 import { itemRef, loadItem } from "./library";
 import { getRoutine } from "./routine";
 import { kindOf, windowsOn, weekdayOf, type Kind } from "./routine-rules";
@@ -81,6 +81,13 @@ export async function addRule(input: { situation: string; action: string; item?:
     .select()
     .single();
   if (error) return { ok: false, error: "the rule could not be saved" };
+  // A file with no name of its own ("Спасибо, что пользуетесь - @SaveAsBot'ом" is no name) is named by the rule.
+  if (item?.source === "media" && !item.note && (!item.title || isPromoCaption(item.title))) {
+    const note = `${item.kind === "photo" ? "Photo" : item.kind === "video" || item.kind === "animation" ? "Video" : "File"} for ${situation.replace(/^\s*when\s+/i, "when ")}`.slice(0, 120);
+    await requireDb().from("media").update({ note }).eq("id", item.id);
+    item.note = note;
+    item.title = note;
+  }
   return { ok: true, rule: data as Rule, item };
 }
 

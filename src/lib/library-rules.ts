@@ -29,6 +29,16 @@ const STOP = new Set(
 
 const stems = (text: string) => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((word) => !STOP.has(word)).map((word) => word.slice(0, 5)));
 
+/**
+ * A caption a downloader bot stamps on what it hands out ("Спасибо, что
+ * пользуетесь - @SaveAsBot'ом", "Downloaded via @..."): not a name for the item.
+ */
+export function isPromoCaption(caption: string | null | undefined): boolean {
+  if (!caption?.trim()) return false;
+  const text = caption.replace(/[\u200b-\u200d\ufeff]/g, "").trim();
+  return text.length <= 120 && /(спасибо,?\s+что\s+пользуетесь|thanks?\s+for\s+using|downloaded\s+(with|via|by|from|using)|скачан[оа]?\s+(с|через|в)|saved\s+(with|via|by)|@\w*bot\b)/i.test(text);
+}
+
 /** The site an item comes from, as he would name it. */
 export function siteOf(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
@@ -140,4 +150,25 @@ export function describeUrl(url: string): string {
   if (site === "tiktok") return "TikTok video";
   if (site === "telegram") return "Telegram post";
   return site ? `Page on ${site}` : "Link";
+}
+
+/**
+ * One item for the brain: its reference, what it is, when, what he said when
+ * he sent it, and its task. `library:3 ▶️ Sevara on Instagram · today 18:10 ·
+ * he said: "i have to shoot this type of videos" · task #48 Shoot videos like this reel`
+ */
+export function libraryLine(item: LibraryItem, now: Date, taskTitle?: string): string {
+  const at = new Date(item.created_at);
+  const time = new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(at);
+  const label = itemLabel(item, now);
+  const said = item.note?.trim() || (item.description && item.description !== describeUrl(item.url ?? "") && item.description !== item.title ? item.description.trim() : "");
+  const kind = item.url ? describeUrl(item.url) : item.kind;
+  return [
+    `${item.source}:${item.id} ${label} ${time}`,
+    item.url && item.title !== kind ? kind : undefined,
+    said ? `he said: "${said.replace(/\s+/g, " ").slice(0, 140)}"` : undefined,
+    item.task_id ? `task #${item.task_id}${taskTitle ? ` ${taskTitle}` : ""}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

@@ -58,6 +58,7 @@ import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-b
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
 import { fetchTitle, pageTitle } from "./links";
+import { wordsAround } from "./link-rules";
 import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
@@ -1253,7 +1254,7 @@ export function getBot(): Bot | undefined {
       .join("\n");
     // A forwarded post (with no file) goes into his library; files are kept in media already (phase b).
     if (forwarded && !file && words) await saveToLibrary({ kind: "post", title: `Post from ${forwarded}`, description: words.slice(0, 800), source: "forwarded" });
-    for (const url of linksIn(words)) await saveToLibrary({ kind: "link", url, title: describeUrl(url), source: forwarded ? "forwarded" : "sent" });
+    for (const url of linksIn(words)) await saveToLibrary({ kind: "link", url, title: await fetchTitle(url, 3_000).catch(() => describeUrl(url)), description: wordsAround(words), source: forwarded ? "forwarded" : "sent" });
     // What the brain is asked: his own caption is his words; a forwarded post is all material, fenced off as such.
     const asked = forwarded ? `[He forwarded this to you]\n«««\n${shared}\n»»»` : words ? `${words}\n\n[He attached a ${thing}. ${image ?? ""}]` : `[He sent you a ${thing}]\n${image ?? ""}`;
     return { asked, shared, saved };
@@ -1314,12 +1315,12 @@ export function getBot(): Bot | undefined {
         }
         continue;
       }
-      if (message.text) {
-        parts.push(message.text.trim());
-        for (const url of linksIn(message.text)) await saveToLibrary({ kind: "link", url, title: await fetchTitle(url, 3_000).catch(() => describeUrl(url)), source: "sent" });
-      }
+      if (message.text) parts.push(message.text.trim());
     }
     if (parts.length === 0) return;
+    // Every link in the burst goes into his library with what he wrote around it ("i have to shoot this type of videos").
+    const typed = updates.map((update) => update.message?.text ?? "").join("\n");
+    for (const url of linksIn(typed)) await saveToLibrary({ kind: "link", url, title: await fetchTitle(url, 3_000).catch(() => describeUrl(url)), description: wordsAround(parts.join("\n")), source: "sent" });
     if (savedId) await updateSettings({ last_shared_media_id: savedId }).catch(() => undefined);
     const { reply } = await answer(ctx, parts.join("\n\n"), {
       note: `He sent these ${updates.length} messages together, within a minute: they are ONE request. Handle them as one, answer once.${spoken ? " One was a voice note; its transcript is included, so you did hear him." : ""}`,
@@ -1364,7 +1365,7 @@ export function getBot(): Bot | undefined {
       note: `He sent a link: ${link}. Read it with web_fetch and sum it up: one line on what it is, then the key points as a short list. If he also asked something about it, answer that. Do not add a task or save anything yourself: Save and Task buttons are shown under your reply.`,
     } : {});
     // Every link he sends goes into his library, with its title (phase b).
-    for (const url of linksIn(text)) await saveToLibrary({ kind: "link", url, title: await pageTitle(url).catch(() => describeUrl(url)), source: "sent" });
+    for (const url of linksIn(text)) await saveToLibrary({ kind: "link", url, title: await pageTitle(url).catch(() => describeUrl(url)), description: wordsAround(text), source: "sent" });
     // "Tell me what's left", "say it": he asked to hear it, so the summary is spoken too.
     if (asksForVoice(text)) {
       const voiceId = await sayAloud(bot, ctx.chat.id, spokenFromMarkdown(reply), "reply", { asked: true });

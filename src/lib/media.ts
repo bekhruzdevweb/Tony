@@ -1,4 +1,5 @@
 import "server-only";
+import { isPromoCaption } from "./library-rules";
 import { randomUUID } from "node:crypto";
 import type { Bot, InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
@@ -145,7 +146,8 @@ export async function findMedia(query: string, limit = 5, now = new Date()): Pro
 }
 
 /** What to say under a saved item when it is sent back: his note, or his caption. */
-export const mediaLabel = (item: Media) => item.note || item.caption || (item.description ? item.description.split("\n").pop()!.replace(/^Shows:\s*/, "") : `Saved ${item.kind}`);
+export const mediaLabel = (item: Media) =>
+  item.note || (isPromoCaption(item.caption) ? undefined : item.caption) || (item.description ? item.description.split("\n").pop()!.replace(/^Shows:\s*/, "") : `Saved ${item.kind}`);
 
 /**
  * Sends the original back by its Telegram file id, with a formatted caption

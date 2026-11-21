@@ -10,6 +10,10 @@
 /** What he typed himself, without the block Tony adds about what he forwarded or attached. */
 export const ownWords = (value: string) => value.replace(/«««[\s\S]*?»»»/g, " ").replace(/\[He [^\]]*\]/g, " ").replace(/[ \t]+/g, " ").trim();
 
+/** What he wrote with a link, without the link itself: kept with it so it can be found by meaning later. */
+export const wordsAround = (text: string) =>
+  ownWords(text).replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300) || undefined;
+
 /** A photo, video or file came with his words (forwarded, attached or sent). */
 export const carriesMedia = (value: string) => /\[He (forwarded|attached|sent you)\b/.test(value);
 

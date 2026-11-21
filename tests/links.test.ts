@@ -2,7 +2,7 @@
  * Links: his real messages from 20 Nov, 23:22–23:39.
  */
 import { describe, expect, it } from "vitest";
-import { asksForLink, asksToAttachLink, carriesMedia, isGenericTitle, ownWords, rankLinks, refersToLink, titleForLink } from "../src/lib/link-rules";
+import { asksForLink, asksToAttachLink, carriesMedia, isGenericTitle, ownWords, rankLinks, refersToLink, titleForLink, wordsAround } from "../src/lib/link-rules";
 
 describe("'Send me the video' is a request for the link", () => {
   it("spots it", () => {
@@ -81,5 +81,18 @@ describe("21 Nov 18:11: 'send me this video when i needed motivation' with a for
     expect(ranked[0].url).toBe("https://www.instagram.com/reel/Df6Ja3OR_PK/");
     // The boilerplate ("you", "can", "saved") no longer counts as his words.
     expect(ranked.find((item) => item.url.includes("DfoBspQhNjO"))!.words).toBe(0);
+  });
+});
+
+describe("the brain's list of his links", () => {
+  it("names each link by what he said and its task, never by a downloader's thank-you", async () => {
+    const { isPromoCaption, libraryLine } = await import("../src/lib/library-rules");
+    const now = new Date("2026-11-21T13:20:00Z");
+    const line = libraryLine({ source: "library", id: 1, kind: "link", url: "https://www.instagram.com/reel/Df6Ja3OR_PK/", title: "Sevara on Instagram", description: "i have to shoot this type of videos", task_id: 48, created_at: "2026-11-21T13:10:16Z" }, now, "Shoot videos like this reel");
+    expect(line).toBe('library:1 ▶️ Sevara on Instagram · today 18:10 · Instagram reel · he said: "i have to shoot this type of videos" · task #48 Shoot videos like this reel');
+    expect(isPromoCaption("​​Спасибо, что пользуетесь - @SaveAsBot'ом")).toBe(true);
+    expect(isPromoCaption("Downloaded via @SaveAsBot")).toBe(true);
+    expect(isPromoCaption("add this feature to webstie")).toBe(false);
+    expect(wordsAround("https://www.instagram.com/reel/Df6Ja3OR_PK/?jplx=1\n\ni have to shoot this type of videos")).toBe("i have to shoot this type of videos");
   });
 });

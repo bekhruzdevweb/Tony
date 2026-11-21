@@ -3,14 +3,11 @@ import { asksToClean } from "./checks";
 import { think } from "./index";
 import { splitIntents } from "./reliability";
 import { logEvent } from "../events";
-import { asksForLink, carriesMedia, ownWords } from "../link-rules";
-import { linkReply } from "../links";
+import { carriesMedia, ownWords } from "../link-rules";
 import { asksForMedia, findMedia } from "../media";
 import { logMessage, type Channel } from "../messages";
 import { setPendingSlot, waitingSlot } from "../settings";
 import { addStepsInCode, placeTypedTime } from "../slots";
-import { findInLibrary } from "../library";
-import { itemLabel } from "../library-rules";
 import { rulesView } from "../rules";
 import { suggestFreeTime } from "../free-time";
 import { asksForRules, isRuleRequest, saysFree } from "../smart-rules";
@@ -150,38 +147,9 @@ export async function handleMessage(
         continue;
       }
     }
-    // "Send me the video": answered with the link at once.
-    if (shortcut && asksForLink(own) && !wantsFile) {
-      const reply = await linkReply(own, clock()).catch((error) => (console.error("Link lookup failed:", error), undefined));
-      if (reply) {
-        await logHis();
-        await logMessage("tony", reply, channel).catch(() => undefined);
-        handled.push({ text: part, kind: "link", reply });
-        continue;
-      }
-    }
-    // Nothing recent fits: his library, everything he ever sent ("that Instagram video", "the photo I sent yesterday").
-    if (shortcut && (asksForMedia(own) || asksForLink(own))) {
-      const found = await findInLibrary(own, clock()).catch(() => ({}) as Awaited<ReturnType<typeof findInLibrary>>);
-      if (found.found) {
-        await logHis();
-        if (found.found.source === "media") {
-          handled.push({ text: part, kind: "media", ids: [found.found.id] });
-        } else {
-          const reply = `${itemLabel(found.found, clock())}${found.found.url ? `\n${found.found.url}` : found.found.description ? `\n${found.found.description}` : ""}`;
-          await logMessage("tony", reply, channel).catch(() => undefined);
-          handled.push({ text: part, kind: "link", reply });
-        }
-        continue;
-      }
-      if (found.choices?.length) {
-        await logHis();
-        const question = "Two fit, sir. Which one?";
-        await logMessage("tony", question, channel).catch(() => undefined);
-        handled.push({ text: part, kind: "choose", question, options: found.choices.map((item) => ({ text: itemLabel(item, clock()).slice(0, 60), data: `lib:send:${item.source}:${item.id}` })) });
-        continue;
-      }
-    }
+    // Links ("send me the video", "the reel", "this link") are no longer picked here by matching words:
+    // the brain picks by meaning from his library, with what he said about each, and code sends it
+    // (21 Nov: word matching sent the wrong links again and again).
     const piece = parts.length > 1 ? { index, total: parts.length, full: text } : undefined;
     // The brain logs his message itself unless it already is in the history (and not again on a retry).
     const run = async () => {

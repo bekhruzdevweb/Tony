@@ -14,7 +14,7 @@ import type { Answer, ChatMessage } from "../src/lib/brain/model";
 import { createFakeDb, type FakeDb } from "./support/fake-db";
 
 type Step = Answer | "FAIL";
-const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[] }[], depths: [] as (string | undefined)[] }));
+const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[]; system?: string }[], depths: [] as (string | undefined)[] }));
 
 vi.mock("../src/lib/db", () => ({
   requireDb: () => state.db.client,
@@ -23,8 +23,8 @@ vi.mock("../src/lib/db", () => ({
 }));
 vi.mock("../src/lib/brain/model", async (original) => ({
   ...(await original<typeof import("../src/lib/brain/model")>()),
-  chat: async (input: { messages: ChatMessage[]; depth?: string }) => {
-    state.calls.push({ messages: structuredClone(input.messages) });
+  chat: async (input: { messages: ChatMessage[]; depth?: string; system?: unknown }) => {
+    state.calls.push({ messages: structuredClone(input.messages), system: JSON.stringify(input.system ?? "") });
     state.depths.push(input.depth);
     const step = state.script.shift() as Step | undefined;
     if (step === undefined) throw new Error("eval: the scripted model has no more answers");
@@ -691,14 +691,18 @@ describe("Links", () => {
     expect(result.replies[0]).not.toMatch(/\?/);
   });
 
-  it("23:25 'send me the video to just to check': the link itself, at once, no model call", async () => {
+  it("23:25 'send me the video to just to check': the brain picks it from his library by meaning; code sends the exact link (21 Nov: word matching mixed links up)", async () => {
     task({ title: "Watch: Instagram Masterclass (Brock Johnson)", due_at: "2026-11-23T10:00", notes: "https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi" });
-    const result = await run("send me the video to just to check", "2026-11-20T23:25", []);
-    expect(result.handled[0].kind).toBe("link");
-    expect(result.replies[0]).toContain("https://youtu.be/SaiTtbRJwic?si=QDE5KH85brvKxVVi");
-    // No question to him (the "?" inside the link does not count).
-    expect(result.replies[0].replace(/https?:\/\/\S+/g, "")).not.toMatch(/\?/);
-    expect(state.calls).toHaveLength(0);
+    // The link only lived in the task's notes: it joins the library (library:1), named by its task, and the brain sees it.
+    const result = await run("send me the video to just to check", "2026-11-20T23:25", [tools(["library", { action: "send", items: ["library:1"] }]), says("Here it is, sir.")]);
+    const kept = state.db.rows("library").find((row) => String(row.url).includes("SaiTtbRJwic"))!;
+    expect(kept.id).toBe(1);
+    expect(kept.title).toBe("Watch: Instagram Masterclass (Brock Johnson)");
+    expect(state.calls[0].system).toContain("library:1 ▶️ Watch: Instagram Masterclass (Brock Johnson)");
+    const thought = result.handled[0].kind === "thought" ? result.handled[0].thought : undefined;
+    expect(thought?.sendItems).toEqual(["library:1"]);
+    // Something really is being sent, so "Here it is" stays; the link itself is never typed by the model.
+    expect(result.replies[0]).toBe("Here it is, sir.");
   });
 
   it("a link from four messages ago is not attached to an unrelated task (rig, 21 Nov: the YouTube link landed on 'Buy a zippered shirt')", async () => {

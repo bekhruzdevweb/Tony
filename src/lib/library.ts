@@ -1,7 +1,9 @@
 import "server-only";
 import { requireDb } from "./db";
-import { mergeNotes } from "./brain/reliability";
-import { describeUrl, itemLabel, pickItem, type LibraryItem } from "./library-rules";
+import { linksIn, mergeNotes } from "./brain/reliability";
+import { wordsAround } from "./link-rules";
+import { OPEN_STATUSES } from "./tasks";
+import { describeUrl, isPromoCaption, libraryLine, pickItem, type LibraryItem } from "./library-rules";
 import { updateMedia } from "./media";
 
 /**
@@ -16,7 +18,7 @@ type LibraryRow = { id: number; kind: "link" | "post"; url: string | null; title
 type MediaRow = { id: number; kind: string; caption: string | null; description: string | null; note: string | null; task_id: number | null; created_at: string };
 
 /** Keeps a link or a post; the same link twice is one item (its title filled in if it was missing). Never fails the message. */
-export async function saveToLibrary(input: { kind: "link" | "post"; url?: string; title?: string | null; description?: string | null; source: string; taskId?: number }): Promise<number | undefined> {
+export async function saveToLibrary(input: { kind: "link" | "post"; url?: string; title?: string | null; description?: string | null; source: string; taskId?: number; at?: string }): Promise<number | undefined> {
   try {
     const db = requireDb();
     const title = input.title?.trim().slice(0, 200) || (input.url ? describeUrl(input.url) : null);
@@ -27,8 +29,9 @@ export async function saveToLibrary(input: { kind: "link" | "post"; url?: string
       const row = ((known.data ?? []) as LibraryRow[])[0];
       if (row) {
         const better: Partial<LibraryRow> = {};
-        // A real title replaces a stand-in ("YouTube video"); a task he linked it to is kept.
+        // A real title replaces a stand-in ("YouTube video"); his words fill an empty description; a task he linked it to is kept.
         if (title && (!row.title || row.title === describeUrl(input.url)) && title !== row.title) better.title = title;
+        if (input.description?.trim() && (!row.description || row.description === describeUrl(input.url))) better.description = input.description.trim().slice(0, 800);
         if (input.taskId && !row.task_id) better.task_id = input.taskId;
         if (Object.keys(better).length) await db.from("library").update(better).eq("id", row.id);
         return row.id;
@@ -36,7 +39,7 @@ export async function saveToLibrary(input: { kind: "link" | "post"; url?: string
     }
     const { data, error } = await db
       .from("library")
-      .insert({ kind: input.kind, url: input.url ?? null, title, description, source: input.source, task_id: input.taskId ?? null })
+      .insert({ kind: input.kind, url: input.url ?? null, title, description, source: input.source, task_id: input.taskId ?? null, ...(input.at ? { created_at: input.at } : {}) })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -48,7 +51,7 @@ export async function saveToLibrary(input: { kind: "link" | "post"; url?: string
 }
 
 const fromLibrary = (row: LibraryRow): LibraryItem => ({ source: "library", id: row.id, kind: row.kind, url: row.url, title: row.title, description: row.description, task_id: row.task_id, created_at: row.created_at });
-const fromMedia = (row: MediaRow): LibraryItem => ({ source: "media", id: row.id, kind: row.kind, title: row.caption, description: row.description, note: row.note, task_id: row.task_id, created_at: row.created_at });
+const fromMedia = (row: MediaRow): LibraryItem => ({ source: "media", id: row.id, kind: row.kind, title: row.note || (isPromoCaption(row.caption) ? null : row.caption), description: row.description, note: row.note, task_id: row.task_id, created_at: row.created_at });
 
 /** Everything in the library, newest first: links and posts, and the files kept in media. */
 export async function libraryItems(limit = 300): Promise<LibraryItem[]> {
@@ -105,9 +108,39 @@ export async function attachItem(item: LibraryItem, taskId: number): Promise<boo
   return Boolean(back?.notes?.includes(piece));
 }
 
-/** The newest few items, one line each, for the brain to know what "that video" may be. */
-export async function libraryForPrompt(now = new Date(), count = 6): Promise<string | undefined> {
-  const items = (await libraryItems(count).catch(() => [])).slice(0, count);
-  if (items.length === 0) return undefined;
-  return items.map((item) => `${itemRef(item)} ${itemLabel(item, now)}${item.url ? ` ${item.url}` : ""}`).join("\n");
+/**
+ * Links kept only in an open task's notes (from before the library existed)
+ * join the library once, named by their task and dated by it, so every link
+ * he means can be sent by reference.
+ */
+async function adoptTaskLinks(): Promise<void> {
+  const db = requireDb();
+  const { data } = await db.from("tasks").select("id, title, notes, created_at").in("status", OPEN_STATUSES).like("notes", "%http%").limit(100);
+  const rows = (data ?? []) as { id: number; title: string; notes: string; created_at: string }[];
+  if (rows.length === 0) return;
+  const known = new Set((((await db.from("library").select("url").limit(2000)).data ?? []) as { url: string | null }[]).map((row) => row.url));
+  for (const task of rows) {
+    for (const url of linksIn(task.notes)) {
+      if (known.has(url)) continue;
+      await saveToLibrary({ kind: "link", url, title: task.title, description: wordsAround(task.notes), source: "task", taskId: task.id, at: task.created_at });
+      known.add(url);
+    }
+  }
+}
+
+/**
+ * His links and files for the brain, newest first, each with what he said
+ * when he sent it and the task it belongs to, so "this video", "the reel I
+ * have to shoot like" or "the masterclass" are picked by meaning, then sent
+ * by code with library send (21 Nov: keyword matching mixed his links up).
+ */
+export async function libraryForPrompt(now = new Date(), links = 15, files = 6): Promise<string | undefined> {
+  await adoptTaskLinks().catch((error) => console.warn("adoptTaskLinks:", error instanceof Error ? error.message : error));
+  const items = await libraryItems(60).catch(() => [] as LibraryItem[]);
+  const chosen = [...items.filter((item) => item.source === "library").slice(0, links), ...items.filter((item) => item.source === "media" && item.kind !== "voice" && item.kind !== "audio").slice(0, files)].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (chosen.length === 0) return undefined;
+  const ids = [...new Set(chosen.map((item) => item.task_id).filter((id): id is number => typeof id === "number"))];
+  const tasks = ids.length ? (((await requireDb().from("tasks").select("id, title").in("id", ids)).data ?? []) as { id: number; title: string }[]) : [];
+  const titles = new Map(tasks.map((task) => [task.id, task.title]));
+  return chosen.map((item) => libraryLine(item, now, item.task_id ? titles.get(item.task_id) : undefined)).join("\n");
 }

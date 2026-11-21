@@ -10,7 +10,7 @@ import type { Answer, ChatMessage } from "../src/lib/brain/model";
 import { createFakeDb, type FakeDb } from "./support/fake-db";
 
 type Step = Answer | "FAIL";
-const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[] }[] }));
+const state = vi.hoisted(() => ({ db: undefined as unknown as FakeDb, script: [] as unknown[], calls: [] as { messages: ChatMessage[]; system?: string }[] }));
 
 vi.mock("../src/lib/db", () => ({
   requireDb: () => state.db.client,
@@ -19,8 +19,8 @@ vi.mock("../src/lib/db", () => ({
 }));
 vi.mock("../src/lib/brain/model", async (original) => ({
   ...(await original<typeof import("../src/lib/brain/model")>()),
-  chat: async (input: { messages: ChatMessage[] }) => {
-    state.calls.push({ messages: structuredClone(input.messages) });
+  chat: async (input: { messages: ChatMessage[]; system?: unknown }) => {
+    state.calls.push({ messages: structuredClone(input.messages), system: JSON.stringify(input.system ?? "") });
     const step = state.script.shift() as Step | undefined;
     if (step === undefined) throw new Error("eval: the scripted model has no more answers");
     if (step === "FAIL") throw new Error("model unreachable (scripted)");
@@ -106,20 +106,20 @@ describe("b) Bursts: what he sends within a minute is one request", () => {
 
 // ── b) Library ──────────────────────────────────────────────────────────
 describe("b) Library: everything he sent, found by what he calls it", () => {
-  it("'send me that Instagram video', three days later: the reel's link at once, no model call", async () => {
-    state.db.insert("library", { kind: "link", url: "https://www.instagram.com/reel/Df-WBn2haF6/", title: "Ziyoda on Instagram", description: "Instagram reel", source: "sent", created_at: at("2026-11-21T01:23").toISOString() });
+  it("'send me that Instagram video', three days later: the brain sees each link with what he said about it, and sends one by reference", async () => {
+    const reel = state.db.insert("library", { kind: "link", url: "https://www.instagram.com/reel/Df-WBn2haF6/", title: "Ziyoda on Instagram", description: "I have to mix my contents with humor plus education", source: "sent", created_at: at("2026-11-21T01:23").toISOString() });
     state.db.insert("library", { kind: "link", url: "https://youtu.be/w0H1-b044KY", title: "YouTube video", description: "YouTube video", source: "sent", created_at: at("2026-11-21T01:31").toISOString() });
-    const result = await run("send me that Instagram video", "2026-11-24T12:00", []);
-    expect(state.calls).toHaveLength(0);
-    expect(result.replies[0]).toContain("https://www.instagram.com/reel/Df-WBn2haF6/");
+    const result = await run("send me that Instagram video", "2026-11-24T12:00", [tools(["library", { action: "send", items: [`library:${reel.id}`] }]), says("Here you go, sir.")]);
+    // His own words about the reel are in front of the brain, not only a site name.
+    expect(state.calls[0].system).toContain('he said: \\"I have to mix my contents with humor plus education\\"');
+    expect(result.thought?.sendItems).toEqual([`library:${reel.id}`]);
   });
-  it("two that fit equally: he is asked which, with their titles", async () => {
+  it("two that fit equally: the brain asks which, naming them (no guess by matching words)", async () => {
     state.db.insert("library", { kind: "link", url: "https://www.instagram.com/reel/AAA/", title: "Reel about hooks", source: "sent", created_at: at("2026-11-21T09:00").toISOString() });
     state.db.insert("library", { kind: "link", url: "https://www.instagram.com/reel/BBB/", title: "Reel about hooks, part 2", source: "sent", created_at: at("2026-11-21T09:05").toISOString() });
-    const result = await run("send me the instagram reel about hooks", "2026-11-21T12:00", []);
-    const asked = result.handled[0];
-    expect(asked.kind).toBe("choose");
-    expect(asked.kind === "choose" && asked.options.map((option) => option.text).join(" | ")).toMatch(/Reel about hooks.*\|.*Reel about hooks, part 2|Reel about hooks, part 2.*\|.*Reel about hooks/);
+    const result = await run("send me the instagram reel about hooks", "2026-11-21T12:00", [tools(["ask", { question: "Which one, sir?", options: ["Reel about hooks", "Reel about hooks, part 2"] }])]);
+    expect(state.calls).toHaveLength(1);
+    expect(result.thought?.sendItems ?? []).toEqual([]);
   });
   it("'attach that Instagram video to the workout': the link goes into the task's notes, shown in the receipt", async () => {
     const workout = task({ title: "Workout", due_at: "2026-11-21T18:00" });
@@ -151,6 +151,22 @@ describe("b) Situation rules: 'when X, do Y'", () => {
     const rule = state.db.rows("rules")[0];
     expect(rule).toMatchObject({ situation: "I'm not motivated to work out", media_id: clip.id, skip_kind: "workout", skip_days: 3, active: true });
     expect(result.replies[0]).toMatch(/📏 Rule saved: when I'm not motivated to work out → send me this video/);
+  });
+  it("21 Nov 18:11: 'send me this video when i needed motivation' + a forwarded video: a rule with that video (not two old links), named by the rule, not by the downloader's caption", async () => {
+    const clip = state.db.insert("media", { kind: "video", file_id: "FWD", caption: "\u200b\u200bСпасибо, что пользуетесь - @SaveAsBot'ом", created_at: at("2026-11-21T18:11").toISOString() });
+    state.db.rows("settings")[0].last_shared_media_id = clip.id;
+    state.db.insert("library", { kind: "link", url: "https://youtu.be/SaiTtbRJwic", title: "Watch: Instagram Masterclass (Brock Johnson)", source: "task", created_at: at("2026-11-20T23:27").toISOString() });
+    const message =
+      "send me this video when i needed motivation\n\n[He forwarded this to you]\n«««\nA video forwarded from Save As Bot — скачать\nСпасибо, что пользуетесь - @SaveAsBot'ом\n(A video; you cannot see inside it.)\n(Saved. It can be attached to a task or filed under a label.)\n»»»";
+    const result = await run(message, "2026-11-21T18:11", [tools(["rule", { action: "add", situation: "when I need motivation", do: "send this video", attach: "last" }])]);
+    // The brain handled it (no 40 ms link answer), and the rule holds the forwarded video.
+    expect(state.calls).toHaveLength(1);
+    expect(result.handled[0].kind).toBe("thought");
+    expect(state.db.rows("rules")[0]).toMatchObject({ situation: "when I need motivation", media_id: clip.id });
+    // "Спасибо, что пользуетесь - @SaveAsBot'ом" is not a name: the video is named by the rule.
+    expect(state.db.rows("media").find((row) => row.id === clip.id)!.note).toBe("Video for when I need motivation");
+    expect(result.replies[0]).toMatch(/📏 Rule saved: when I need motivation → send this video · 🎞 Video for when I need motivation/);
+    expect(result.replies[0]).not.toMatch(/youtu|SaveAsBot/);
   });
   it("'I'm tired, don't want to work out': the brain is pointed at the rule; rule_fire sends the video with Tony's words", async () => {
     const clip = video();

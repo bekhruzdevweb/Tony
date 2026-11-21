@@ -12,7 +12,7 @@ import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
 import { attachItem, findInLibrary, itemRef, loadItem, saveToLibrary } from "../library";
-import { itemLabel } from "../library-rules";
+import { itemLabel, type LibraryItem } from "../library-rules";
 import { addRule, deleteRule, fireRule } from "../rules";
 import { isFreeTimeRequest } from "../smart-rules";
 import { dayFromText, estimateMinutes } from "../schedule";
@@ -162,9 +162,10 @@ export const TOOLS: ToolDefinition[] = [
   // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
   tool(
     "library",
-    "His library: everything he sent (links, posts, photos, videos, files, voice notes). find: the items that fit his words (\"that Instagram video\", \"the photo I sent yesterday\"). attach: put an item on a task (a file is attached, a link goes into its notes). To send him an item, Tony does it himself when he asks.",
+    "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes).",
     {
-      action: { type: "string", enum: ["find", "attach"] },
+      action: { type: "string", enum: ["send", "find", "attach"] },
+      items: { type: "array", items: { type: "string" }, description: "send: the items, e.g. [\"library:3\"]; usually one" },
       text: { type: "string", description: "His words for the item" },
       item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
       task_id: { type: "integer", description: "attach: the task" },
@@ -646,6 +647,17 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         if (list.length === 0) return { ok: true, items: [], note: "nothing in his library fits; say so" };
         return { ok: true, items: list.map((entry) => `${itemRef(entry)} ${itemLabel(entry, now)}${entry.url ? ` ${entry.url}` : ""}`), ...(found.choices ? { note: "several fit equally: ask him which, with their titles" } : {}) };
       }
+      if (action === "send") {
+        const refs = [...(Array.isArray(args.items) ? args.items.map(String) : []), ...(typeof args.item === "string" ? [args.item] : [])].map((ref) => ref.trim()).filter(Boolean).slice(0, 3);
+        const found: LibraryItem[] = [];
+        for (const ref of refs) {
+          const entry = await loadItem(ref);
+          if (entry) found.push(entry);
+        }
+        if (found.length === 0) return fail("no such item: use a reference from the Library list (\"library:3\", \"media:7\") or find it first");
+        // Tony sends them after the reply; the reply only says a word around them.
+        return { ok: true, send_items: found.map(itemRef), sending: found.map((entry) => itemLabel(entry, now)) };
+      }
       if (action === "attach") {
         const task = await loadTask(args.task_id);
         if (!task) return fail(`no task #${args.task_id}`);
@@ -654,7 +666,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         if (!(await attachItem(target, task.id))) return fail("it could not be attached");
         return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), attached: itemLabel(target, now), wrote: {} };
       }
-      return fail("library action must be find or attach");
+      return fail("library action must be send, find or attach");
     }
 
     case "rule": {

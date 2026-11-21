@@ -275,6 +275,8 @@ export async function think(
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
           if (name === "rule_fire" && typeof (outcome as { send_item?: unknown }).send_item === "string") sendItems.push(String((outcome as { send_item?: unknown }).send_item));
+          const sending = (outcome as { send_items?: unknown }).send_items;
+          if (name === "library" && Array.isArray(sending)) for (const ref of sending) if (!sendItems.includes(String(ref))) sendItems.push(String(ref));
           if (name === "rule") {
             const made = (outcome as { rule?: { situation: string; action: string; item?: string; skip?: string } }).rule;
             if (made) ruleLines.push(`📏 Rule saved: when ${made.situation.replace(/^when\s+/i, "")} → ${made.action}${made.item ? ` · ${made.item}` : ""}${made.skip ? ` _(also after ${made.skip})_` : ""}`);
@@ -350,7 +352,7 @@ export async function think(
   // and "Here it is, sir" only when something is really being sent.
   if (reply) {
     const plain = withoutInternals(reply);
-    const honest = mediaIds?.length ? plain : withoutSendClaims(plain);
+    const honest = mediaIds?.length || sendItems.length ? plain : withoutSendClaims(plain);
     if (honest !== reply) reply = honest || (honest === plain ? undefined : "I couldn't find that one, sir.");
   }
 

@@ -10,6 +10,16 @@ const MINUTE = 60_000;
 
 /** A page's title, fetched quickly; a readable stand-in from the address if the page will not say. */
 export async function fetchTitle(url: string, timeoutMs = 6_000): Promise<string> {
+  // YouTube's page hides its title from bots; its oEmbed answer has it, no key needed.
+  if (/youtu\.?be/i.test(url)) {
+    try {
+      const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { signal: AbortSignal.timeout(timeoutMs) });
+      const title = response.ok ? ((await response.json()) as { title?: string }).title?.trim() : undefined;
+      if (title) return title.slice(0, 200);
+    } catch {
+      // The page below may still say.
+    }
+  }
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
