@@ -47,6 +47,7 @@ const { keepDropped, weeklyMemoryReview } = await import("../src/lib/memory-revi
 const { runSmartJobs } = await import("../src/lib/smart-jobs");
 const { runBriefs } = await import("../src/lib/briefs");
 const { getSettings } = await import("../src/lib/settings");
+const { runAction } = await import("../src/lib/actions");
 
 let callId = 0;
 const tools = (...calls: [string, Record<string, unknown>][]): Answer => ({
@@ -562,5 +563,108 @@ describe("Layered memory: this week, this month, always", () => {
     vi.setSystemTime(at("2026-11-22T21:31"));
     await runSmartJobs(bot, 42, await getSettings(), new Date());
     expect(sent.filter((text) => text.includes("Sunday memory review"))).toHaveLength(1);
+  });
+});
+
+// ── His main priority (22 Nov) ──────────────────────────────────────────
+describe("Main priority: chased until it is done", () => {
+  /** A bot that keeps each message and its buttons. */
+  const recorder = () => {
+    const sent: { text: string; buttons: string[] }[] = [];
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown, extra?: { reply_markup?: { inline_keyboard?: { text: string }[][] } }) => {
+          if (String(name).startsWith("send")) sent.push({ text: typeof text === "string" ? text : JSON.stringify(text), buttons: (extra?.reply_markup?.inline_keyboard ?? []).flat().map((button) => button.text) });
+          return { message_id: 600 + sent.length };
+        },
+      },
+    );
+    return { bot: { api } as never, sent };
+  };
+  const tick = async (bot: never, when: string) => {
+    vi.setSystemTime(at(when));
+    await runSmartJobs(bot, 42, await getSettings(), new Date());
+  };
+  const nudges = (sent: { text: string }[]) => sent.filter((message) => message.text.includes("⭐"));
+
+  it("'make IELTS my main priority': its sessions become the main priority (one a day), the last one is replaced, and the receipt says so", async () => {
+    const old = task({ title: "Finish the landing page", due_at: "2026-11-22T15:00", main_priority: true });
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly" });
+    const tuesday = task({ title: "IELTS: Reading + Listening (learn)", due_at: "2026-11-24T09:00", repeat_rule: "weekly" });
+    const result = await run("make IELTS my main priority, don't let me skip it", "2026-11-22T12:00", [tools(["main_priority", { action: "set", task_ids: [monday.id, tuesday.id] }])]);
+    expect(result.replies[0]).toBe("⭐ Main priority: **IELTS: Writing Task 2 (learn) + Speaking Part 3** and its other session · I'll keep after you until it's done.");
+    expect(tasks().filter((row) => row.main_priority).map((row) => row.id)).toEqual([monday.id, tuesday.id]);
+    expect(byTitle("Finish the landing page").main_priority).toBe(false);
+    void old;
+  });
+
+  it("Monday: nothing before 09:30; then a nudge with its buttons every 30 minutes, hourly once two go unanswered; no 'still open' about it", async () => {
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true, duration_minutes: 240 });
+    state.db.insert("reminders", { task_id: monday.id, fire_at: at("2026-11-23T09:00").toISOString(), kind: "due", attempt: 0, state: "sent", sent_at: at("2026-11-23T09:00").toISOString() });
+    const { bot, sent } = recorder();
+    await tick(bot, "2026-11-23T09:29");
+    expect(nudges(sent)).toHaveLength(0);
+    await tick(bot, "2026-11-23T09:30");
+    expect(nudges(sent)).toHaveLength(1);
+    expect(sent[0].text).toContain("IELTS: Writing Task 2 (learn) + Speaking Part 3</b> is still waiting, sir: your main priority, set for <b>09:00</b>.");
+    expect(sent[0].buttons).toEqual(["▶️ Starting now", "✓ Done", "⏰ In 1 hour", "Not today"]);
+    await tick(bot, "2026-11-23T09:45");
+    expect(nudges(sent)).toHaveLength(1);
+    await tick(bot, "2026-11-23T10:00");
+    await tick(bot, "2026-11-23T10:30");
+    expect(nudges(sent)).toHaveLength(2);
+    await tick(bot, "2026-11-23T11:00");
+    expect(nudges(sent)).toHaveLength(3);
+    expect(sent.some((message) => message.text.includes("still open"))).toBe(false);
+  });
+
+  it("▶️ Starting now: quiet for its four hours, then 'Done?'; ✓ Done ends it, and the session comes round next week", async () => {
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true, duration_minutes: 240 });
+    const { bot, sent } = recorder();
+    await tick(bot, "2026-11-23T09:30");
+    vi.setSystemTime(at("2026-11-23T09:35"));
+    await runAction("start", Number(monday.id), undefined, new Date());
+    await tick(bot, "2026-11-23T10:30");
+    await tick(bot, "2026-11-23T13:00");
+    expect(nudges(sent)).toHaveLength(1);
+    await tick(bot, "2026-11-23T13:35");
+    expect(nudges(sent)).toHaveLength(2);
+    expect(sent[1].text).toContain("Done with <b>IELTS: Writing Task 2 (learn) + Speaking Part 3</b>, sir?");
+    expect(sent[1].buttons).toEqual(["✓ Done", "⏳ 30 more min", "Not today"]);
+    vi.setSystemTime(at("2026-11-23T13:40"));
+    await runAction("done", Number(monday.id), undefined, new Date());
+    expect(local(byTitle("IELTS: Writing Task 2 (learn) + Speaking Part 3").due_at)).toBe("2026-11-30T09:00");
+    await tick(bot, "2026-11-23T14:30");
+    expect(nudges(sent)).toHaveLength(2);
+  });
+
+  it("the morning brief names today's main priority under the greeting", async () => {
+    task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true });
+    task({ title: "IELTS: Reading + Listening (learn)", due_at: "2026-11-24T09:00", repeat_rule: "weekly", main_priority: true });
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-23T08:00"));
+    await runBriefs(bot, 42, await getSettings(), new Date());
+    const brief = sent.find((message) => message.text.includes("Good morning"))!.text;
+    // ⭐, not 🔥: the brief's habits are 🔥 (streaks).
+    expect(brief).toContain('["⭐ ",{"type":"bold","text":"Main priority"},": IELTS: Writing Task 2 (learn) + Speaking Part 3 · ",{"type":"bold","text":"09:00"}]');
+    expect(brief).not.toContain('"Main priority"},": IELTS: Reading');
+  });
+
+  it("⏰ In 1 hour waits for that reminder; never at night; 'Not today' on a weekly session skips to its next week", async () => {
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true });
+    const { bot, sent } = recorder();
+    await tick(bot, "2026-11-23T09:30");
+    vi.setSystemTime(at("2026-11-23T09:31"));
+    await runAction("snooze", Number(monday.id), 60, new Date());
+    await tick(bot, "2026-11-23T10:15");
+    expect(nudges(sent)).toHaveLength(1);
+    vi.setSystemTime(at("2026-11-23T10:40"));
+    await runAction("skip", Number(monday.id), undefined, new Date());
+    expect(local(byTitle("IELTS: Writing Task 2 (learn) + Speaking Part 3").due_at)).toBe("2026-11-30T09:00");
+    // An undated main priority is chased from 10:00, never in quiet hours.
+    task({ title: "Finish the landing page", main_priority: true });
+    await tick(bot, "2026-11-23T23:30");
+    expect(nudges(sent)).toHaveLength(1);
   });
 });

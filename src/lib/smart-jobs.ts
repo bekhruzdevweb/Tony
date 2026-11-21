@@ -9,6 +9,7 @@ import { esc, plain } from "./html";
 import type { LibraryItem } from "./library-rules";
 import { loadMedia, mediaCaption, needsReading, rereadDocument, sendMedia } from "./media";
 import { readableDocument } from "./vision";
+import { mainPriorityNudge } from "./main-priority";
 import { weeklyMemoryReview } from "./memory-review";
 import { logMessage } from "./messages";
 import { markdownToHtml } from "./rich";
@@ -22,7 +23,7 @@ import { connectTelegram } from "./telegram-setup";
 import { requireDb } from "./db";
 
 /**
- * Phases c–e on the minute tick (21 Nov): the same-day follow-up, a rule
+ * Phases c–e on the minute tick (21 Nov): his main priority's chase (22 Nov), the same-day follow-up, a rule
  * that fires on its own, a free-time suggestion, Sunday's inbox review and
  * memory review (21:30), and the daily jobs (backup 03:00, self-test 07:00,
  * budget guard 09:00). Unasked
@@ -65,14 +66,24 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
   };
 
   if (!quiet) {
-    // d) Missed today: one message for all of them, later the same day.
-    await job("follow-up", async () => {
-      const followUp = await sameDayFollowUp(now);
-      if (!followUp) return;
-      await send(bot, chatId, followUp.text, followUp.rows);
-      await noteFollowUp(followUp.taskIds, now);
+    // His main priority (22 Nov): chased until it is done, before anything else is said this minute.
+    await job("main-priority", async () => {
+      const nudge = await mainPriorityNudge(now);
+      if (!nudge) return;
+      await send(bot, chatId, nudge.text, nudge.rows);
+      await logEvent("main_nudge", { task_id: nudge.taskId, n: nudge.step.n, kind: nudge.step.kind });
       sent++;
     });
+    // d) Missed today: one message for all of them, later the same day.
+    if (sent === 0) {
+      await job("follow-up", async () => {
+        const followUp = await sameDayFollowUp(now);
+        if (!followUp) return;
+        await send(bot, chatId, followUp.text, followUp.rows);
+        await noteFollowUp(followUp.taskIds, now);
+        sent++;
+      });
+    }
     // b) A rule that fires on its own: days without a workout, and the video he chose for it.
     if (sent === 0) {
       await job("rules", async () => {

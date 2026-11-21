@@ -122,7 +122,8 @@ export async function sameDayFollowUp(now: Date): Promise<{ text: string; rows: 
   }
   // A task he snoozed or that has another reminder still to come is handled: no "still open" for it.
   const skip = new Set([...(await followedUpToday(now)), ...(await waitingOnReminder(now))]);
-  const tasks = missedToday(await openTasks(), now, skip);
+  // His main priority has its own chase (main-priority.ts): never a second "still open" about it.
+  const tasks = missedToday((await openTasks()).filter((task) => !(task as { main_priority?: boolean }).main_priority), now, skip);
   if (tasks.length === 0) return undefined;
   if ((await budgetLeft(now)) <= 0) return undefined;
   const lead = tasks.length === 1 ? "⏰ Still open from today:" : `⏰ ${tasks.length} still open from today:`;

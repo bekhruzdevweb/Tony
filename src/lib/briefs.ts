@@ -17,6 +17,7 @@ import { allClashes, clashSentence } from "./brain/checks";
 import { sayAloud } from "./speech";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
+import { chasedToday } from "./main-priority";
 import { dayView, loadProjects, taskLine } from "./views";
 
 /** A brief that could not go out on time is still sent for this long, then skipped for the day. */
@@ -145,7 +146,10 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const goalRows = ((await requireDb().from("memory").select("id, fact, layer, goal, mentions, confirmed_at, created_at").eq("goal", true)).data ?? []) as Parameters<typeof currentGoals>[0];
   const goals = currentGoals(goalRows, now).slice(0, 3);
   const focus = goals.length ? `🎯 ${b("Focus")}: ${goals.map((goal) => esc(goal.fact)).join(" · ")}` : undefined;
-  const html = ["Good morning, sir.", focus, open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  // His main priority today (22 Nov): the one thing Tony chases until it is done.
+  const chased = await chasedToday(now).catch(() => undefined);
+  const main = chased ? `⭐ ${b("Main priority")}: ${esc(chased.task.title)}${chased.timed ? ` · ${b(formatTime(chased.due))}` : ""}` : undefined;
+  const html = ["Good morning, sir.", focus, main, open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 

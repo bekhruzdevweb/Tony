@@ -99,6 +99,7 @@ Rules:
 - Titles, notes and parts are his own list, read by him: write them as he would ("Message my teacher about…", "the new app I'm building"), never about him in the third person ("his teacher", "he wants", "the app he's building").
 - A task with a time: add_task with due_at (it gets a reminder). With no time: add_task without due_at (inbox); do not ask for a time he did not offer. Status "dropped" deletes a task. "Remind me about X" with no day or time: add it to the inbox.
 - persistent=true for workouts and anything he calls important; say "persistent mode on".
+- His main priority ("make X my main priority", "X is the main thing now", "don't let me skip X"): main_priority set with that task (for a plan's sessions, all of them: one is chased each day). Tony then chases it in code until it is done. "Stop chasing it", "not a priority any more": main_priority clear. One at a time: setting one replaces the last. Priority 1-4 is something else.
 - Set a project only when the task clearly fits one of his projects (listed below).
 - Resolve "tomorrow", "Monday" and the like against the date and the list of days given below. A weekday name means its next occurrence.
 - Never add a task already listed below; update it instead. If several tasks could be meant, ask which.
@@ -206,6 +207,7 @@ export function taskLine(
   if (task.status === "in_progress") parts.push("started");
   if (task.due_at && new Date(task.due_at).getTime() < now.getTime() && task.status !== "in_progress") parts.push("overdue");
   if (task.persistent) parts.push("persistent");
+  if (task.main_priority) parts.push("⭐ main priority");
   if (task.priority < 4) parts.push(`P${task.priority}`);
   if (task.repeat_rule) parts.push(`repeats ${task.repeat_rule}`);
   const project = projects.find((p) => p.id === task.project_id);

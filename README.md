@@ -24,6 +24,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | P3 | Smart context: bursts, library, situation rules ("when X, do Y"), 🌙 Free Time list and suggestions, follow-up ladder | Live, awaiting your check |
 | P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Live, awaiting your check |
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
+| MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -632,6 +633,26 @@ Migration `0023_decide.sql` adds `routine.auto_kinds` and
   change); a question in conversation is answered in words.
 - **Your words for titles:** Uzbek or Russian stays exactly as you wrote it
   ("Zamokli ko'ynak olish" is never "Buy a zippered shirt").
+
+## Main priority (MP, 22 Nov)
+
+Your idea: the one thing Tony does not let you leave unfinished.
+
+- **Setting it:** "make IELTS my main priority" (for a plan's sessions, all of
+  them: one is chased each day). One at a time: a new one replaces the last.
+  "Stop chasing it" clears it. Stored as `tasks.main_priority` (migration
+  `0029_main_priority.sql`).
+- **The chase** (the minute tick, plain code): from 30 minutes after its time,
+  if it is not started or done, a nudge every 30 minutes; after two you did not
+  answer, every hour. Never in quiet hours, at most 8 a day (the last one says
+  it stops for today). One with no time, or left from an earlier day, is chased
+  from 10:00. It never comes on top of its own reminder, and the "still open"
+  follow-up leaves it to the chase.
+- **The buttons** are the reminders' own: ▶️ Starting now (quiet for its length,
+  an hour without one, then "Done?"), ✓ Done (a repeating session comes round
+  on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
+  next week; anything else moves to tomorrow). Every tap counts as an answer.
+- **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
 
 ## Smart context (Phase 3)
 

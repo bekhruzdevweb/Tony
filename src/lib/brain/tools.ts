@@ -204,6 +204,13 @@ export const TOOLS: ToolDefinition[] = [
     { id: { type: "integer" }, reply },
     ["id"],
   ),
+  // His main priority (22 Nov): the one thing chased until it is done.
+  tool(
+    "main_priority",
+    "His main priority (⭐ in the list): the one thing he must finish. Tony chases it in code until it is done: a nudge every 30 minutes from half an hour after its time, hourly when he does not answer, never at night, at most 8 a day. set: the task's id, or the ids of one plan's sessions (then one is chased each day); setting one replaces the last. clear: he no longer wants it chased.",
+    { action: { type: "string", enum: ["set", "clear"] }, task_ids: { type: "array", items: { type: "integer" } }, reply },
+    ["action"],
+  ),
   tool(
     "ask",
     "Ask him a question with tappable answers.",
@@ -760,6 +767,31 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       }
       if (action === "list") return { ok: true, show_rules: true };
       return fail("rule action must be add, delete or list");
+    }
+
+    case "main_priority": {
+      const ids = Array.isArray(args.task_ids) ? args.task_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0) : [];
+      if (args.action === "clear") {
+        let query = db.from("tasks").update({ main_priority: false }).eq("main_priority", true);
+        if (ids.length) query = query.in("id", ids);
+        const { data, error } = await query.select("title");
+        check("main_priority", error);
+        return { ok: true, main_cleared: ((data ?? []) as { title: string }[]).map((row) => row.title) };
+      }
+      if (args.action !== "set") return fail("action must be set or clear");
+      if (ids.length === 0) return fail("task_ids: the task he named (or the sessions of one plan) to make his main priority");
+      const found = await db.from("tasks").select("id, title, status, due_at").in("id", ids);
+      check("main_priority", found.error);
+      const open = ((found.data ?? []) as { id: number; title: string; status: string; due_at: string | null }[]).filter((row) => OPEN_STATUSES.includes(row.status as Task["status"]));
+      if (open.length === 0) return fail("none of those tasks is open");
+      // One main priority: the last one is cleared.
+      const keep = open.map((row) => row.id);
+      const cleared = await db.from("tasks").update({ main_priority: false }).eq("main_priority", true).not("id", "in", `(${keep.join(",")})`).select("title");
+      check("main_priority", cleared.error);
+      const set = await db.from("tasks").update({ main_priority: true }).in("id", keep).select("id, title, due_at");
+      check("main_priority", set.error);
+      const rows = ((set.data ?? []) as { id: number; title: string; due_at: string | null }[]).sort((a, b) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9"));
+      return { ok: true, main: rows.map((row) => row.title), replaced: ((cleared.data ?? []) as { title: string }[]).map((row) => row.title), note: "Tony chases it in code; say nothing about how it works" };
     }
 
     case "rule_fire": {

@@ -906,6 +906,8 @@ export function getBot(): Bot | undefined {
       // Always stop the button's spinner, even when the action failed.
       await ctx.answerCallbackQuery().catch(() => undefined);
     }
+    // He answered about this task: his main priority's chase counts from here (main-priority.ts).
+    await logEvent("task_tap", { task_id: parsed.taskId, action: parsed.action });
 
     const keyboard = outcome.keyboard ?? undefined;
     if (!outcome.text) {

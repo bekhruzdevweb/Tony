@@ -313,6 +313,14 @@ export async function think(
             if ((outcome as { rule_deleted?: unknown }).rule_deleted) ruleLines.push("🗑 Rule removed.");
             if ((outcome as { show_rules?: unknown }).show_rules) showRules = true;
           }
+          // His main priority, read back from what was stored (shown like a rule, under Tony's words).
+          if (name === "main_priority") {
+            const main = (outcome as { main?: unknown }).main;
+            const cleared = (outcome as { main_cleared?: unknown }).main_cleared;
+            const others = Array.isArray(main) ? main.length - 1 : 0;
+            if (Array.isArray(main) && main.length) ruleLines.push(`⭐ Main priority: **${String(main[0])}**${others === 1 ? " and its other session" : others > 1 ? ` and its ${others} other sessions` : ""} · I'll keep after you until it's done.`);
+            if (Array.isArray(cleared)) ruleLines.push(cleared.length ? "⭐ No main priority now." : "⭐ There was no main priority, sir.");
+          }
           if (call.function.name === "remember" && Number.isFinite(Number((outcome as { id?: unknown }).id))) {
             const kept = outcome as { id?: unknown; fact?: unknown; layer?: unknown; confirmed?: unknown; changed?: unknown };
             remembered.push({ id: Number(kept.id), fact: String(kept.fact ?? ""), layer: String(kept.layer ?? "always"), quiet: kept.confirmed === true && kept.changed === false });
@@ -691,14 +699,14 @@ export type Slot =
 export { dayLabel };
 
 /** Tools that write: their success is read back from the database before it is confirmed. */
-const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine"]);
+const WRITES = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "save_link", "routine", "main_priority"]);
 
 const TASK_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library"]);
 /** "As a preview", "both", "everything", "all the files": he wants all that is kept with the task, not one file. */
 export const wantsWholeTask = (said: string) => /\b(previews?|both|everything|all of (it|them)|all (the |its |my )?(files|materials?|attachments|examples|photos|videos|pictures))\b/i.test(said);
 
 /** Tools that only file or change what he asked for: a turn made only of these is a plain request. */
-const CAPTURE_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library", "remember", "forget", "media"]);
+const CAPTURE_TOOLS = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "library", "remember", "forget", "media", "main_priority"]);
 
 /** A call that changes something: the write tools, a library attach, a rule added or removed. */
 function isWrite(name: string, args: Record<string, unknown>): boolean {
