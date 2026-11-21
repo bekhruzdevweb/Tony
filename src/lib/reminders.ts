@@ -10,7 +10,7 @@ import { busyAround, getRoutine } from "./routine";
 import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
 import { progress, subtasksFor } from "./subtasks";
-import { data, dueReminder, persistentReminder } from "./reminder-messages";
+import { data, dueReminder, notesBlock, persistentReminder } from "./reminder-messages";
 import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
@@ -217,7 +217,11 @@ export async function runTick(
       .limit(10);
     const together = [lead, ...mergeable(lead, ((soon.data ?? []) as (Reminder & { task: Task | null })[]).filter(plainFirst).filter((other) => other.id !== lead.id))];
     if (together.length >= 2) {
-      const lines = together.map((reminder, index) => `${index + 1}. ${b(formatTime(new Date(reminder.task!.due_at ?? reminder.fire_at)))} ${b(reminder.task!.title)}`);
+      // Each with what it holds, folded (the IELTS kickoff's checklist at 20:15).
+      const lines = together.map((reminder, index) => {
+        const held = notesBlock(reminder.task!.notes, 500);
+        return `${index + 1}. ${b(formatTime(new Date(reminder.task!.due_at ?? reminder.fire_at)))} ${b(reminder.task!.title)}${held ? `\n${held}` : ""}`;
+      });
       const keyboard = new InlineKeyboard();
       together.forEach((reminder, index) => {
         if (index > 0) keyboard.row();
@@ -372,6 +376,8 @@ export async function runTick(
       const list = (await subtasksFor([task.id])).get(task.id) ?? [];
       if (list.length) message.text = `${message.text}\n${i(`${progress(list)} done`)}\n${list.map((s) => `${s.done ? "☑" : "☐"} ${esc(s.title)}`).join("\n")}`;
     }
+    // The first reminder says what the task holds (its notes, folded): what to do now, without opening the app.
+    const held = attempt === 0 && !prayer && !checkIn ? notesBlock(task.notes) : undefined;
     // Only the first reminder carries the attachment; later nudges are plain text.
     // A post he kept with the task (its photos and text) goes out first, as he forwarded it; a single file is the reminder itself.
     const example = attempt === 0 && !prayer ? await sendTaskExample(bot, chatId, task.id).catch((error) => (console.error("Could not send the task's example:", error), false)) : false;
@@ -386,10 +392,14 @@ export async function runTick(
           // A follow-up on an ordinary, low-priority task arrives without sound.
           silent: (prayer && reminder.kind === "extra") || (isFollowUp && !task.persistent && task.priority === 4),
         };
-        // If he attached a photo or file to this task, the reminder is the original itself, with his note.
+        // If he attached a photo or file to this task, the reminder is the original itself, with his note;
+        // the task's notes go with it when they fit a caption, and after it when they do not.
+        const caption = attached ? (attached.note || attached.caption ? `${message.text}\n${i(attached.note ?? attached.caption ?? "")}` : message.text) : "";
+        const withNotes = held && caption.length + held.length + 1 <= 1000 ? `${caption}\n${held}` : caption;
         messageId = attached
-          ? await sendMedia(bot, chatId, attached, attached.note || attached.caption ? `${message.text}\n${i(attached.note ?? attached.caption ?? "")}` : message.text, options)
-          : await sendHtml(bot, chatId, message.text, options);
+          ? await sendMedia(bot, chatId, attached, withNotes, options)
+          : await sendHtml(bot, chatId, held ? `${message.text}\n${held}` : message.text, options);
+        if (attached && held && withNotes === caption) await sendHtml(bot, chatId, held, { silent: true }).catch(() => undefined);
       } catch (error) {
         console.error(`Reminder ${reminder.id}: send attempt ${tryNumber} failed:`, error);
       }

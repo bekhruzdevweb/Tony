@@ -196,6 +196,8 @@ export function taskLine(
   reminders?: ReminderFact[],
   subtaskList?: { title: string; done: boolean }[],
   media?: { photo: number; video: number; file: number },
+  /** How much of its notes to show: more for today's tasks and a list he asked for (what a session holds). */
+  noteChars = 160,
 ): string {
   const parts = [`#${task.id} ${task.title}`];
   parts.push(task.due_at ? formatWhen(new Date(task.due_at), now) : task.free_time ? "🌙 Free Time list, no date" : "inbox, no date");
@@ -209,7 +211,7 @@ export function taskLine(
   const note = reminders ? reminderNote(task, reminders, now) : undefined;
   if (note) parts.push(note);
   // Its notes, so "what was in that task?" is answered from what is stored.
-  if (task.notes) parts.push(`notes: ${task.notes.replace(/\s+/g, " ").slice(0, 160)}${task.notes.length > 160 ? "…" : ""}`);
+  if (task.notes) parts.push(`notes: ${task.notes.replace(/\s+/g, " ").slice(0, noteChars)}${task.notes.length > noteChars ? "…" : ""}`);
   if (subtaskList?.length) parts.push(`parts ${subtaskList.filter((s) => s.done).length}/${subtaskList.length}: ${subtaskList.map((s) => `${s.done ? "☑" : "☐"} ${s.title}`).join("; ")}`);
   // What is attached, so "send me that photo" is answered from what is stored.
   const attached = attachedText(media);
@@ -321,7 +323,10 @@ export function buildSystemPrompt(input: {
     library: input.library ? `His library (send one with library send and its reference; find older ones with library find):\n${input.library}\n\n` : "",
     memory: memoryBlock(memory, now),
     task_note: hidden > 0 ? ` (${hidden} more not shown; use list_tasks to see them)` : "",
-    task_summary: tasks.length ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id), input.media?.get(t.id))).join("\n") : "(none)",
+    // Today's tasks with more of their notes: "what am I doing today?" is answered from what each session holds.
+    task_summary: tasks.length
+      ? tasks.map((t) => taskLine(t, projects, now, reminders, input.subtasks?.get(t.id), input.media?.get(t.id), t.due_at && localDate(new Date(t.due_at)) === localDate(now) ? 700 : 160)).join("\n")
+      : "(none)",
   };
   return { stable: STABLE, live: LIVE.replace(/\{(\w+)\}/g, (whole, key: string) => fill[key] ?? whole) };
 }

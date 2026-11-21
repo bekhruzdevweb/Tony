@@ -405,6 +405,16 @@ describe("e) Safety and monitoring", () => {
     expect(album.map((item) => item.media)).toEqual(["SHOT", "VID"]);
     expect(album[0].caption).toBe("<b>Post stories in this format</b>\nthis is how i should be uploading stories daily");
   });
+  it("a session's reminder says what it holds (its notes, folded); a link stays a button, his copied message stays out", async () => {
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", notes: "Writing, 2 h: question analysis + 9.0 model\nW1 23–29 Nov: Opinion (Journal T2 p13–17)\nhttps://example.com/plan\nFrom your message: \"add it to our plan\"" });
+    state.db.insert("reminders", { task_id: monday.id, fire_at: at("2026-11-23T09:00").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-23T08:59").toISOString();
+    const sent: string[] = [];
+    const bot = { api: new Proxy({}, { get: (_target, name) => async (_chat: number, text?: unknown) => (String(name).startsWith("send") && sent.push(String(text)), { message_id: 970 + sent.length }) }) };
+    vi.setSystemTime(at("2026-11-23T09:00"));
+    await runTick(bot as never, 42, new Date());
+    expect(sent[0]).toBe("Sir, a reminder: <b>IELTS: Writing Task 2 (learn) + Speaking Part 3</b>.\n<blockquote expandable>Writing, 2 h: question analysis + 9.0 model\nW1 23–29 Nov: Opinion (Journal T2 p13–17)</blockquote>");
+  });
   it("one task with two reminders written at once (task 52, 17:45): it goes out once, the copy is cancelled", async () => {
     const workout = task({ title: "Add my workout days to Tony", due_at: "2026-11-22T17:45" });
     for (let n = 0; n < 2; n++) state.db.insert("reminders", { task_id: workout.id, fire_at: at("2026-11-22T17:45").toISOString(), kind: "due", attempt: 0 });

@@ -573,7 +573,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const tasks = (data as Task[]).filter((t) => t.kind !== "prayer" && (!wantOverdue || isOverdue(t, now)));
       // Each with its notes, parts and attachments, so Tony can say what a task holds.
       const [parts, media] = await Promise.all([subtasksFor(tasks.map((t) => t.id)), attachmentCounts(tasks.map((t) => t.id))]);
-      return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now, undefined, parts.get(t.id), media.get(t.id))) };
+      return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now, undefined, parts.get(t.id), media.get(t.id), tasks.length <= 12 ? 700 : 160)) };
     }
 
     case "set_reminder": {

@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { b } from "./html";
+import { b, esc, expandable } from "./html";
 import type { Task } from "./tasks";
 import { formatTime, laterThisEvening } from "./time";
 
@@ -28,6 +28,21 @@ export const rescheduleKeyboard = (taskId: number) =>
   new InlineKeyboard().text("In 1 hour", data("snooze", taskId, 60)).text("Tomorrow", data("tomorrow", taskId));
 
 /** A plain, one-time reminder at the due time. Texts here are Telegram HTML. */
+/**
+ * What a task holds, for its reminder: its notes without links (the link is a button) and without the
+ * copy of his message kept "so nothing is lost", folded away under the reminder. "What am I doing
+ * today?" is answered by the reminder itself (22 Nov: the IELTS sessions' blocks and the week's types).
+ */
+export function notesBlock(notes: string | null | undefined, limit = 900): string | undefined {
+  const lines = (notes ?? "")
+    .split("\n")
+    .map((line) => line.replace(/https?:\/\/\S+/g, "").trimEnd())
+    .filter((line) => line.trim() && !/^From your message:/.test(line.trim()));
+  if (lines.length === 0) return undefined;
+  const text = lines.join("\n");
+  return expandable(esc(text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text));
+}
+
 export function dueReminder(task: Task): { text: string; keyboard: InlineKeyboard } {
   return {
     text: `Sir, a reminder: ${b(task.title)}.`,
