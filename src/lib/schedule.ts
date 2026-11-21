@@ -131,13 +131,44 @@ export function dayFromText(text: string, now: Date): Date | undefined {
   const plus = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60_000);
   // Between midnight and 05:00 he has not slept yet: "tomorrow" is the coming morning's date.
   const tomorrow = new Date(now.getTime() + 5 * 60 * 60_000).getUTCHours() < 5 ? 0 : 1;
-  if (/\bday after (tomorrow|tmrw?|tomm?orr?ow)\b/.test(t)) return plus(tomorrow + 1);
-  if (/\b(tomorrow|tmrw?|tomm?orr?ow)\b/.test(t)) return plus(tomorrow);
-  if (/\b(today|tonight|this (morning|afternoon|evening))\b/.test(t)) return now;
+  if (/\bday after (tomorrow|tmrw?|tomm?orr?ow)\b|\bindinga\b|послезавтра/.test(t)) return plus(tomorrow + 1);
+  if (/\b(tomorrow|tmrw?|tomm?orr?ow|ertaga|ertangi)\b|завтра/.test(t)) return plus(tomorrow);
+  if (/\b(today|tonight|this (morning|afternoon|evening)|bugun|bugungi)\b|сегодня/.test(t)) return now;
+  // A date: "on 25th", "25 November", "Nov 25", "25-noyabr", "25 ноября" (this year, or next if it has passed).
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const uzMonths = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+  const ruMonths = ["январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"];
+  const local = new Date(now.getTime() + 5 * 60 * 60_000);
+  const dated = (day: number, month: number) => {
+    if (day < 1 || day > 31) return undefined;
+    let year = local.getUTCFullYear();
+    const at = (y: number) => new Date(`${y}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00+05:00`);
+    if (at(year).getTime() < now.getTime() - 24 * 60 * 60_000) year += 1;
+    const date = at(year);
+    return Number.isNaN(date.getTime()) ? undefined : date;
+  };
+  const en = /\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?\b/.exec(t);
+  if (en) return dated(Number(en[1] ?? en[4]), months.indexOf((en[2] ?? en[3]).slice(0, 3)));
+  const uz = /\b(\d{1,2})[-\s]?(yanvar|fevral|mart|aprel|may|iyun|iyul|avgust|sentabr|oktabr|noyabr|dekabr)/.exec(t);
+  if (uz) return dated(Number(uz[1]), uzMonths.indexOf(uz[2]));
+  const ru = /(\d{1,2})\s+(январ|феврал|март|апрел|ма[яй]|июн|июл|август|сентябр|октябр|ноябр|декабр)/.exec(t);
+  if (ru) return dated(Number(ru[1]), ru[2].startsWith("ма") ? 4 : ruMonths.indexOf(ru[2]));
+  const nth = /\b(?:on (?:the )?)?(\d{1,2})(?:st|nd|rd|th)\b/.exec(t);
+  if (nth) return dated(Number(nth[1]), local.getUTCMonth()) ?? undefined;
+  // A weekday, in English, Uzbek or Russian ("on Monday", "dushanba kuni", "в понедельник"); "weekend" is Saturday.
   const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  const named = names.findIndex((name) => new RegExp(`\\b${name}\\b`).test(t));
+  const uzNames = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+  const ruNames = ["воскресен", "понедельник", "вторник", "сред", "четверг", "пятниц", "суббот"];
+  let named = names.findIndex((name) => new RegExp(`\\b${name}\\b`).test(t));
+  if (named < 0) named = uzNames.findIndex((name) => new RegExp(`(^|[^a-z'])${name}(\\b|kun|ga|da)`).test(t) && !(name === "shanba" && /(yak|du|se|chor|pay)shanba/.test(t)));
+  if (named < 0) named = ruNames.findIndex((name) => t.includes(name) && !(name === "сред" && /средн|средств/.test(t)));
+  if (named < 0 && /\b(this |the )?weekend\b|dam olish kuni|выходны/.test(t)) {
+    // On a Saturday or Sunday, "this weekend" is today; otherwise the coming Saturday.
+    if (local.getUTCDay() === 6 || local.getUTCDay() === 0) return now;
+    named = 6;
+  }
   if (named >= 0) {
-    const today = new Date(now.getTime() + 5 * 60 * 60_000).getUTCDay();
+    const today = local.getUTCDay();
     return plus(((named - today + 7) % 7) || 7);
   }
   return undefined;

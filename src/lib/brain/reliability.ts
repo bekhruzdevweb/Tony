@@ -105,6 +105,44 @@ export function givenTimes(text: string, now: Date): GivenTime[] {
   for (const match of lower.matchAll(/\bat ([01]?\d|2[0-3])\b(?![:.]\d|\s*(?:and a half|a\.?\s?m|p\.?\s?m|%|pages?|images?|minutes?|hours?))/g)) {
     add(match.index! + 3, match[0].length - 3, ampm(Number(match[1]), undefined));
   }
+  // "at noon", "midday", "midnight"; "half past 8", "quarter past 8", "quarter to 9"
+  // Only "at noon" is a time; "afternoon or noon" is a part of the day, asked about.
+  for (const match of lower.matchAll(/\b(?:at|by) (noon|midday|midnight)\b/g)) add(match.index!, match[0].length, [match[1] === "midnight" ? 0 : 12 * 60]);
+  for (const match of lower.matchAll(/\b(half|quarter) (past|to) (1[0-2]|0?[1-9])\b/g)) {
+    const hour = Number(match[3]);
+    const offset = match[1] === "half" ? 30 : match[2] === "past" ? 15 : -15;
+    add(match.index!, match[0].length, ampm(hour, undefined).map((m) => (m + offset + 24 * 60) % (24 * 60)));
+  }
+  // Uzbek and Russian, as he speaks (21 Nov audit): "soat 9da", "9 da", "ertalab 7 da", "kechqurun 8da",
+  // "soat 9 yarimda"; "в 9 утра", "в 7 вечера", "в 3 дня", "в 2 ночи", "в полдень", "в полночь".
+  const part = (words: string): "a" | "p" | "night" | undefined =>
+    /ertalab|tongda|утра|утром/.test(words) ? "a" : /kechqurun|kechki|kech\b|tushdan keyin|tushda|abetdan keyin|вечера|вечером|дня|днём|днем/.test(words) ? "p" : /kechasi|tunda|ночи|ночью/.test(words) ? "night" : undefined;
+  const local = (hour: number, minute: number, words: string) => {
+    const when = part(words);
+    if (when === "night") return [((hour >= 6 && hour < 12 ? hour + 12 : hour % 12) % 24) * 60 + minute];
+    return ampm(hour, when).map((m) => m + minute);
+  };
+  for (const match of lower.matchAll(/\b(?:soat\s*)?([01]?\d|2[0-3])(?:[:.]([0-5]\d))?\s*(yarim)?\s*(?:da|ga|larda|lar(?:da)?|dan keyin)\b/g)) {
+    // "30 daqiqadan keyin", "2 soatdan keyin" are durations, handled below.
+    if (/daqiqa|soatdan|minut/.test(lower.slice(match.index!, match.index! + match[0].length + 8))) continue;
+    if (!/soat|\d\s*(da|ga|larda)\b/.test(match[0])) continue;
+    const around = lower.slice(Math.max(0, match.index! - 20), match.index! + match[0].length + 20);
+    add(match.index!, match[0].length, local(Number(match[1]), match[3] ? 30 : Number(match[2] ?? 0), around));
+  }
+  for (const match of lower.matchAll(/(?:^|\s)в\s+([01]?\d|2[0-3])(?:[:.]([0-5]\d))?(?:\s*(?:час(?:а|ов)?))?\s*(утра|вечера|дня|ночи)?(?=\s|$|[,.!?])/g)) {
+    add(match.index!, match[0].length, local(Number(match[1]), Number(match[2] ?? 0), match[3] ?? ""));
+  }
+  for (const match of lower.matchAll(/(?:в\s+)?(полдень|полночь|tushda soat 12)/g)) add(match.index!, match[0].length, [match[1] === "полночь" ? 0 : 12 * 60]);
+  // Durations: "yarim soatdan keyin", "1 soatdan keyin", "30 daqiqadan keyin"; "через полчаса", "через 2 часа", "через 30 минут".
+  const inMinutes = (minutes: number, index: number) => found.push({ index, time: { at: new Date(Math.round((now.getTime() + minutes * 60_000) / 60_000) * 60_000) } });
+  for (const match of lower.matchAll(/\b(yarim|\d{1,3})\s*(soat|daqiqa|minut)dan (?:keyin|so'ng|soʻng)/g)) {
+    const amount = match[1] === "yarim" ? 0.5 : Number(match[1]);
+    inMinutes(match[2] === "soat" ? amount * 60 : amount, match.index!);
+  }
+  for (const match of lower.matchAll(/через\s+(полчаса|час|(\d{1,3})\s*(час(?:а|ов)?|минут(?:у|ы)?))/g)) {
+    const minutes = match[1] === "полчаса" ? 30 : match[1] === "час" ? 60 : /^час/.test(match[3]) ? Number(match[2]) * 60 : Number(match[2]);
+    inMinutes(minutes, match.index!);
+  }
   return found.sort((a, b) => a.index - b.index).map((entry) => entry.time);
 }
 
