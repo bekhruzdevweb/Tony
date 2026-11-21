@@ -1,8 +1,7 @@
 import "server-only";
 import { requireDb } from "../db";
 import { higherLayer, readLayer, type MemoryLayer } from "../memory-rules";
-import { attachmentCounts, findMedia, loadMedia, storedBytes, updateMedia, mediaLabel } from "../media";
-import { readDocument, readableDocument } from "../vision";
+import { attachmentCounts, findMedia, mediaLabel, needsReading, rereadDocument, updateMedia } from "../media";
 import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { getSettings } from "../settings";
@@ -38,6 +37,7 @@ const taskFields = {
   priority: { type: "integer", description: "1 urgent to 4 normal" },
   persistent: { type: "boolean" },
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
+  repeat_until: { type: "string", description: "YYYY-MM-DD: the last day a repeating task comes round (a plan's end date)" },
   notes: { type: "string", description: "Description: links, details, anything that would make the title long." },
   duration: { type: "integer", description: "Minutes it takes: his figure, or your estimate" },
   day: { type: "string", description: "YYYY-MM-DD: a day he named WITHOUT a time. Leave due_at out; Tony picks or offers the time from his routine." },
@@ -177,6 +177,7 @@ export const TOOLS: ToolDefinition[] = [
       text: { type: "string", description: "His words for the item" },
       item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
       task_id: { type: "integer", description: "attach: the task" },
+      from: { type: "integer", description: "read: where to start in a long document (the next_from it gave)" },
     },
     ["action"],
   ),
@@ -302,6 +303,10 @@ async function readFields(
     if (!["daily", "weekdays", "weekly", "none"].includes(args.repeat)) return { error: "repeat must be daily, weekdays, weekly or none" };
     patch.repeat_rule = args.repeat === "none" ? null : (args.repeat as Task["repeat_rule"]);
   }
+  if (typeof args.repeat_until === "string" && args.repeat_until.trim()) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(args.repeat_until.trim())) return { error: "repeat_until must be YYYY-MM-DD" };
+    patch.repeat_until = args.repeat_until.trim();
+  } else if (args.repeat === "none") patch.repeat_until = null;
   if (args.project === "none") {
     patch.project_id = null;
   } else if (typeof args.project === "string" && args.project.trim()) {
@@ -709,23 +714,18 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       }
       if (action === "read") {
         if (!item) return fail("read needs an item from the Library list, e.g. \"media:7\"");
-        // A PDF or text file kept before Tony could read them (the IELTS plan, 22 Nov 01:59): read now, from its stored copy.
-        if (item.source === "media" && item.kind === "document" && !/^Summary:|\n/m.test(item.description ?? "")) {
-          const media = await loadMedia(item.id);
-          const name = item.description?.trim() || undefined;
-          if (media && readableDocument(media.mime ?? "", name)) {
-            const bytes = await storedBytes(media).catch(() => undefined);
-            const text = bytes ? await readDocument(bytes, media.mime ?? "", name).catch((error) => (console.error("Could not read the stored document:", error), undefined)) : undefined;
-            if (text) {
-              const description = [name, text].filter(Boolean).join("\n");
-              await updateMedia(media.id, { description });
-              item.description = description;
-            }
-          }
+        // A PDF or text file kept before Tony could read it whole (the IELTS plan, 22 Nov): read again, from its stored copy.
+        if (item.source === "media" && item.kind === "document" && needsReading(item.description)) {
+          const description = await rereadDocument(item.id);
+          if (description) item.description = description;
         }
         const text = item.description?.trim();
         if (!text) return { ok: true, item: itemLabel(item, now), text: "", note: "Tony could not read anything in it" };
-        return { ok: true, item: itemLabel(item, now), text: text.slice(0, 12_000), ...(text.length > 12_000 ? { note: "only the first part" } : {}) };
+        // Long ones in pages of 12,000 characters: "from" is where the next page starts.
+        const from = Math.max(0, Math.floor(Number(args.from) || 0));
+        const page = text.slice(from, from + 12_000);
+        const next = from + 12_000 < text.length ? from + 12_000 : undefined;
+        return { ok: true, item: itemLabel(item, now), text: page, ...(next !== undefined ? { next_from: next, note: `the document goes on: library read with from ${next} for the next part` } : {}) };
       }
       if (action === "attach") {
         const task = await loadTask(args.task_id);

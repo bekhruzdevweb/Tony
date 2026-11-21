@@ -4,7 +4,7 @@ import { logHabit } from "./habits";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { recordDone } from "./routine";
 import type { Task } from "./tasks";
-import { addMinutes, formatDue, TIMEZONE } from "./time";
+import { addMinutes, formatDue, localDate, TIMEZONE } from "./time";
 
 const DAY_MINUTES = 24 * 60;
 
@@ -18,7 +18,15 @@ function isWeekday(at: Date, timeZone = TIMEZONE): boolean {
  * at the same time of day. Undefined for a task that does not repeat or has
  * no date to repeat from.
  */
-export function nextOccurrence(task: Pick<Task, "due_at" | "repeat_rule">, now: Date): Date | undefined {
+export function nextOccurrence(task: Pick<Task, "due_at" | "repeat_rule" | "repeat_until">, now: Date): Date | undefined {
+  if (!task.repeat_rule || !task.due_at) return undefined;
+  const next = upcoming(task, now);
+  // A repeat with an end (an 8-week plan) stops after its last day.
+  if (next && task.repeat_until && localDate(next) > task.repeat_until) return undefined;
+  return next;
+}
+
+function upcoming(task: Pick<Task, "due_at" | "repeat_rule">, now: Date): Date | undefined {
   if (!task.repeat_rule || !task.due_at) return undefined;
   const step = task.repeat_rule === "weekly" ? 7 * DAY_MINUTES : DAY_MINUTES;
   let at = new Date(task.due_at);

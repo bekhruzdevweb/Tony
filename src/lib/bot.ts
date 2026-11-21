@@ -66,6 +66,9 @@ import { rescheduleOverdue } from "./reschedule";
 import { locationStatus, prayerStatus, setCoordinates, setLocation, setPrayer, setPrayerCalculation } from "./prayer";
 import { dayFromKey, dayView, inboxView } from "./views";
 import { readDocument, readableDocument, readImage } from "./vision";
+
+/** How much of a document he sends goes into the message itself. */
+const DOCUMENT_IN_MESSAGE = 15_000;
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
 import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
 
@@ -1398,7 +1401,9 @@ export function getBot(): Bot | undefined {
               : file.kind
       : "post";
     // What was read from it (fenced as material below), or a word on why nothing was.
-    const content = imageText ? `Text in the image: ${imageText}` : docText ? `Text in the document${docName ? ` "${docName}"` : ""}:\n${docText}` : undefined;
+    // A long document goes to the brain in part (about 4,000 words); library read gives the rest.
+    const docPart = docText && docText.length > DOCUMENT_IN_MESSAGE ? `${docText.slice(0, DOCUMENT_IN_MESSAGE)}\n(… the document goes on: library read gives the rest)` : docText;
+    const content = imageText ? `Text in the image: ${imageText}` : docPart ? `Text in the document${docName ? ` "${docName}"` : ""}:\n${docPart}` : undefined;
     const remark = content
       ? undefined
       : imageFailed

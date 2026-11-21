@@ -614,10 +614,20 @@ Migration `0023_decide.sql` adds `routine.auto_kinds` and
   sends everything kept with that task as one album, under the task's name and
   your own words; "send me the video" sends the video only. A file goes back
   under your caption or the task's name, never the description Tony read.
-- **PDFs and text files are read** (22 Nov: "can u see my ielts plan?"): a
-  summary and the text, given to Tony as material (never as your words); the
-  library names the file and says what it is about, and Tony reads its text
-  again when you ask about it later.
+- **PDFs and text files are read** (22 Nov: "can u see my ielts plan?"): the
+  PDF's own text, whole, taken in code in under a second (Claude reads only a
+  scanned PDF), with a one-line summary; given to Tony as material (never as
+  your words). The library names the file and says what it is about; Tony
+  reads a long one page by page (`library read` with `from`). A PDF kept before
+  this is read again from its stored copy by the minute tick, once.
+- **A plan into your schedule** ("add it to our plan"): its sessions become
+  repeating tasks that end on the plan's last day (`repeat_until`, migration
+  `0027_repeat_until.sql`), "🔁 weekly until Sun 17 Jan 2027" in the receipt;
+  with no time of yours, one plan over the week is proposed, each session kept
+  on its own day. "Preview" after that shows the schedule, not the file.
+- **Tony keeps the end of his own long answers** in the conversation (the
+  start and the end of anything over 1,200 characters), so a "yes" to his
+  offer is understood.
 - **Buttons only for real task actions** (choosing a slot, confirming a
   change); a question in conversation is answered in words.
 - **Your words for titles:** Uzbek or Russian stays exactly as you wrote it

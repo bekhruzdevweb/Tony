@@ -83,7 +83,33 @@ describe("documents he sends are read", () => {
 
   it("a text file is read as it is", async () => {
     const bytes = new TextEncoder().encode("Week 1: Reading\nWeek 2: Listening\n").buffer as ArrayBuffer;
-    expect(await readDocument(bytes, "text/plain", "plan.txt")).toBe("Week 1: Reading\nWeek 2: Listening");
+    expect(await readDocument(bytes, "text/plain", "plan.txt")).toBe("Text:\nWeek 1: Reading\nWeek 2: Listening");
+  });
+
+  it("a PDF's own text is read whole, page by page, in code (22 Nov: Claude's reading of the IELTS plan stopped at week 3)", async () => {
+    // A small two-page PDF with a text layer, written by hand.
+    const page = (text: string) => `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>",
+      `<< /Length ${page("Week 1: Reading TFNG").length} >>\nstream\n${page("Week 1: Reading TFNG")}\nendstream`,
+      `<< /Length ${page("Week 8: Full mock twice").length} >>\nstream\n${page("Week 8: Full mock twice")}\nendstream`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ];
+    let pdf = "%PDF-1.4\n";
+    const offsets: number[] = [];
+    objects.forEach((body, index) => {
+      offsets.push(pdf.length);
+      pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((at) => `${String(at).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    const { pdfText } = await import("../src/lib/vision");
+    const read = await pdfText(new TextEncoder().encode(pdf).buffer as ArrayBuffer);
+    expect(read.pages).toBe(2);
+    expect(read.text).toBe("--- page 1 ---\nWeek 1: Reading TFNG\n\n--- page 2 ---\nWeek 8: Full mock twice");
   });
 
   it("what was read from a file is material: never his words, so a time inside it is not his", () => {

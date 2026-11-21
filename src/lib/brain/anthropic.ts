@@ -276,6 +276,19 @@ export async function readPdfWithClaude(client: Anthropic, bytes: ArrayBuffer, i
   return { text, cut: response.stop_reason === "max_tokens" };
 }
 
+/** A short answer from the fast model, for small jobs (a document's one-line summary); bounded in time. */
+export async function quickAnswer(client: Anthropic, prompt: string, options: { maxTokens?: number; timeoutMs?: number } = {}): Promise<string> {
+  const response = await client.messages.create(
+    { model: env.anthropicReaderModel, max_tokens: options.maxTokens ?? 200, messages: [{ role: "user", content: prompt }] },
+    { timeout: options.timeoutMs ?? 12_000, maxRetries: 0 },
+  );
+  return response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
+
 /** A short description of an Anthropic failure for the log, by kind. */
 export function describeClaudeError(error: unknown): string {
   if (error instanceof Anthropic.RateLimitError) return `rate limited (429): ${error.message}`;

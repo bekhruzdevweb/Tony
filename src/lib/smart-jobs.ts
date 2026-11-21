@@ -7,7 +7,8 @@ import { countFreeTime, shouldSuggestFreeTime, suggestFreeTime } from "./free-ti
 import { noteFollowUp, sameDayFollowUp, weeklyInboxReview, type Row } from "./followups";
 import { esc, plain } from "./html";
 import type { LibraryItem } from "./library-rules";
-import { loadMedia, mediaCaption, sendMedia } from "./media";
+import { loadMedia, mediaCaption, needsReading, rereadDocument, sendMedia } from "./media";
+import { readableDocument } from "./vision";
 import { weeklyMemoryReview } from "./memory-review";
 import { logMessage } from "./messages";
 import { markdownToHtml } from "./rich";
@@ -132,6 +133,19 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
     if (quiet || !(await dueToday("budget", "09:00", now))) return;
     const warnings = await budgetWarnings(now);
     if (warnings.length) await send(bot, chatId, ["⚠️ **Budget**", ...warnings].join("\n"));
+  });
+  // A document kept before Tony could read it whole (the IELTS plan, 22 Nov) is read again from its copy: one a minute, each once.
+  await job("reread", async () => {
+    const db = requireDb();
+    const { data } = await db.from("media").select("id, mime, description").eq("kind", "document").not("storage_path", "is", null).order("id", { ascending: false }).limit(30);
+    const waiting = ((data ?? []) as { id: number; mime: string | null; description: string | null }[]).filter((row) => readableDocument(row.mime ?? "", row.description?.split("\n")[0]) && needsReading(row.description));
+    if (waiting.length === 0) return;
+    const tried = await db.from("events").select("detail").eq("kind", "document_reread").limit(200);
+    const done = new Set(((tried.data ?? []) as { detail: { id?: number } }[]).map((row) => Number(row.detail?.id)));
+    const next = waiting.find((row) => !done.has(row.id));
+    if (!next) return;
+    await logEvent("document_reread", { id: next.id });
+    await rereadDocument(next.id);
   });
   // Once an hour: the burst waiting room is tidied.
   if (now.getMinutes() === 7) await job("prune", () => pruneIncoming(now));

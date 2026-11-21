@@ -2,7 +2,7 @@
  * Small, pure rules that keep Tony honest. No database, no model: each is
  * covered by a regression test in tests/brain-checks.test.ts.
  */
-import { formatTime, formatWhen } from "../time";
+import { formatDay, formatTime, formatWhen, parseLocalDateTime } from "../time";
 
 export type ReminderDecision = "move" | "same" | "extra";
 
@@ -30,6 +30,9 @@ export function isDuplicateReminder(waiting: { fire_at: string }[], at: Date): b
 export type DoneAction = {
   tool: "add_task" | "update_task" | "complete_task" | "set_reminder" | "subtask";
   title: string;
+  /** How it repeats, and until when (YYYY-MM-DD), shown as "🔁 weekly until Sun 17 Jan". */
+  repeat?: string | null;
+  repeat_until?: string | null;
   /** The task's stored state after the change. */
   status: string;
   due_at: string | null;
@@ -98,7 +101,9 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
       return `🔔 ${title}: reminder ${bold(new Date(action.reminder_at))}${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
     }
     if (!action.due_at) return action.free_time ? `✓ ${title} → 🌙 Free Time` : `✓ ${title} in the inbox`;
-    return `✓ ${title} → ${bold(new Date(action.due_at))}`;
+    const until = action.repeat_until ? parseLocalDateTime(`${action.repeat_until}T12:00`) : undefined;
+    const repeats = action.repeat ? ` · 🔁 ${action.repeat}${until ? ` until ${formatDay(until, now)}` : ""}` : "";
+    return `✓ ${title} → ${bold(new Date(action.due_at))}${repeats}`;
   };
   const unique = actions.filter((action, index) => actions.findIndex((other) => other.title === action.title && other.tool === action.tool && other.reminder_at === action.reminder_at) === index);
   // One small receipt line per task, under Tony's own words (Phase 2): no "sir", no "Done, sir:" header.

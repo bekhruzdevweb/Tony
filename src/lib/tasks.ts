@@ -13,6 +13,8 @@ export type Task = {
   status: TaskStatus;
   due_at: string | null;
   repeat_rule: "daily" | "weekdays" | "weekly" | null;
+  /** The last local date a repeating task comes round (YYYY-MM-DD); absent or null: no end. */
+  repeat_until?: string | null;
   persistent: boolean;
   persistent_schedule: number[] | null;
   /** Minutes it takes, when known. */

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Bot, InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
 import { esc, plain } from "./html";
+import { OLD_CUT_MARK, readDocument, readableDocument } from "./vision";
 
 /**
  * Tony's memory for photos, videos, documents and voice notes. Each item
@@ -84,6 +85,31 @@ export async function loadMedia(id: number): Promise<Media | undefined> {
 export async function updateMedia(id: number, patch: Partial<Pick<Media, "task_id" | "note" | "description">>): Promise<void> {
   const { error } = await requireDb().from("media").update(patch).eq("id", id);
   if (error) throw new Error(`updateMedia: ${error.message}`);
+}
+
+/**
+ * A document whose text Tony does not have whole: never read (sent before Tony could read PDFs), or cut
+ * short by the first reader (the IELTS plan stopped at week 3, 22 Nov 02:28).
+ */
+export function needsReading(description: string | null | undefined): boolean {
+  const text = description ?? "";
+  return !/^Text:$/m.test(text) || text.trimEnd().endsWith(OLD_CUT_MARK);
+}
+
+/** Reads a kept document again from its stored copy and keeps what it says. Undefined if it cannot be read. */
+export async function rereadDocument(id: number): Promise<string | undefined> {
+  const media = await loadMedia(id);
+  if (!media || media.kind !== "document") return undefined;
+  const firstLine = media.description?.split("\n")[0]?.trim();
+  const name = firstLine && /\.\w{2,5}$/.test(firstLine) && firstLine.length <= 120 ? firstLine : undefined;
+  if (!readableDocument(media.mime ?? "", name)) return undefined;
+  const bytes = await storedBytes(media).catch(() => undefined);
+  if (!bytes) return undefined;
+  const text = await readDocument(bytes, media.mime ?? "", name).catch((error) => (console.error("Could not read the stored document:", error), undefined));
+  if (!text) return undefined;
+  const description = [name, text].filter(Boolean).join("\n");
+  await updateMedia(media.id, { description });
+  return description;
 }
 
 /** The private copy of a file, when one was kept (files up to 20 MB). */

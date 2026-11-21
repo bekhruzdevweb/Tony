@@ -30,6 +30,8 @@ export type ToPlace = {
   within?: Interval[];
   /** Closed to it: his teaching hours, for anything but a class. */
   avoid?: Interval[];
+  /** Only these days: the day he gave it ("writing on Monday, reading on Tuesday"). */
+  windows?: DayWindow[];
 };
 export type DayWindow = { start: Date; end: Date };
 
@@ -95,19 +97,21 @@ export function placeAll(items: ToPlace[], busy: Interval[], windows: DayWindow[
   const order = [...items].sort((a, b) => a.priority - b.priority || Number(b.deep) - Number(a.deep) || b.minutes - a.minutes);
   for (const item of order) {
     const blocked = item.avoid?.length ? [...taken, ...item.avoid] : taken;
+    // A task he gave a day stays on that day.
+    const open = item.windows?.length ? item.windows : windows;
     let at: number | undefined;
-    if (item.prefer && windows.some((window) => fits(item.prefer!.getTime(), item.minutes, blocked, window, earliest.getTime()))) at = item.prefer.getTime();
+    if (item.prefer && open.some((window) => fits(item.prefer!.getTime(), item.minutes, blocked, window, earliest.getTime()))) at = item.prefer.getTime();
     // Where his routine says it belongs, if there is room there.
     for (const range of item.within ?? []) {
       if (at !== undefined) break;
-      for (const window of windows) {
+      for (const window of open) {
         const inside = { start: new Date(Math.max(window.start.getTime(), range.start)), end: new Date(Math.min(window.end.getTime(), range.end)) };
         if (inside.end.getTime() <= inside.start.getTime()) continue;
         at = firstFit(inside.start.getTime(), item.minutes, blocked, inside, earliest.getTime());
         if (at !== undefined) break;
       }
     }
-    for (const window of windows) {
+    for (const window of open) {
       if (at !== undefined) break;
       const afternoon = new Date(window.start.getTime());
       const local = new Date(afternoon.getTime() + 5 * 60 * 60_000).toISOString().slice(0, 10);

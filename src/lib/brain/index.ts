@@ -32,7 +32,12 @@ import { ruleHints } from "../smart-rules";
 /** Recent turns sent for context. Each is clipped; old chatter is not worth its tokens. */
 const HISTORY = 10;
 const HISTORY_CHARS = 1200;
-const clip = (text: string) => (text.length > HISTORY_CHARS ? `${text.slice(0, HISTORY_CHARS)}…` : text);
+/**
+ * A long message is kept by its start and its end: the end is where Tony's own offer or question is
+ * (22 Nov 02:28: "Do you want me to turn the weekly rhythm into recurring tasks?" was cut off, so
+ * "can u add it to our plan" was not read as a yes, and the PDF was only attached to a task).
+ */
+export const clip = (text: string) => (text.length > HISTORY_CHARS ? `${text.slice(0, 700).trimEnd()}\n[…]\n${text.slice(-480).trimStart()}` : text);
 const MAX_ROUNDS = 5;
 
 /** How long "this" keeps meaning the last forwarded post or photo. */
@@ -462,7 +467,9 @@ export async function think(
     if (added.length > 0) {
       const rows = ((await db.from("tasks").select().in("id", added)).data ?? []) as Task[];
       const partsOf = await subtasksFor(added);
-      const keep = notesToKeep(text, rows.map((row) => ({ title: row.title, notes: row.notes, parts: (partsOf.get(row.id) ?? []).map((p) => p.title) })));
+      // His whole message is quoted into a task's notes only when it was about that one task: copied into
+      // each of several tasks it says nothing about any of them (22 Nov: three IELTS sessions, three quotes).
+      const keep = notesToKeep(text, rows.map((row) => ({ title: row.title, notes: row.notes, parts: (partsOf.get(row.id) ?? []).map((p) => p.title) })), { quote: rows.length === 1 });
       if (keep) {
         for (const row of rows) {
           const notes = [row.notes, keep].filter(Boolean).join("\n");
@@ -532,9 +539,22 @@ export async function think(
     const decided = new Set<number>();
     const slotLines: string[] = [];
     if (named.size >= 2 && planId === undefined) {
-      // Several at once: one plan, one message, [✓ Looks good] [✏️ Change].
-      const day = parseLocalDateTime(`${[...named.values()][0]}T12:00`)!;
-      const plan = await buildPlan({ scope: "day", now, taskIds: [...named.keys()], day, lead: "Here's what I'll do, sir:" }).catch((error) => (console.error("Plan for new tasks failed:", error), undefined));
+      // Several at once: one plan, one message, [✓ Looks good] [✏️ Change]. Tasks for different days are
+      // planned over the week, each on its own day (they were all put on the first day before).
+      const days = [...new Set(named.values())].sort();
+      const day = parseLocalDateTime(`${days[0]}T12:00`)!;
+      const spread = days.length > 1;
+      const keepDays = spread ? `Keep each on the day he gave: ${[...named].map(([id, date]) => `#${id} on ${weekdayDate(date)}`).join(", ")}.` : undefined;
+      const plan = await buildPlan({
+        scope: spread ? "week" : "day",
+        now,
+        taskIds: [...named.keys()],
+        day,
+        lead: "Here's what I'll do, sir:",
+        ...(keepDays ? { instructions: keepDays, daysFor: Object.fromEntries(named) } : {}),
+      }).catch(
+        (error) => (console.error("Plan for new tasks failed:", error), undefined),
+      );
       if (plan && "plan" in plan) {
         planId = plan.plan.id;
         reply = "Here is what I propose, sir.";
@@ -569,7 +589,19 @@ export async function think(
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
       if (!task || decided.has(id)) return [];
-      return [{ tool: change.tool, title: task.title, status: task.status, due_at: task.due_at, free_time: task.free_time, ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}), ...marks(id) }];
+      return [
+        {
+          tool: change.tool,
+          title: task.title,
+          status: task.status,
+          due_at: task.due_at,
+          free_time: task.free_time,
+          repeat: task.repeat_rule,
+          repeat_until: task.repeat_until ?? null,
+          ...(change.reminder_at ? { reminder_at: change.reminder_at } : {}),
+          ...marks(id),
+        },
+      ];
     });
     const confirmation = done.length ? confirmationFor(done, now, ownWords(text)) : "";
     // If something failed, the model's own words explain it (never claiming anything); the confirmation shows what did happen.
@@ -577,7 +609,8 @@ export async function think(
     const known = [text, confirmation, ...slotLines, context.prayers ?? "", ...context.tasks.map((task) => (task.due_at ? formatTime(new Date(task.due_at)) : ""))].join(" ");
     const kept = keepWords(tidyReply([...spoken, reply ?? ""].filter(Boolean).join("\n\n"), [...taskIds]), { times: clockTimes(known) });
     // A plain request (add, move, remind, attach, remember) gets the receipt alone; a comment only when he asked for one.
-    const plainRequest = sendItems.length === 0 && tools.every((name) => CAPTURE_TOOLS.has(name)) && !asksForReply(ownWords(text));
+    // A plan made of several tasks keeps Tony's line on what today holds.
+    const plainRequest = sendItems.length === 0 && changes.size < 3 && tools.every((name) => CAPTURE_TOOLS.has(name)) && !asksForReply(ownWords(text));
     const words = plainRequest ? receiptOnly(kept) : kept;
     // A question of his own does not stand next to Tony's question about the slot.
     const tonyWords = slotLines.length && slot && slot.kind !== "auto" ? words.replace(/[^.?!\n]*\?+/g, "").trim() : words;
@@ -696,6 +729,9 @@ async function proposeInstead(name: string, args: Record<string, unknown>, now: 
   else say = "I'll do what that post asks.";
   return runTool("propose", { say, tool: name, args }, now, said, heard);
 }
+
+/** "Mon 23 Nov" for "2026-11-23". */
+const weekdayDate = (date: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", weekday: "short", day: "numeric", month: "short" }).format(parseLocalDateTime(`${date}T12:00`)!).replace(",", "");
 
 /** Two tasks at their times, the same whichever is named first. */
 const clashKey = (a: Pick<Task, "id" | "due_at">, b: Pick<Task, "id" | "due_at">) =>

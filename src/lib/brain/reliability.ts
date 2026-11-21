@@ -252,7 +252,7 @@ export function linksIn(text: string): string[] {
 
 /** Words that carry no detail of their own: requests, times, filler. */
 const FILLER = new Set(
-  "remind reminder please tony jarvis also maybe upcoming next dont didnt check touch thist task tasks inbox okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please save saved keep hello days week weeks month months three four five seven eight nine twelve twenty thirty".split(
+  "remind reminder please tony jarvis also maybe upcoming next dont didnt check touch thist task tasks inbox okay alright thanks thank tomorrow today tonight morning afternoon evening night monday tuesday wednesday thursday friday saturday sunday minutes minute hours hour half after before about would could should will shall want need have make sure just like really that this those these there their them they with from into your yours mine some something things thing task tasks schedule scheduled list inbox later again time times when what which then also well yeah gonna going been being doing does sir please save saved keep hello days week weeks month months three four five seven eight nine twelve twenty thirty january february march april june july august september october november december weekly daily every until repeat repeating plan plans".split(
     " ",
   ),
 );
@@ -267,8 +267,23 @@ const detailWords = (text: string) =>
  * something he said was dropped ("for international students").
  */
 export function lostDetails(message: string, saved: string[]): string[] {
-  const kept = new Set(detailWords(saved.join(" ")));
-  return detailWords(message).filter((word) => !kept.has(word));
+  const kept = detailWords(saved.join(" "));
+  // A typo is not a lost detail: "supbase" is kept as "Supabase" (22 Nov 02:14).
+  return detailWords(message).filter((word) => !kept.some((known) => known === word || nearlySame(known, word)));
+}
+
+/** Two word stems one edit apart (a letter changed, added, dropped or two swapped), both five letters. */
+function nearlySame(a: string, b: string): boolean {
+  if (a.length < 5 || b.length < 5) return false;
+  const rows = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      rows[i][j] = Math.min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) rows[i][j] = Math.min(rows[i][j], rows[i - 2][j - 2] + 1);
+    }
+  }
+  return rows[a.length][b.length] <= 1;
 }
 
 /**
@@ -292,14 +307,14 @@ export function withoutInstructions(message: string): string {
     .trim();
 }
 
-export function notesToKeep(message: string, saved: { title: string; notes: string | null; parts?: string[] }[]): string | undefined {
+export function notesToKeep(message: string, saved: { title: string; notes: string | null; parts?: string[] }[], options: { quote?: boolean } = {}): string | undefined {
   // What a photo or a forwarded post says is material, never his details (phase b: messages sent together).
   message = ownWords(message);
   const all = saved.map((task) => [task.title, task.notes ?? "", ...(task.parts ?? [])].join(" "));
   const missingLinks = linksIn(message).filter((url) => !all.some((text) => text.includes(url)));
   // What is quoted is his request without its instructions ("remind me to", "save this"): details, never orders to Tony.
   const words = withoutInstructions(message.replace(/https?:\/\/\S+/g, "")).replace(/\s+/g, " ").trim();
-  const quote = lostDetails(withoutInstructions(message), all).length >= 2 && words.length > 0 ? `From your message: "${words}"` : undefined;
+  const quote = options.quote !== false && lostDetails(withoutInstructions(message), all).length >= 2 && words.length > 0 ? `From your message: "${words}"` : undefined;
   const lines = [...missingLinks, quote].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;
 }

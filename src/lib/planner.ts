@@ -204,6 +204,8 @@ type PlanOptions = {
   taskIds?: number[];
   /** A line to show above the plan. */
   lead?: string;
+  /** The day he gave each task (YYYY-MM-DD by task id): it is placed on that day only. */
+  daysFor?: Record<number, string>;
 };
 
 /**
@@ -325,6 +327,7 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
       prefer: proposal?.at,
       within: days.flatMap((day) => preferredRanges(routine, kind, day)),
       avoid: days.flatMap((day) => blockedRanges(routine, kind, day)),
+      ...(options.daysFor?.[task.id] ? { windows: windows.filter((_, index) => localDate(days[index]) === options.daysFor![task.id]) } : {}),
     });
   }
   const placement = placeAll(toPlace, busyTime, windows, earliest);

@@ -1183,3 +1183,73 @@ describe("22 Nov 01:49–01:59: 'post stories in this format', the preview, the 
     expect(JSON.stringify(state.calls[1].messages)).toContain("Tony could not read anything in it");
   });
 });
+
+// ── 22 Nov 02:28–02:32: "can u add it to our plan this pdf" ──────────────
+describe("22 Nov 02:28–02:32: the IELTS plan into his schedule", () => {
+  const OFFER = "Do you want me to turn the weekly rhythm into recurring tasks? I'd suggest weekdays at your usual study time.";
+  const longAnswer = `It's an 8-week IELTS Academic plan, sir, running **23 Nov to 17 Jan**.\n\n${"- A line about the plan's idea and its weekly rhythm.\n".repeat(30)}\n${OFFER}`;
+
+  it("Tony's own offer at the end of a long answer reaches the model with his 'yes' (it was cut off at 1,200 characters)", async () => {
+    state.db.insert("messages", { role: "user", text: "what does my ielts plan says", channel: "telegram", created_at: at("2026-11-22T02:28").toISOString() });
+    state.db.insert("messages", { role: "tony", text: longAnswer, channel: "telegram", created_at: at("2026-11-22T02:28").toISOString() });
+    await run("can u add it to our plan  this pdf", "2026-11-22T02:29", [says("Which time suits you, sir?")]);
+    const history = state.calls[0].messages.map((message) => String(message.content ?? "")).join("\n");
+    expect(history).toContain(OFFER);
+    expect(history).toContain("It's an 8-week IELTS Academic plan");
+  });
+
+  it("with his own time, the plan's sessions become weekly tasks until 17 Jan; the receipt says so, and Tony's line on today stays", async () => {
+    const sessions: [string, string][] = [
+      ["IELTS: Writing Task 2 + Speaking Part 3", "2026-11-23T18:00"],
+      ["IELTS: Reading + Listening (learn)", "2026-11-24T18:00"],
+      ["IELTS: Full mock", "2026-11-28T18:00"],
+    ];
+    task({ title: "Start IELTS exam preparation", due_at: "2026-11-22T20:15" });
+    const result = await run("add my ielts sessions from the plan, all at 6 pm, weekly until 17 january", "2026-11-22T02:29", [
+      tools(...sessions.map(([title, due]): [string, Record<string, unknown>] => ["add_task", { title, due_at: due, repeat: "weekly", repeat_until: "2027-01-17", duration: 120, reply: "Today is your kickoff at 20:15; the plan itself starts tomorrow." }])),
+    ]);
+    expect(result.replies[0]).toBe(
+      [
+        "Today is your kickoff at 20:15; the plan itself starts tomorrow.",
+        "",
+        "✓ **IELTS: Writing Task 2 + Speaking Part 3** → Mon 23 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
+        "✓ **IELTS: Reading + Listening (learn)** → Tue 24 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
+        "✓ **IELTS: Full mock** → Sat 28 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
+      ].join("\n"),
+    );
+    expect(tasks().filter((row) => String(row.title).startsWith("IELTS")).map((row) => [row.repeat_rule, row.repeat_until])).toEqual([
+      ["weekly", "2027-01-17"],
+      ["weekly", "2027-01-17"],
+      ["weekly", "2027-01-17"],
+    ]);
+  });
+
+  it("with no time of his: the sessions are proposed as one plan over the week (the preview), each on its own day, still repeating", async () => {
+    const result = await run("can u add it to our plan  this pdf", "2026-11-22T02:29", [
+      tools(
+        ["add_task", { title: "IELTS: Writing Task 2 + Speaking Part 3", day: "2026-11-23", repeat: "weekly", repeat_until: "2027-01-17", duration: 120 }],
+        ["add_task", { title: "IELTS: Full mock", day: "2026-11-28", repeat: "weekly", repeat_until: "2027-01-17", duration: 180 }],
+      ),
+      "FAIL", // the planner's model: its plain fallback places them
+    ]);
+    expect(result.replies[0]).toBe("Here is what I propose, sir.");
+    const plan = state.db.rows("plans")[0] as { items: { task_id: number; at: string }[] };
+    const dayOf = (id: unknown) => local(plan.items.find((item) => item.task_id === Number(id))?.at)?.slice(0, 10);
+    expect(dayOf(byTitle("IELTS: Writing Task 2 + Speaking Part 3").id)).toBe("2026-11-23");
+    expect(dayOf(byTitle("IELTS: Full mock").id)).toBe("2026-11-28");
+    expect(byTitle("IELTS: Full mock").repeat_until).toBe("2027-01-17");
+  });
+
+  it("tasks for different days with no time: one plan over the week, each kept on its own day (all went on the first day before)", async () => {
+    const result = await run("add IELTS writing on monday and IELTS reading on tuesday", "2026-11-22T10:00", [
+      tools(["add_task", { title: "IELTS writing", day: "2026-11-23" }], ["add_task", { title: "IELTS reading", day: "2026-11-24" }]),
+      tools(["propose", { items: [], left_out: [], why: "" }]),
+    ]);
+    const planner = state.calls[1].messages.map((message) => String(message.content ?? "")).join("\n");
+    const writing = Number(byTitle("IELTS writing").id);
+    const reading = Number(byTitle("IELTS reading").id);
+    expect(planner).toMatch(/Days to plan: Mon\w* 2026-11-23, Tue\w* 2026-11-24/);
+    expect(planner).toContain(`Keep each on the day he gave: #${writing} on Mon 23 Nov, #${reading} on Tue 24 Nov.`);
+    void result;
+  });
+});
