@@ -1112,8 +1112,11 @@ export function getBot(): Bot | undefined {
           );
         }
       }
-      // "Here it is" is only said if something was really sent: otherwise those words go.
-      if (mediaSent === 0 && claimsSent(reply) && !tools.includes("save_link")) {
+      // "Here it is" is only said if something was really sent: otherwise those words go. Items the brain
+      // chose with library send (or a rule sends) go out right after these words, so they count
+      // (21 Nov 19:18: "Here it is" became "I couldn't find that one", and then the video arrived).
+      const sending = (thought.sendItems ?? []).length > 0;
+      if (mediaSent === 0 && !sending && claimsSent(reply) && !tools.includes("save_link")) {
         reply = withoutSendClaims(reply) || (found ? "I found it, sir, but it would not send. Ask me again in a moment." : "I couldn't find that one, sir.");
       }
       if (planId !== undefined && ctx.chat) {
