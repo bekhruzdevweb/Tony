@@ -1256,3 +1256,31 @@ describe("22 Nov 02:28–02:32: the IELTS plan into his schedule", () => {
     void result;
   });
 });
+
+describe("21 Nov 20:41–20:42 · 'it doesnt take long so make no need to add any time'", () => {
+  it("his answer to the question about the time is 'no time needed': Tony's own pick, said as his pick; never the same question again, never 'timeless'", async () => {
+    routineRow({ learned: { workout: [1060, 1060] } });
+    task({ title: "Plan new chatbot agent features", due_at: "2026-11-22T13:00", duration_minutes: 90 });
+    const first = await run("Remind me tmr to add my workout days to you tony", "2026-11-21T20:41", [tools(["add_task", { title: "Add my workout days to Tony", day: "2026-11-22", duration: 15 }])]);
+    const slot = askOf(first);
+    expect(first.replies[0]).toMatch(/When tomorrow, Sun 22 Nov\?/);
+    const result = await run("it doesnt take long so make no need to add any time", "2026-11-21T20:42", [
+      tools(["update_task", { id: slot.taskId, day: "2026-11-22", duration: 10, pick_time: true, reply: "Quick one, so I'll leave it timeless for tomorrow." }]),
+    ]);
+    // That evening the same question came back ("When tomorrow? Best: 17:45") under "I'll leave it timeless".
+    expect(thoughtOf(result)?.slot?.kind).toBe("auto");
+    const stored = byTitle("Add my workout days to Tony");
+    expect(local(stored.due_at)!.slice(0, 10)).toBe("2026-11-22");
+    expect(stored.status).toBe("todo");
+    expect(result.replies[0]).toMatch(/✓ \*\*Add my workout days to Tony\*\* → tomorrow, Sun 22 Nov, \*\*\d{2}:\d{2}\*\*.*my pick/);
+    expect(result.replies[0]).not.toMatch(/When tomorrow|timeless|\?/);
+    // The brain is told it may say so: the rule is in its prompt.
+    expect(state.calls.at(-1)?.system).toMatch(/pick_time true/);
+  });
+
+  it("without his say-so the question still comes: a day without a time is asked (Change 1)", async () => {
+    const result = await run("remind me to add my workout days tomorrow", "2026-11-21T20:41", [tools(["add_task", { title: "Add my workout days to Tony", day: "2026-11-22", duration: 15 }])]);
+    expect(askOf(result).day).toBe("2026-11-22");
+    expect(byTitle("Add my workout days to Tony").due_at).toBeNull();
+  });
+});

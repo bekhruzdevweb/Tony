@@ -41,6 +41,10 @@ const taskFields = {
   notes: { type: "string", description: "Description: links, details, anything that would make the title long." },
   duration: { type: "integer", description: "Minutes it takes: his figure, or your estimate" },
   day: { type: "string", description: "YYYY-MM-DD: a day he named WITHOUT a time. Leave due_at out; Tony picks or offers the time from his routine." },
+  pick_time: {
+    type: "boolean",
+    description: "With day: his own words say the time does not matter for this task (\"no need to add any time\", \"any time is fine\", \"you choose\", \"it doesn't take long\"). Tony then picks the best free time that day himself and says it was his pick, instead of asking.",
+  },
   nudge_after_days: { type: "integer", description: "\"Remind me if I don't check it for N days\": N. A check-in comes if the task sits untouched that long." },
   free_time: { type: "boolean", description: "\"In my free time\", \"someday\", \"when I'm free\": the 🌙 Free Time list, no date and no day." },
 };
@@ -451,6 +455,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         task: taskLine(task, await loadProjects(), now),
         wrote: written(fields.patch),
         ...(fields.dayOnly ? { day_only: fields.dayOnly, note: "No time was set: Tony offers one from his routine. Say nothing about a time." } : {}),
+        ...(fields.dayOnly && args.pick_time === true ? { tony_picks: true } : {}),
         ...(checkIn ? { check_in: checkIn } : {}),
         ...(attached ? { attached } : {}),
       };
@@ -502,6 +507,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
           task_id: task.id,
           task: taskLine(task, await loadProjects(), now),
           ...(fields.dayOnly ? { day_only: fields.dayOnly, note: "No time was set: Tony offers one from his routine. Say nothing about a time." } : {}),
+          ...(fields.dayOnly && args.pick_time === true ? { tony_picks: true } : {}),
           ...(checkIn ? { check_in: checkIn } : {}),
           ...(attached ? { attached } : {}),
         };
@@ -525,6 +531,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         status: updated.status,
         wrote: written(patch),
         ...(fields.dayOnly ? { day_only: fields.dayOnly } : {}),
+        ...(fields.dayOnly && args.pick_time === true ? { tony_picks: true } : {}),
         ...(checkIn ? { check_in: checkIn } : {}),
         ...(attached ? { attached } : {}),
       };

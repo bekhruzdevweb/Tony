@@ -233,6 +233,8 @@ export async function think(
   let nudged = false;
   // Tasks for a day he named without a time; check-ins he asked for; routine he told; an action to confirm.
   const dayOnly = new Map<number, string>();
+  // Tasks he said the time does not matter for ("no need to add any time"): Tony picks, he is not asked again.
+  const picks = new Set<number>();
   const checkIns = new Map<number, number>();
   const routineSet: { field: string; value: string | null; on?: boolean }[] = [];
   let proposal: { offerId: number; say: string } | undefined;
@@ -317,6 +319,7 @@ export async function think(
           const touchedId = Number((outcome as { task_id?: unknown }).task_id);
           const dayAsked = (outcome as { day_only?: unknown }).day_only;
           if (typeof dayAsked === "string" && Number.isFinite(touchedId)) dayOnly.set(touchedId, dayAsked);
+          if ((outcome as { tony_picks?: unknown }).tony_picks === true && Number.isFinite(touchedId)) picks.add(touchedId);
           const checkIn = (outcome as { check_in?: { days?: unknown } }).check_in;
           if (checkIn && Number.isFinite(touchedId)) checkIns.set(touchedId, Number(checkIn.days));
           const told = (outcome as { routine?: { field: string; value: string | null; on?: boolean } }).routine;
@@ -568,12 +571,15 @@ export async function think(
       const label = dayLabel(day, now);
       const extra = savedMarks(marks(id));
       decided.add(id);
-      if (decision.decision === "auto") {
-        // He let Tony decide for this kind: placed at the best slot, and the receipt says it was Tony's pick and why.
-        const placed = await placeTask(id, decision.at);
+      // He said the time does not matter for this one ("it doesn't take long so no need to add any time",
+      // 21 Nov 20:42): Tony's own pick, never the same question again.
+      const pick = decision.decision === "auto" ? decision : decision.decision === "ask" && picks.has(id) && decision.options[0] ? { at: decision.options[0].at, why: decision.options[0].why ?? "the first free time" } : undefined;
+      if (pick) {
+        // He let Tony decide (for this kind, or for this task): placed at the best slot, and the receipt says it was Tony's pick and why.
+        const placed = await placeTask(id, pick.at);
         if (placed.task?.due_at) {
-          slot = { kind: "auto", taskId: id, title: placed.task.title, day, at: decision.at, why: decision.why };
-          slotLines.push(autoReceipt({ title: placed.task.title, marks: extra, when: formatWhen(decision.at, now).replace(/(\d{2}:\d{2})$/, "**$1**"), why: decision.why }));
+          slot = { kind: "auto", taskId: id, title: placed.task.title, day, at: pick.at, why: pick.why };
+          slotLines.push(autoReceipt({ title: placed.task.title, marks: extra, when: formatWhen(pick.at, now).replace(/(\d{2}:\d{2})$/, "**$1**"), why: pick.why }));
         } else problems.push(placed.text);
       } else if (decision.decision === "ask") {
         slot = { kind: "ask", taskId: id, title: task.title, day, options: decision.options, ...(decision.taken ? { taken: decision.taken } : {}) };
