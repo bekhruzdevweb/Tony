@@ -54,6 +54,8 @@ export type DoneAction = {
   note?: string;
   /** A check-in comes after this many untouched days. */
   checkIn?: number;
+  /** A habit ticked off: its run, from the log ("🔥 4 days in a row"). */
+  streak?: string;
 };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -95,7 +97,7 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
   const line = (action: DoneAction) => `${baseLine(action)}${savedMarks(action, action.tool !== "subtask")}`;
   const baseLine = (action: DoneAction) => {
     const title = `**${action.title}**`;
-    if (action.tool === "complete_task" || action.status === "done") return `✓ ${title} done`;
+    if (action.tool === "complete_task" || action.status === "done") return `✓ ${title} done${action.streak ? ` · ${action.streak}` : ""}`;
     if (action.status === "dropped") return `✓ ${title} removed`;
     if (action.status === "skipped") return `✓ ${title} skipped`;
     if (action.tool === "subtask" && action.parts) return `☑ ${title}: ${action.parts} parts done`;
@@ -125,12 +127,27 @@ const CLASH_MINUTES = 30;
  * Tasks that clash with `task`: open, timed, not prayers, starting within
  * 30 minutes of it, or overlapping it when either has a known duration.
  */
+/**
+ * A short task (a call, a quick message: 15 minutes or less) that falls inside
+ * a long block of 60 minutes or more, after it began: a break in the block,
+ * not a clash (22 Nov 12:52: "Call barber" at 16:00 was flagged against the
+ * two-hour "Update fitness app" from 14:45, and he asked again for "exactly 4 p.m.").
+ */
+function breakInside(short: TimedTask, block: TimedTask): boolean {
+  if (!short.due_at || !block.due_at || !short.duration_minutes || !block.duration_minutes) return false;
+  if (short.duration_minutes > 15 || block.duration_minutes < 60) return false;
+  const start = new Date(short.due_at).getTime();
+  const blockStart = new Date(block.due_at).getTime();
+  return start > blockStart && start + short.duration_minutes * 60_000 <= blockStart + block.duration_minutes * 60_000;
+}
+
 export function clashesWith(task: TimedTask, others: TimedTask[]): TimedTask[] {
   if (!task.due_at || task.kind === "prayer") return [];
   const start = new Date(task.due_at).getTime();
   const end = start + (task.duration_minutes ?? 0) * 60_000;
   return others.filter((other) => {
     if (other.id === task.id || !other.due_at || other.kind === "prayer" || !OPEN.has(other.status)) return false;
+    if (breakInside(task, other) || breakInside(other, task)) return false;
     const otherStart = new Date(other.due_at).getTime();
     const otherEnd = otherStart + (other.duration_minutes ?? 0) * 60_000;
     const near = Math.abs(otherStart - start) < CLASH_MINUTES * 60_000;

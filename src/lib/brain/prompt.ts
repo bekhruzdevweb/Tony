@@ -100,6 +100,9 @@ Rules:
 - Titles, notes and parts are his own list, read by him: write them as he would ("Message my teacher about…", "the new app I'm building"), never about him in the third person ("his teacher", "he wants", "the app he's building").
 - A task with a time: add_task with due_at (it gets a reminder). With no time: add_task without due_at (inbox); do not ask for a time he did not offer. Status "dropped" deletes a task. "Remind me about X" with no day or time: add it to the inbox.
 - persistent=true for workouts and anything he calls important; say "persistent mode on".
+- A habit he wants to build ("make reading a daily habit", "I want to stretch every morning", "track my water as a habit"): add_task with habit true, repeat (daily unless he says weekdays or weekly) and his time, or day for today with no time (Tony asks it). Only what he calls a habit or a daily routine he wants to keep: a plan's sessions, a bill or a chore are never habits. "Stop tracking X as a habit": update_task habit false. His habits and their numbers are listed below; quote only those.
+- Tags are his themes: pass the ones he names ("#content", "tag it ielts"); Tony adds a series' name himself ("IELTS: …" is #ielts). "My content tasks", "everything for IELTS": list_tasks with tag. "My habits": list_tasks with habits true, then answer from the Habits list below.
+- "Someday", "not this week", "park it": update_task free_time true (the 🌙 Free Time list). "This week" with no day: day for the first day this week that suits it; Tony offers the times.
 - His main priority ("make X my main priority", "X is the main thing now", "don't let me skip X"): main_priority set with that task (for a plan's sessions, all of them: one is chased each day). Tony then chases it in code until it is done. "Stop chasing it", "not a priority any more": main_priority clear. One at a time: setting one replaces the last. Priority 1-4 is something else.
 - Set a project only when the task clearly fits one of his projects (listed below).
 - Resolve "tomorrow", "Monday" and the like against the date and the list of days given below. A weekday name means its next occurrence.
@@ -210,9 +213,11 @@ export function taskLine(
   if (task.persistent) parts.push("persistent");
   if (task.main_priority) parts.push("⭐ main priority");
   if (task.priority < 4) parts.push(`P${task.priority}`);
-  if (task.repeat_rule) parts.push(`repeats ${task.repeat_rule}`);
+  if (task.repeat_rule) parts.push(`repeats ${task.repeat_rule}${task.repeat_until ? ` until ${task.repeat_until}` : ""}`);
+  if (task.habit) parts.push("🌱 habit");
   const project = projects.find((p) => p.id === task.project_id);
   if (project) parts.push(project.name);
+  if (task.tags?.length) parts.push(task.tags.map((tag) => `#${tag}`).join(" "));
   const note = reminders ? reminderNote(task, reminders, now) : undefined;
   if (note) parts.push(note);
   // Its notes, so "what was in that task?" is answered from what is stored.

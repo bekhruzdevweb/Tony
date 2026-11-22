@@ -26,6 +26,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 | F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |
+| H | Habits and organizing: habits you choose with streaks (/habits, reminders, the board, Sunday's week), plans' progress, tags (#content), the Plan board (Today · This week · Someday); a short call inside a long block is not a clash | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -657,6 +658,30 @@ Your idea: the one thing Tony does not let you leave unfinished.
   on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
   next week; anything else moves to tomorrow). Every tap counts as an answer.
 - **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
+
+## Habits and organizing (H, 22 Nov)
+
+- **A habit** is one you choose: "make reading a daily habit at 21:00", "I want
+  to stretch every morning as a habit" (no time: Tony asks it), or 🌱 Habit on a
+  repeating task in the app. "Stop tracking reading as a habit" ends it. A
+  plan's sessions (IELTS, the workout plan) and chores are never habits.
+- **Its run**, always from the log: under its reminder ("🔥 3 days in a row:
+  keep it going"), in its Done ("✓ Done, sir. 🔥 4 days in a row"), on the
+  Today board ("Reading 🔥4"), in the app's 🔥 Habits screen (the last two
+  weeks, ✓ Done today), and in **/habits**: each habit's week (✓ done, –
+  skipped, ✗ missed, ○ today, · ahead), its run and best, a ✓ for each still to
+  do today, then your plans this week ("IELTS · 2/3 done").
+- **Sunday's "The week"** adds the habits' week and the plans' progress.
+- **Tags**: write "#content" with a task, or "tag it ielts"; a titled series is
+  tagged by its name ("IELTS: …" is #ielts, "Workout: …" is #workout). "Show my
+  content tasks" lists them; the app shows the tags on each task and under
+  Filters & Labels, and the task sheet edits them.
+- **The Plan board** (app: the sidebar, or Tony's picture → 🗂 Plan board on a
+  phone): Inbox, Today, This week and 🌙 Someday, with → Today / → This week /
+  → Someday under each task. A task keeps its time of day where that is free;
+  one without a time gets Tony's best free time; Someday clears its date and
+  reminders. In words: "park it", "someday", "move it to this week".
+- Migration `0031_habits_and_tags.sql` (tasks.habit, tasks.tags).
 
 ## Fixes from 22 Nov 12:37 (F)
 

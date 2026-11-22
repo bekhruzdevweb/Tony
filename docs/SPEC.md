@@ -176,7 +176,7 @@ Six tables hold everything; seven tools are all Tony can do.
 
 | Table | Key columns |
 |---|---|
-| tasks | id, title, notes, project_id, priority, status (inbox, todo, in_progress, done, skipped, dropped), due_at, repeat_rule, repeat_until (last date a repeat comes round), persistent (bool), main_priority (bool), created_at, updated_at, completed_at |
+| tasks | id, title, notes, project_id, priority, status (inbox, todo, in_progress, done, skipped, dropped), due_at, repeat_rule, repeat_until (last date a repeat comes round), persistent (bool), main_priority (bool), habit (bool, a habit he chose), tags (text[], his themes), created_at, updated_at, completed_at |
 | reminders | id, task_id, fire_at, kind (due, nudge, stale, brief), attempt, state (scheduled, sent, acknowledged, cancelled), telegram_message_id |
 | projects | id, name, color, order |
 | memory | id, fact, source (user), layer (week, month, always), goal (bool), mentions, confirmed_at, created_at |
@@ -223,6 +223,14 @@ Stack: Next.js (App Router, TypeScript) on Vercel; Supabase (Postgres + auth); g
    Done when: a full week passes with no missed reminders and no message Behruzbek wanted to mute.
 
 The repo starts with a CLAUDE.md that links this spec and states: build one phase at a time, run it, show the result, then wait for approval.
+
+### Phase H: habits and organizing (added by the owner, 22 Nov)
+
+His task "Plan new chatbot agent features": habit tracking, new organization methods, connection features (connections, such as a calendar, come later).
+
+- **Habits** are his choice ("make reading a daily habit at 21:00"; 🌱 Habit on a repeating task in the app), never any repeating task: a plan's sessions (repeat_until) and chores are not habits. A habit's reminder and its Done say its run from the log ("🔥 3 days in a row"); the Today board shows 🔥N; /habits shows each habit's week (✓ – ✗ ○ ·), its run and best, a ✓ for each still to do today, and the plans' progress this week ("IELTS · 2/3 done"); Sunday's "The week" adds "🔥 Reading 6/7 · 📈 IELTS 5/6". The coach speaks only about habits.
+- **Tags**: his #words, and a titled series' name ("IELTS: …" is #ielts). "My content tasks" lists by tag; the app shows tag chips and lists tags under Filters & Labels.
+- **The Plan board** (app): Inbox, Today, This week, 🌙 Someday, one tap to move a task between them in plain code (its own time of day where free, otherwise Tony's best free time; Someday clears the date and its reminders). Habits and a plan's sessions keep their rhythm and do not move.
 
 ### Main priority (added by the owner, 22 Nov)
 

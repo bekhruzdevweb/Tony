@@ -4,6 +4,7 @@ import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
 import { mediaCaption, mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
+import { habitFor, isHabit, streakLine } from "./habits";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { busyAround, getRoutine } from "./routine";
@@ -371,6 +372,11 @@ export async function runTick(
     // A task with a link (a reel to watch): the link itself as a button, so he never has to ask for it.
     const open = prayer ? undefined : openButton(task.notes);
     if (open) message.keyboard = (message.keyboard ?? new InlineKeyboard()).row().url(open.text, open.url);
+    // A habit: how its run stands, from the log ("🔥 3 days in a row: keep it going"), on the first reminder.
+    if (!prayer && !checkIn && attempt === 0 && isHabit(task)) {
+      const stats = await habitFor(task.id, now);
+      if (stats) message.text = `${message.text}\n${i(streakLine(stats))}`;
+    }
     // A task with parts: "Post stories 1/3" and the parts still to do.
     if (!prayer) {
       const list = (await subtasksFor([task.id])).get(task.id) ?? [];

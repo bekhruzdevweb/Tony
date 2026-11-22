@@ -16,6 +16,7 @@ export const COMMANDS = [
   { command: "rules", description: "Your rules (\"when X, do Y\"), to remove with a tap" },
   { command: "library", description: "Everything you saved: links, videos, photos" },
   { command: "freetime", description: "Your 🌙 Free Time list" },
+  { command: "habits", description: "Your habits this week, and your plans' progress" },
   { command: "backup", description: "Today's backup of your tasks, memory and library" },
   { command: "clean", description: "Clear the chat (keeps the board, open reminders, the brief)" },
   { command: "help", description: "What Tony can do" },
@@ -32,6 +33,7 @@ export const HELP = [
   "• \"I teach Mon–Fri 14:00–18:00\", \"content 10–12\": your routine (/routine), which I use for every time I choose.",
   "• \"Remind me if I don't check it for 2 days\": a check-in if a task sits untouched.",
   "• \"In my free time, watch this\": your 🌙 Free Time list (/freetime); \"I'm free\" and I suggest one.",
+  "• \"Make reading a daily habit at 21:00\": a habit, with its streak (/habits). \"#content\" tags a task; \"show my content tasks\".",
   "• \"When I'm not motivated to work out, send me this video\": a rule (/rules).",
   "• Send several things together (a photo, a link, a voice note): I take them as one request.",
   "• 👎 on any of my messages: I note it as a mistake and learn from it.",
@@ -40,7 +42,7 @@ export const HELP = [
   "",
   "• \"Plan my day\", \"plan the week\", \"schedule them yourself\": I propose times and you tap Apply.",
   "",
-  "/today (or /list)  /tomorrow  /plan  /inbox  /freetime  /rules  /routine  /undo  /memory  /backup  /prayer  /voice  /clean  /app  /help  /ping",
+  "/today (or /list)  /tomorrow  /plan  /inbox  /freetime  /habits  /rules  /routine  /undo  /memory  /backup  /prayer  /voice  /clean  /app  /help  /ping",
 ].join("\n");
 
 /** What Telegram should send Tony: messages, button taps, votes in his polls, and his 👎 reactions (phase e). */

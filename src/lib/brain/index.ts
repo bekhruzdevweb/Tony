@@ -244,6 +244,8 @@ export async function think(
   // Tasks he said the time does not matter for ("no need to add any time"): Tony picks, he is not asked again.
   const picks = new Set<number>();
   const checkIns = new Map<number, number>();
+  // A habit ticked off: its streak, read from the log after the tick ("🔥 4 days in a row").
+  const streaks = new Map<number, string>();
   const routineSet: { field: string; value: string | null; on?: boolean }[] = [];
   let proposal: { offerId: number; say: string } | undefined;
   let askComplete: { taskId: number; title: string } | undefined;
@@ -338,6 +340,8 @@ export async function think(
           if ((outcome as { tony_picks?: unknown }).tony_picks === true && Number.isFinite(touchedId)) picks.add(touchedId);
           const checkIn = (outcome as { check_in?: { days?: unknown } }).check_in;
           if (checkIn && Number.isFinite(touchedId)) checkIns.set(touchedId, Number(checkIn.days));
+          const streak = (outcome as { streak?: unknown }).streak;
+          if (typeof streak === "string" && Number.isFinite(touchedId)) streaks.set(touchedId, streak);
           const told = (outcome as { routine?: { field: string; value: string | null; on?: boolean } }).routine;
           if (call.function.name === "routine" && told) routineSet.push(told);
           if ((outcome as { proposal_id?: unknown }).proposal_id !== undefined) proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
@@ -544,6 +548,7 @@ export async function think(
         // from what he shared stays in the task without lengthening the receipt (22 Nov 01:49).
         ...(noteLine(wroteNotes) && statedByHim(noteLine(wroteNotes)!, ownWords(text)) ? { note: noteLine(wroteNotes) } : {}),
         ...(checkIns.has(id) ? { checkIn: checkIns.get(id) } : {}),
+        ...(streaks.has(id) ? { streak: streaks.get(id) } : {}),
       };
     };
 

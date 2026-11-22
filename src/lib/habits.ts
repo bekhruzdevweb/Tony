@@ -33,6 +33,10 @@ export type HabitStats = {
   dueAtToday?: Date;
   /** Days tracked so far (from the first day it could be counted to today). */
   daysTracked: number;
+  /** The last 14 days, oldest first, ending today. */
+  recent: { day: string; state: DayState }[];
+  /** This week, Monday to Sunday. */
+  week: { day: string; state: DayState }[];
 };
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -65,12 +69,19 @@ export async function logHabit(task: Pick<Task, "id" | "due_at" | "repeat_rule">
 }
 
 /**
- * Whether a repeating task is a habit: an open-ended routine. The sessions of
- * a plan (a weekly IELTS session, a 12-week workout plan) end on a date
- * (repeat_until): they are the plan's tasks, not habits, so they get no
- * streaks, no "missed" counts and no habit nudges ("why ielts is habit???", 22 Nov).
+ * Whether a task is a habit: one he chose to build ("make reading a daily
+ * habit", Phase H), repeating. Any other repeating task is not: the sessions
+ * of a plan (a weekly IELTS session, a 12-week workout plan) are tracked as
+ * the plan's progress, and a weekly chore is just a task; none of them get
+ * streaks, "missed" counts or habit nudges ("why ielts is habit???", 22 Nov).
  */
-export const isHabit = (task: Pick<Task, "repeat_rule" | "repeat_until">) => Boolean(task.repeat_rule) && !task.repeat_until;
+export const isHabit = (task: Pick<Task, "repeat_rule" | "habit">) => task.habit === true && Boolean(task.repeat_rule);
+
+/** A plan's session: repeating, with a last date (repeat_until), and not one of his habits. */
+export const isPlanSession = (task: Pick<Task, "repeat_rule" | "repeat_until" | "habit">) => Boolean(task.repeat_rule) && Boolean(task.repeat_until) && task.habit !== true;
+
+/** How one day went for a habit: done, skipped, missed, today's (still to do), not one of its days, or still ahead. */
+export type DayState = "done" | "skipped" | "missed" | "due" | "off" | "ahead";
 
 /**
  * The stats for every open habit (see isHabit), from real data only. Returns
@@ -161,6 +172,16 @@ export async function habitStats(now = new Date()): Promise<HabitStats[]> {
 
     const lastDone = [...done].sort().pop();
     const dueAtToday = dueToday && task.due_at ? parseLocalDateTime(`${today}T${formatTime(new Date(task.due_at), TIMEZONE)}`) : undefined;
+    const stateOf = (day: string): DayState => {
+      if (done.has(day)) return "done";
+      if (skipped.has(day)) return "skipped";
+      if (day > today) return due(day) ? "ahead" : "off";
+      if (day < start || !due(day)) return "off";
+      if (day === today) return dueToday ? "due" : "off";
+      return "missed";
+    };
+    const recent = Array.from({ length: 14 }, (_, n) => addDays(today, n - 13)).map((day) => ({ day, state: stateOf(day) }));
+    const week = Array.from({ length: 7 }, (_, n) => addDays(monday, n)).map((day) => ({ day, state: stateOf(day) }));
     return {
       task,
       streak,
@@ -173,8 +194,86 @@ export async function habitStats(now = new Date()): Promise<HabitStats[]> {
       doneToday,
       dueAtToday,
       daysTracked: Math.max(0, daysBetween(start, today) + 1),
+      recent,
+      week,
     };
   });
+}
+
+/** The stats for one habit, or undefined when it is not one (or the tables are not there). */
+export async function habitFor(taskId: number, now = new Date()): Promise<HabitStats | undefined> {
+  return (await habitStats(now).catch(() => [])).find((stats) => stats.task.id === taskId);
+}
+
+/** "days", "weekdays" or "weeks", for "3 days in a row". */
+const unit = (rule: Task["repeat_rule"], n: number) => (rule === "weekly" ? (n === 1 ? "week" : "weeks") : rule === "weekdays" ? (n === 1 ? "weekday" : "weekdays") : n === 1 ? "day" : "days");
+
+/**
+ * The habit's line under its reminder and its "done": warm on a streak,
+ * plain on a slip, never shaming. Only real numbers from the log.
+ */
+export function streakLine(stats: HabitStats): string {
+  const rule = stats.task.repeat_rule;
+  if (stats.doneToday && stats.streak >= 1) return stats.streak >= 2 ? `🔥 ${stats.streak} ${unit(rule, stats.streak)} in a row${stats.streak >= stats.best && stats.best >= 3 ? ", your best yet" : ""}` : "🔥 1 so far: the first of the run";
+  if (stats.streak >= 2) return `🔥 ${stats.streak} ${unit(rule, stats.streak)} in a row: keep it going`;
+  if (stats.missedRun >= 2) return `Missed ${stats.missedRun} in a row; today puts you back on track`;
+  if (!stats.lastDone) return "🌱 Day one of this habit";
+  return stats.streak === 1 ? "🔥 1 so far: keep it going" : `Last done ${stats.daysSinceLast === 1 ? "yesterday" : shortDate(stats.lastDone)}`;
+}
+
+/** This week as marks, Monday to Sunday: ✓ done, – skipped, ✗ missed, ○ today, · ahead, blank not one of its days. */
+export function weekMarks(stats: HabitStats): string {
+  const mark: Record<DayState, string> = { done: "✓", skipped: "–", missed: "✗", due: "○", ahead: "·", off: " " };
+  return stats.week.map((entry) => mark[entry.state]).join(" ");
+}
+
+/** A plan's progress this week: its sessions (by the plan's name, "ielts"), done so far against due so far. */
+export type PlanProgress = { name: string; done: number; due: number; skipped: number; sessions: number };
+
+/**
+ * His plans this week (Monday to today): each plan's sessions done against
+ * the ones due so far ("IELTS 2/3"). A plan is the sessions that share a
+ * series name ("IELTS: …"), or a tag. Tracking without calling them habits.
+ */
+export async function planProgress(now = new Date()): Promise<PlanProgress[]> {
+  const db = requireDb();
+  const { data, error } = await db.from("tasks").select().not("repeat_rule", "is", null).in("status", OPEN_STATUSES).order("id");
+  if (error) return [];
+  // Sessions not yet on the calendar (a plan proposed, not applied) have no days yet.
+  const sessions = ((data ?? []) as Task[]).filter((task) => isPlanSession(task) && task.due_at);
+  if (sessions.length === 0) return [];
+  const today = localDate(now);
+  const monday = addDays(today, -((weekdayOf(today) + 6) % 7));
+  const logs = await db.from("habit_log").select("task_id, day, outcome").in("task_id", sessions.map((task) => task.id)).gte("day", monday);
+  const rows = ((logs.data ?? []) as { task_id: number; day: string; outcome: string }[]).map((row) => ({ ...row, day: String(row.day).slice(0, 10) }));
+  const plans = new Map<string, PlanProgress>();
+  for (const task of sessions) {
+    const name = seriesName(task);
+    const plan = plans.get(name) ?? { name, done: 0, due: 0, skipped: 0, sessions: 0 };
+    plan.sessions++;
+    const weeklyOn = task.due_at ? new Date(new Date(task.due_at).getTime() + 5 * 60 * 60_000).getUTCDay() : 1;
+    const mine = rows.filter((row) => Number(row.task_id) === task.id);
+    const first = [...mine.map((row) => row.day), task.due_at ? localDate(new Date(task.due_at)) : today].sort()[0];
+    for (let day = monday; day <= today; day = addDays(day, 1)) {
+      if (!isDue(task.repeat_rule, day, weeklyOn) || day < first || (task.repeat_until && day > task.repeat_until)) continue;
+      const logged = mine.find((row) => row.day === day);
+      if (logged?.outcome === "skipped") plan.skipped++;
+      else {
+        plan.due++;
+        if (logged?.outcome === "done") plan.done++;
+      }
+    }
+    plans.set(name, plan);
+  }
+  return [...plans.values()].filter((plan) => plan.due > 0 || plan.done > 0).sort((x, y) => x.name.localeCompare(y.name));
+}
+
+/** The name a plan's sessions share: their series ("IELTS: Reading" → "IELTS"), else their first tag, else "Plan". */
+export function seriesName(task: Pick<Task, "title" | "tags">): string {
+  const series = /^([A-Za-z][A-Za-z0-9]{1,14}):\s/.exec(task.title.trim())?.[1];
+  if (series) return series;
+  const tag = task.tags?.[0];
+  return tag ? tag[0].toUpperCase() + tag.slice(1) : "Plan";
 }
 
 /** A habit's name for speech and text: "Workout" reads as "workout" mid-sentence. */

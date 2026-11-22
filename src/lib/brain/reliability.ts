@@ -239,6 +239,8 @@ export function unsaved(stored: Record<string, unknown> | undefined, wrote: Reco
     if (value === null || value === undefined) return have === null || have === undefined ? [] : [field];
     if (field.endsWith("_at")) return typeof have === "string" && new Date(have).getTime() === new Date(String(value)).getTime() ? [] : [field];
     if (field === "notes") return typeof have === "string" && have.includes(String(value)) ? [] : [field];
+    // A list (his tags) is the same list in any order.
+    if (Array.isArray(value)) return Array.isArray(have) && JSON.stringify([...have].map(String).sort()) === JSON.stringify([...value].map(String).sort()) ? [] : [field];
     return have === value ? [] : [field];
   });
 }

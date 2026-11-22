@@ -116,6 +116,15 @@ describe("Clash detection", () => {
     expect(clashesWith(task(3, "Call", "2026-11-20T18:45"), [workout])).toHaveLength(0);
     expect(clashesWith(task(3, "Call", "2026-11-20T18:45"), [{ ...workout, duration_minutes: 60 }])).toHaveLength(1);
   });
+  it("a short call inside a long block, after it began, is a break, not a clash (22 Nov 12:52, the barber at 16:00)", () => {
+    const app = task(4, "Update fitness app", "2026-11-22T14:45", { duration_minutes: 120 });
+    const barber = task(5, "Call barber", "2026-11-22T16:00", { duration_minutes: 10 });
+    expect(clashesWith(barber, [app])).toHaveLength(0);
+    expect(clashesWith(app, [barber])).toHaveLength(0);
+    // At the block's own start it is still a clash; and a 30-minute task inside it is too.
+    expect(clashesWith(task(6, "Call barber", "2026-11-22T14:45", { duration_minutes: 10 }), [app])).toHaveLength(1);
+    expect(clashesWith(task(7, "Post stories", "2026-11-22T16:00", { duration_minutes: 30 }), [app])).toHaveLength(1);
+  });
   it("never counts prayers, or done tasks", () => {
     expect(clashesWith(reading, [task(9, "Maghrib", "2026-11-20T18:00", { kind: "prayer" })])).toHaveLength(0);
     expect(clashesWith(reading, [task(9, "Old", "2026-11-20T18:00", { status: "done" })])).toHaveLength(0);

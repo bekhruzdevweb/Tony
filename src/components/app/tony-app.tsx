@@ -6,7 +6,7 @@ import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Menu, type Theme } from "./menu";
-import { ChatScreen, FiltersScreen, FreeTimeScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
+import { BoardScreen, ChatScreen, FiltersScreen, FreeTimeScreen, HabitsScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
 import { Icon, RowActionsContext, isOpen, type RowActions } from "./ui";
 import { splitToday } from "@/lib/today";
@@ -14,7 +14,7 @@ import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | `project:${number}`;
+type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
@@ -149,6 +149,18 @@ export function TonyApp({ initial }: { initial: AppState }) {
     setAdding: setAddingPart,
   };
 
+  // The Plan board's moves and the Habits screen's check-in: plain code on the server, the outcome as a note.
+  const lane = async (task: Task, to: "today" | "week" | "someday") => {
+    haptic("tap");
+    const result = await act("lane", { id: task.id, to });
+    if (result.ok && result.reply) say(result.reply);
+  };
+  const checkHabit = async (taskId: number) => {
+    haptic("success");
+    const result = await act("check_habit", { id: taskId });
+    if (result.ok && result.reply) say(result.reply);
+  };
+
   const reschedule = async (to: "today" | "tomorrow") => {
     const result = await act("reschedule_overdue", { to });
     if (result.ok && result.reply) say(result.reply);
@@ -185,6 +197,8 @@ export function TonyApp({ initial }: { initial: AppState }) {
           <SideItem icon={<span aria-hidden>🌙</span>} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
           <SideItem icon={Icon.today} label="Today" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
           <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
+          <SideItem icon={<span aria-hidden>🗂</span>} label="Plan" active={tab === "board"} onClick={() => setTab("board")} />
+          <SideItem icon={<span aria-hidden>🔥</span>} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
           <SideItem icon={Icon.chat} label="Chat with Tony" active={tab === "chat"} onClick={() => setTab("chat")} />
           <p className="mt-5 mb-1 px-2 text-[13px] font-semibold text-secondary">My Projects</p>
@@ -223,6 +237,8 @@ export function TonyApp({ initial }: { initial: AppState }) {
       {tab === "upcoming" && <UpcomingScreen {...screen} onMove={move} onAddTo={(day) => setSheet({ day })} />}
       {tab === "search" && <SearchScreen {...screen} />}
       {tab === "filters" && <FiltersScreen {...screen} onProject={(id) => setTab(`project:${id}`)} />}
+      {tab === "habits" && <HabitsScreen state={state} onCheck={checkHabit} />}
+      {tab === "board" && <BoardScreen {...screen} onLane={lane} />}
       {projectId !== undefined && <ProjectScreen {...screen} projectId={projectId} />}
       {tab === "chat" && <ChatScreen state={state} onSend={tell} onVoice={voice} />}
 
@@ -275,6 +291,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
           onClose={() => setMenu(false)}
           onOpen={(task) => setSheet({ task })}
           onToggle={toggle}
+          onGo={(next) => (setMenu(false), setTab(next))}
         />
       )}
 

@@ -11,6 +11,7 @@ import { finishTask } from "./recurrence";
 import { scheduleReminder } from "./reminders";
 import { getSettings, updateSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
+import { habitStats, isHabit } from "./habits";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
@@ -122,6 +123,10 @@ export async function boardView(day: Date): Promise<Board> {
   const { carried, timed, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
 
   const bell = (task: Task) => (task.persistent ? " 🔔" : "");
+  // A habit's run on its line ("Reading 🔥4"), from the log; nothing for a plan's sessions.
+  const habits = [...carried, ...timed, ...done].some(isHabit) ? await habitStats(day).catch(() => []) : [];
+  const runs = new Map(habits.filter((stats) => stats.streak >= 2).map((stats) => [stats.task.id, stats.streak]));
+  const fire = (task: Task) => (runs.has(task.id) ? ` 🔥${runs.get(task.id)}` : "");
   // Each task's parts: "Post stories 0/3", with the parts listed under it.
   const parts = await subtasksFor([...carried, ...timed, ...done].map((task) => task.id));
   const count = (task: Task) => (parts.get(task.id)?.length ? ` ${progress(parts.get(task.id)!)}` : "");
@@ -136,9 +141,9 @@ export async function boardView(day: Date): Promise<Board> {
   const lines = [
     ...carried.flatMap((task) => {
       const at = new Date(task.due_at!);
-      return [`☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${count(task)}${bell(task)}`, ...partLines(task)];
+      return [`☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)];
     }),
-    ...timed.flatMap((task) => [`☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${count(task)}${bell(task)}`, ...partLines(task)]),
+    ...timed.flatMap((task) => [`☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)]),
     ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>${count(task)}`),
   ];
   // The first line is what the pinned banner shows, so it is the short one.
@@ -184,7 +189,7 @@ export async function boardView(day: Date): Promise<Board> {
     ];
   };
   const openItem = (task: Task, when: string): Item => ({
-    blocks: [{ type: "paragraph", text: [{ type: "bold", text: when }, `  ${task.title}${count(task)}${bell(task)}   `, tick(`td:${task.id}`)] as RichText }, ...partsOf(task)],
+    blocks: [{ type: "paragraph", text: [{ type: "bold", text: when }, `  ${task.title}${count(task)}${bell(task)}${fire(task)}   `, tick(`td:${task.id}`)] as RichText }, ...partsOf(task)],
     has_checkbox: true,
   });
   const doneItem = (task: Task): Item => ({

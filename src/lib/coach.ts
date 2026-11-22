@@ -2,7 +2,7 @@ import "server-only";
 import type { Bot } from "grammy";
 import { sendHtml, track } from "./chat-log";
 import { requireDb } from "./db";
-import { habitFacts, habitName, habitStats, isHabit, type HabitStats } from "./habits";
+import { habitFacts, habitName, habitStats, isHabit, planProgress, type HabitStats } from "./habits";
 import { b, esc, i } from "./html";
 import { logMessage } from "./messages";
 import type { Settings } from "./settings";
@@ -190,12 +190,15 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
   return count;
 }
 
-/** The habits in a line each, for the brain's context: the only numbers it may quote. */
+/** The habits in a line each, and the plans' progress this week, for the brain's context: the only numbers it may quote. */
 export async function habitsForPrompt(now = new Date()): Promise<string | undefined> {
   try {
-    const stats = await habitStats(now);
-    if (stats.length === 0) return undefined;
-    return stats.map((habit) => `- ${habit.task.title}: ${habitFacts(habit)}`).join("\n");
+    const [stats, plans] = await Promise.all([habitStats(now), planProgress(now).catch(() => [])]);
+    const lines = [
+      ...stats.map((habit) => `- ${habit.task.title} (habit): ${habitFacts(habit)}`),
+      ...plans.map((plan) => `- ${plan.name} (a plan's sessions, not a habit): ${plan.done} of ${plan.due} done this week so far${plan.skipped ? `, ${plan.skipped} skipped` : ""}`),
+    ];
+    return lines.length ? lines.join("\n") : undefined;
   } catch {
     return undefined;
   }

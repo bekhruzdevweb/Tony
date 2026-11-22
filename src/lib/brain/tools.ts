@@ -22,6 +22,8 @@ import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
+import { normalTag, normalTags, prefixTag, tagsFor } from "../tags";
+import { habitFor, isHabit, streakLine } from "../habits";
 
 const TIME = "YYYY-MM-DDTHH:MM";
 /** What Tony says as himself with the action, shown above the receipt Tony's code adds (Phase 2): one model call, his own words kept. */
@@ -47,6 +49,8 @@ const taskFields = {
   },
   nudge_after_days: { type: "integer", description: "\"Remind me if I don't check it for N days\": N. A check-in comes if the task sits untouched that long." },
   free_time: { type: "boolean", description: "\"In my free time\", \"someday\", \"when I'm free\": the 🌙 Free Time list, no date and no day." },
+  habit: { type: "boolean", description: "A habit he wants to build (\"make reading a daily habit\", \"I want to stretch every morning\"): streaks and check-ins. Never a plan's sessions or a chore." },
+  tags: { type: "array", items: { type: "string" }, description: "His themes, without #: the ones he names (\"#content\", \"tag it ielts\"). On update_task: the full list after the change." },
 };
 
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]): ToolDefinition => ({
@@ -93,6 +97,8 @@ export const TOOLS: ToolDefinition[] = [
       day: { type: "string", description: "today|tomorrow|overdue|YYYY-MM-DD" },
       status: { type: "string", enum: ["open", "inbox", "done"] },
       project: { type: "string" },
+      tag: { type: "string", description: "Tasks with this tag (\"content\" for \"my content tasks\")" },
+      habits: { type: "boolean", description: "Only his habits" },
     },
     [],
   ),
@@ -232,7 +238,7 @@ const mentions = (said: string, title: string) => {
 /** The fields a write meant to store, as they should read back. */
 const written = (patch: Partial<Task>): Record<string, unknown> => {
   const keep: Record<string, unknown> = {};
-  for (const field of ["title", "notes", "due_at", "status", "priority", "project_id", "duration_minutes"] as const) if (field in patch) keep[field] = patch[field];
+  for (const field of ["title", "notes", "due_at", "status", "priority", "project_id", "duration_minutes", "habit", "tags"] as const) if (field in patch) keep[field] = patch[field];
   return keep;
 };
 
@@ -304,6 +310,8 @@ async function readFields(
     patch.priority = priority;
   }
   if (typeof args.persistent === "boolean") patch.persistent = args.persistent;
+  if (typeof args.habit === "boolean") patch.habit = args.habit;
+  if (Array.isArray(args.tags)) patch.tags = normalTags(args.tags);
   if (args.duration === null || args.duration === 0) patch.duration_minutes = null;
   else if (args.duration !== undefined) {
     const minutes = Math.round(Number(args.duration));
@@ -435,6 +443,14 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const twin = (open.data as Task[]).find((t) => normaliseTitle(t.title) === wanted);
       // Every task gets a length: his, the model's estimate, or a guess from the title.
       if (fields.patch.duration_minutes === undefined) fields.patch.duration_minutes = estimateMinutes(fields.patch.title);
+      // Its tags: the ones asked for, his own #words, and its series name ("IELTS: …" is #ielts).
+      const tags = tagsFor(fields.patch.title, fields.patch.tags ?? [], said !== undefined ? ownWords(said) : "");
+      if (tags.length) fields.patch.tags = tags;
+      // A habit comes round: daily unless he said otherwise, and on a day, so Tony asks its time if he gave none.
+      if (fields.patch.habit === true) {
+        fields.patch.repeat_rule ??= "daily";
+        if (!fields.dueAt && !fields.dayOnly) fields.dayOnly = localDate(now);
+      }
       if (twin) {
         return fail(
           `task ${taskLine(twin, await loadProjects(), now)} already exists. Do not add it again: use update_task on #${twin.id} if he asked to change it, otherwise just tell him it is already on the list.`,
@@ -549,7 +565,14 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (!task) return fail(`no task #${args.id}`);
       if (task.status === "done") return { ok: true, task_id: task.id, note: "it was already done", task: task.title };
       const { nextLabel } = await finishTask(task, "done", now);
-      return nextLabel ? { ok: true, task_id: task.id, task: task.title, repeats: `it comes round again ${nextLabel}` } : { ok: true, task_id: task.id, task: task.title };
+      const habit = isHabit(task) ? await habitFor(task.id, now) : undefined;
+      return {
+        ok: true,
+        task_id: task.id,
+        task: task.title,
+        ...(nextLabel ? { repeats: `it comes round again ${nextLabel}` } : {}),
+        ...(habit ? { streak: streakLine(habit) } : {}),
+      };
     }
 
     case "list_tasks": {
@@ -581,10 +604,16 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         }
       }
 
-      const { data, error } = await query.order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(40);
+      // A tag or "my habits" is filtered here, from a longer list.
+      const tag = typeof args.tag === "string" ? normalTag(args.tag) : undefined;
+      const narrowed = tag !== undefined || args.habits === true;
+      const { data, error } = await query.order("due_at", { ascending: true, nullsFirst: false }).order("id").limit(narrowed ? 300 : 40);
       check("list_tasks", error);
       const wantOverdue = typeof args.day === "string" && args.day.trim().toLowerCase() === "overdue";
-      const tasks = (data as Task[]).filter((t) => t.kind !== "prayer" && (!wantOverdue || isOverdue(t, now)));
+      const tasks = (data as Task[])
+        .filter((t) => t.kind !== "prayer" && (!wantOverdue || isOverdue(t, now)))
+        .filter((t) => (tag === undefined || (t.tags ?? []).includes(tag) || prefixTag(t.title) === tag) && (args.habits !== true || isHabit(t)))
+        .slice(0, 40);
       // Each with its notes, parts and attachments, so Tony can say what a task holds.
       const [parts, media] = await Promise.all([subtasksFor(tasks.map((t) => t.id)), attachmentCounts(tasks.map((t) => t.id))]);
       return { ok: true, count: tasks.length, tasks: tasks.map((t) => taskLine(t, projects, now, undefined, parts.get(t.id), media.get(t.id), tasks.length <= 12 ? 700 : 160)) };

@@ -13,6 +13,10 @@ import { requireDb } from "@/lib/db";
 import { applyPlan, buildPlan, dismissPlan } from "@/lib/planner";
 import { hasSession } from "@/lib/session";
 import { updateSettings } from "@/lib/settings";
+import { moveToLane } from "@/lib/actions";
+import { habitFor, isHabit, streakLine } from "@/lib/habits";
+import { finishTask } from "@/lib/recurrence";
+import type { Task } from "@/lib/tasks";
 
 // Chat goes through the AI model, which can take a few seconds.
 export const maxDuration = 60;
@@ -53,6 +57,37 @@ export async function POST(request: Request) {
       case "forget": {
         const result = await runTool(body.action, body);
         if (!result.ok) problem = result.error;
+        break;
+      }
+
+      // A move between the Plan board's lanes (Phase H): Today, This week, Someday. Plain code.
+      case "lane": {
+        const id = Number(body.id);
+        const to = body.to === "today" || body.to === "week" || body.to === "someday" ? body.to : undefined;
+        if (!Number.isSafeInteger(id) || !to) {
+          problem = "Unknown move";
+          break;
+        }
+        reply = await moveToLane(id, to);
+        break;
+      }
+
+      // A habit's check-in for today, from the Habits screen. Plain code.
+      case "check_habit": {
+        const found = await requireDb().from("tasks").select().eq("id", Number(body.id)).maybeSingle();
+        const habit = found.data as Task | null;
+        if (!habit || !isHabit(habit)) {
+          problem = "That habit is gone";
+          break;
+        }
+        const before = await habitFor(habit.id);
+        if (before?.doneToday) {
+          reply = "Already done today, sir.";
+          break;
+        }
+        await finishTask(habit, "done");
+        const after = await habitFor(habit.id);
+        reply = after ? `Done, sir. ${streakLine(after)}.` : "Done, sir.";
         break;
       }
 

@@ -42,8 +42,10 @@ export function Menu(props: {
   onClose: () => void;
   onOpen: (task: Task) => void;
   onToggle: (task: Task) => void;
+  /** Phones: the Plan board and Habits open from here (wide screens have them in the sidebar). */
+  onGo?: (tab: "habits" | "board") => void;
 }) {
-  const { tony, now, theme, onTheme, onClose, onOpen, onToggle } = props;
+  const { tony, now, theme, onTheme, onClose, onOpen, onToggle, onGo } = props;
   const { state, act } = tony;
   const [view, setView] = useState<View>({ name: "menu" });
   // Telegram's Back button: out of a sub-page first, then out of the menu.
@@ -88,6 +90,24 @@ export function Menu(props: {
                 <NewProject onAdd={(name, color) => act("add_project", { name, color })} />
               </Section>
               <Section title="More">
+                {onGo && (
+                  <>
+                    <li>
+                      <button type="button" onClick={() => onGo("habits")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
+                        <span className="flex-1 text-body">🔥 Habits</span>
+                        {(state.habits ?? []).some((habit) => habit.dueToday && !habit.doneToday) && <span className="rounded-full bg-done/15 px-2 py-px text-caption font-medium text-done">Today</span>}
+                        <span className="text-secondary/60">{Icon.chevron}</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" onClick={() => onGo("board")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
+                        <span className="flex-1 text-body">🗂 Plan board</span>
+                        <span className="text-caption text-secondary">Today · Week · Someday</span>
+                        <span className="text-secondary/60">{Icon.chevron}</span>
+                      </button>
+                    </li>
+                  </>
+                )}
                 <li>
                   <button type="button" onClick={() => setView({ name: "plans" })} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
                     <span className="flex-1 text-body">Plans</span>

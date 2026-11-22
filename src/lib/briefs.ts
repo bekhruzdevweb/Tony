@@ -14,6 +14,7 @@ import type { Settings } from "./settings";
 import { postBoard, shortLabel } from "./today-board";
 import { coachForBrief } from "./coach";
 import { clashLinesFor } from "./brain/checks";
+import { weekLine } from "./habit-view";
 import { sayAloud } from "./speech";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
@@ -272,9 +273,12 @@ async function weeklyReview(bot: Bot, chatId: number, settings: Settings, now: D
   const overdue = open.filter((task) => task.due_at && new Date(task.due_at).getTime() < now.getTime()).length;
   const inbox = open.filter((task) => task.status === "inbox").length;
 
+  // His habits' week and his plans' progress, from the log ("🔥 Reading 6/7", "📈 IELTS 5/6").
+  const habitsWeek = await weekLine(now).catch(() => undefined);
   const html = [
     `<b>📊 The week · to ${esc(shortDay(now, settings.timezone))}</b>`,
     [`✅ ${b(String(done.count ?? 0))} done`, `➕ ${b(String(added.count ?? 0))} added`, `⚠️ ${b(String(overdue))} overdue`, `📥 ${b(String(inbox))} in the inbox`].join("\n"),
+    ...(habitsWeek ? [esc(habitsWeek)] : []),
   ].join("\n\n");
   const id = await send(bot, chatId, html, { silent: true, kind: "brief:evening" });
   await record(now, id, WEEKLY);

@@ -7,7 +7,8 @@ import { OPEN_STATUSES, type Task } from "./tasks";
 import { b } from "./html";
 import { finishTask } from "./recurrence";
 import { addMinutes, formatTime, formatWhen, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
-import { decideFor, recordSample, timeOnDay } from "./routine";
+import { choicesFor, decideFor, recordSample, timeOnDay } from "./routine";
+import { habitFor, isHabit, streakLine } from "./habits";
 import { autoReceipt, dayLabel, slotButtons, slotQuestion, splitQuestion, type Button } from "./slot-text";
 import { markdownToHtml } from "./rich";
 import { savedMarks } from "./brain/checks";
@@ -69,6 +70,34 @@ export type ActionOutcome = {
   waiting?: boolean;
 };
 
+/** The best free time on a day for a task with no time of its own: the first of the slots Tony would offer. */
+async function bestOn(task: Task, day: Date, now: Date): Promise<{ at: Date } | undefined> {
+  const options = await choicesFor(task, parseLocalDateTime(`${localDate(day)}T12:00`)!, now);
+  const first = options.find((option) => option.at.getTime() > now.getTime());
+  return first ? { at: first.at } : undefined;
+}
+
+/**
+ * A move between the app's lanes (Phase H): Today, This week, Someday. Plain
+ * code: a task with its own time keeps its time of day where that is free;
+ * one without gets Tony's best free time, since the app has no question to ask.
+ */
+export async function moveToLane(taskId: number, lane: "today" | "week" | "someday", now = new Date()): Promise<string> {
+  const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+  const task = found.data as Task | null;
+  if (!task) return "That task is gone, sir.";
+  if (!OPEN_STATUSES.includes(task.status)) return `${task.title} is already settled, sir.`;
+  if (lane === "today" && !task.due_at) {
+    const slot = await bestOn(task, now, now);
+    if (!slot) return "Today is full, sir.";
+    await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo", free_time: false });
+    await scheduleReminder(task.id, slot.at);
+    return `✓ ${task.title} → ${formatWhen(slot.at, now)}`;
+  }
+  const outcome = await runAction(lane, task.id, undefined, now);
+  return (outcome.text ?? "").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 async function updateTask(id: number, patch: Partial<Task>): Promise<void> {
   const { error } = await requireDb().from("tasks").update(patch).eq("id", id);
   if (error) throw new Error(`updateTask: ${error.message}`);
@@ -93,10 +122,33 @@ export async function runAction(action: Action, taskId: number, arg: number | un
     case "done": {
       const { nextLabel } = await finishTask(task, "done", now);
       if (task.kind === "prayer") return { text: "✓ Prayed.", keyboard: null };
+      // A habit: its run, from the log, after this tick ("🔥 4 days in a row").
+      const habit = isHabit(task) ? await habitFor(task.id, now) : undefined;
+      const run = habit ? ` ${esc(streakLine(habit))}.` : "";
       return {
-        text: nextLabel ? `✓ Done, sir. ${b(task.title)} comes round again ${b(nextLabel)}.` : `✓ Done, sir. ${b(task.title)} is off the list.`,
+        text: nextLabel ? `✓ Done, sir.${run} ${b(task.title)} comes round again ${b(nextLabel)}.` : `✓ Done, sir.${run} ${b(task.title)} is off the list.`,
         keyboard: null,
       };
+    }
+
+    // "This week" (a lane in the app, Phase H): the first day from tomorrow with a free time for it.
+    case "week": {
+      for (let offset = 1; offset <= 6; offset++) {
+        const day = addMinutes(hisTomorrow(now), (offset - 1) * 24 * 60);
+        const slot = task.due_at ? await timeOnDay(task, day, now) : await bestOn(task, day, now);
+        if (!slot) continue;
+        await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo", free_time: false });
+        await scheduleReminder(task.id, slot.at);
+        return { text: `✓ ${b(task.title)} → ${b(formatWhen(slot.at, now))}`, keyboard: null };
+      }
+      return { text: `The week is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
+    }
+
+    // "Someday": the 🌙 Free Time list, no date, no reminders.
+    case "someday": {
+      await updateTask(task.id, { due_at: null, status: "inbox", free_time: true });
+      await settleReminders(task.id);
+      return { text: `🌙 ${b(task.title)} is on your Free Time list: no date, no reminders.`, keyboard: null };
     }
 
     case "skip": {
@@ -118,7 +170,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
         day = parseLocalDateTime(`${localDate(now)}T12:00`)!;
         for (let i = 0; i < 8 && (weekdayOf(day) !== "Sat" || localDate(day) === localDate(now)); i++) day = addMinutes(day, 24 * 60);
       }
-      // No time of its own: he is asked, never placed silently.
+      // No time of its own: he is asked, never placed silently (the app's lanes take Tony's best pick, "lane" below).
       if (!task.due_at) return askOnDay(task, day, now);
       const slot = await timeOnDay(task, day, now);
       const name = action === "today" ? "today" : "Saturday";

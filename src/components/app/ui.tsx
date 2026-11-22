@@ -200,8 +200,10 @@ export function TaskRow(props: {
   onOpen: (task: Task) => void;
   onToggle: (task: Task) => void;
   handle?: ReactNode;
+  /** Under the row, inside it: the Plan board's moves. */
+  below?: ReactNode;
 }) {
-  const { task, projects, now, when = "time", overdue, badge, attached, onOpen, onToggle, handle } = props;
+  const { task, projects, now, when = "time", overdue, badge, attached, onOpen, onToggle, handle, below } = props;
   const actions = useContext(RowActionsContext);
   const [dateMenu, setDateMenu] = useState(false);
   const pressed = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -259,6 +261,10 @@ export function TaskRow(props: {
             </span>
           )}
           {task.repeat_rule && <span className="inline-flex items-center gap-1 text-secondary">{Icon.repeat}{task.repeat_rule}</span>}
+          {task.habit && <span aria-label="Habit" title="Habit">🌱</span>}
+          {(task.tags ?? []).map((tag) => (
+            <span key={tag} className="text-primary/80">#{tag}</span>
+          ))}
           {task.persistent && !done && <span className="inline-flex items-center gap-1 text-accent">{Icon.bell}</span>}
           {task.status === "in_progress" && <span className="font-medium text-primary">Started</span>}
           {parts.length > 0 && (
@@ -292,6 +298,7 @@ export function TaskRow(props: {
       </div>
       </div>
       {actions && (parts.length > 0 || actions.adding === task.id) && <Parts task={task} parts={parts} actions={actions} />}
+      {below}
     </li>
   );
 }

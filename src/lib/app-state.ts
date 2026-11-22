@@ -7,6 +7,8 @@ import { subtasksFor } from "./subtasks";
 import { env } from "./env";
 import { getClockStatus, getSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
+import { habitStats, planProgress, streakLine } from "./habits";
+import { formatTime } from "./time";
 
 const clock = (value: string) => value.slice(0, 5);
 
@@ -33,6 +35,8 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
   // Attachments are a nicety: if they cannot be read, the tasks still load.
   const media = await mediaForApp(shown.map((task) => task.id), now).catch((error) => (console.error("App media failed:", error), []));
   const parts = await subtasksFor(shown.map((task) => task.id));
+  // Habits and plans' progress are a nicety too: without them the tasks still load.
+  const [habits, progress] = await Promise.all([habitStats(now).catch(() => []), planProgress(now).catch(() => [])]);
 
   const bot = getBot();
   let botUsername: string | null = null;
@@ -50,6 +54,19 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
     tasks: shown,
     media,
     subtasks: [...parts.values()].flat(),
+    habits: habits.map((stats) => ({
+      task_id: stats.task.id,
+      title: stats.task.title,
+      at: stats.task.due_at ? formatTime(new Date(stats.task.due_at)) : null,
+      rule: stats.task.repeat_rule,
+      streak: stats.streak,
+      best: stats.best,
+      dueToday: stats.dueToday,
+      doneToday: stats.doneToday,
+      line: streakLine(stats),
+      recent: stats.recent,
+    })),
+    progress,
     projects: projects.data as AppProject[],
     memory: memory.data as AppMemory[],
     messages: (messages.data as AppMessage[]).reverse(),

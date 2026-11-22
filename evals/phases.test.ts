@@ -699,7 +699,7 @@ describe("22 Nov 12:37: plans are not habits, the task in focus, a clean chat", 
 
   it("a habit first due in two weeks is not due on this Sunday, and misses only what came after its first date", async () => {
     const { habitStats } = await import("../src/lib/habits");
-    task({ title: "Sunday long run", due_at: "2026-12-06T08:00", repeat_rule: "weekly", created_at: at("2026-11-22T09:00").toISOString() });
+    task({ title: "Sunday long run", due_at: "2026-12-06T08:00", repeat_rule: "weekly", habit: true, created_at: at("2026-11-22T09:00").toISOString() });
     vi.setSystemTime(at("2026-11-22T09:30"));
     expect((await habitStats(new Date()))[0].dueToday).toBe(false);
     // 6 Dec passed without it: one miss, not three (22 Nov, 29 Nov and 6 Dec).
@@ -821,5 +821,131 @@ describe("22 Nov 12:37: plans are not habits, the task in focus, a clean chat", 
     const reminder = sent.find((message) => message.name === "sendVideo")!;
     expect(String(reminder.extra?.caption)).not.toContain("SaveAsBot");
     expect(String(reminder.extra?.caption)).toContain("Watch saved video");
+  });
+});
+
+// ── Phase H (22 Nov): habits he chose, tags, the Plan board ─────────────
+describe("Phase H: habits, tags and the Plan board", () => {
+  const recorder = () => {
+    const sent: { name: string; text: string; extra?: Record<string, unknown> }[] = [];
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown, extra?: Record<string, unknown>) => {
+          if (String(name).startsWith("send")) sent.push({ name: String(name), text: typeof text === "string" ? text : JSON.stringify(text), extra });
+          return { message_id: 800 + sent.length, ...(String(name) === "sendPoll" ? { poll: { id: `poll-${sent.length}` } } : {}) };
+        },
+      },
+    );
+    return { bot: { api } as never, sent };
+  };
+  /** A habit's log: one row per day, done unless said otherwise. */
+  const logged = (taskId: unknown, days: string[], outcome = "done") => days.forEach((day) => state.db.insert("habit_log", { task_id: taskId, day, outcome, at: at(`${day}T21:05`).toISOString() }));
+
+  it("'make reading a daily habit at 21:00': a habit, daily, at 21:00", async () => {
+    const result = await run("make reading a daily habit at 21:00", "2026-11-22T13:30", [tools(["add_task", { title: "Reading", habit: true, due_at: "2026-11-22T21:00" }])]);
+    const reading = byTitle("Reading");
+    expect(reading.habit).toBe(true);
+    expect(reading.repeat_rule).toBe("daily");
+    expect(local(reading.due_at)).toBe("2026-11-22T21:00");
+    expect(result.replies[0]).toContain("🔁 daily");
+  });
+
+  it("'I want to stretch every morning as a habit', no time: a daily habit, and Tony asks its time today", async () => {
+    const result = await run("I want to stretch every morning as a habit", "2026-11-22T13:30", [tools(["add_task", { title: "Morning stretching", habit: true }])]);
+    const stretch = byTitle("Morning stretching");
+    expect(stretch.habit).toBe(true);
+    expect(stretch.repeat_rule).toBe("daily");
+    expect(result.thought?.slot?.kind).toBe("ask");
+    expect(result.thought?.slot?.day).toBe("2026-11-22");
+  });
+
+  it("a habit done three days running: its reminder says so, and ✓ Done says four", async () => {
+    const reading = task({ title: "Reading", due_at: "2026-11-22T21:00", repeat_rule: "daily", habit: true, created_at: at("2026-11-18T10:00").toISOString() });
+    state.db.rows("settings")[0].habits_since = "2026-11-18";
+    logged(reading.id, ["2026-11-19", "2026-11-20", "2026-11-21"]);
+    state.db.insert("reminders", { task_id: reading.id, fire_at: at("2026-11-22T21:00").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T20:59").toISOString();
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T21:00"));
+    await runTick(bot, 42, new Date());
+    expect(sent[0].text).toBe("Sir, a reminder: <b>Reading</b>.\n<i>🔥 3 days in a row: keep it going</i>");
+    vi.setSystemTime(at("2026-11-22T21:40"));
+    const outcome = await runAction("done", Number(reading.id), undefined, new Date());
+    expect(outcome.text).toBe("✓ Done, sir. 🔥 4 days in a row, your best yet. <b>Reading</b> comes round again <b>tomorrow 21:00</b>.");
+  });
+
+  it("'I read today' in words: the receipt carries the run", async () => {
+    const reading = task({ title: "Reading", due_at: "2026-11-22T21:00", repeat_rule: "daily", habit: true, created_at: at("2026-11-19T10:00").toISOString() });
+    state.db.rows("settings")[0].habits_since = "2026-11-19";
+    logged(reading.id, ["2026-11-20", "2026-11-21"]);
+    const result = await run("I did my reading today", "2026-11-22T21:30", [tools(["complete_task", { id: reading.id }])]);
+    expect(result.replies[0]).toContain("✓ **Reading** done · 🔥 3 days in a row, your best yet");
+  });
+
+  it("/habits: each habit's week and run, a ✓ for today's, and the plans' progress; the plan's sessions are not habits", async () => {
+    const { habitsView } = await import("../src/lib/habit-view");
+    const reading = task({ title: "Reading", due_at: "2026-11-25T21:00", repeat_rule: "daily", habit: true, created_at: at("2026-11-20T10:00").toISOString() });
+    state.db.rows("settings")[0].habits_since = "2026-11-20";
+    logged(reading.id, ["2026-11-23", "2026-11-24"]);
+    const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-30T09:00", repeat_rule: "weekly", repeat_until: "2027-01-10", tags: ["ielts"] });
+    const tuesday = task({ title: "IELTS: Reading + Listening (learn)", due_at: "2026-11-24T09:00", repeat_rule: "weekly", repeat_until: "2027-01-10", tags: ["ielts"] });
+    logged(monday.id, ["2026-11-23"]);
+    void tuesday;
+    vi.setSystemTime(at("2026-11-25T12:00"));
+    const view = await habitsView(new Date());
+    expect(view.html).toContain("<b>🔥 Your habits</b>");
+    expect(view.html).toContain("<b>Reading</b> · 21:00\n<code>M T W T F S S</code>\n<code>✓ ✓ ○ · · · ·</code>\n<i>🔥 2 days in a row: keep it going</i> · best 2");
+    expect(view.html).toContain("<b>📈 Plans this week</b>\nIELTS · 1/2 done");
+    expect(JSON.stringify(view.keyboard)).toContain(`"callback_data":"hb:${reading.id}"`);
+    expect(view.html).not.toContain("<b>IELTS: Reading");
+  });
+
+  it("Sunday's 📊 The week carries the habits' week and the plans' progress", async () => {
+    const reading = task({ title: "Reading", due_at: "2026-11-29T21:00", repeat_rule: "daily", habit: true, created_at: at("2026-11-20T10:00").toISOString() });
+    state.db.rows("settings")[0].habits_since = "2026-11-20";
+    logged(reading.id, ["2026-11-23", "2026-11-24", "2026-11-26", "2026-11-27", "2026-11-28"]);
+    const { bot, sent } = recorder();
+    state.db.rows("settings")[0].brief_evening = "21:00:00";
+    vi.setSystemTime(at("2026-11-29T21:00"));
+    await runBriefs(bot, 42, await getSettings(), new Date());
+    const week = sent.find((message) => message.text.includes("The week"))!.text;
+    expect(week).toContain("🔥 Reading 5/7");
+  });
+
+  it("tags: his #words and a series name; 'my content tasks' finds them", async () => {
+    const result = await run("film the grammar reel tomorrow at 10 #content", "2026-11-22T13:30", [
+      tools(["add_task", { title: "Film the grammar reel", due_at: "2026-11-23T10:00" }]),
+    ]);
+    expect(byTitle("Film the grammar reel").tags).toEqual(["content"]);
+    void result;
+    await run("add IELTS: Sunday review on Sunday at 10", "2026-11-22T13:31", [tools(["add_task", { title: "IELTS: Sunday review", due_at: "2026-11-29T10:00" }])]);
+    expect(byTitle("IELTS: Sunday review").tags).toEqual(["ielts"]);
+    task({ title: "Post the forum poster", tags: ["content"] });
+    task({ title: "Call the bank" });
+    const listed = await run("show my content tasks", "2026-11-22T13:32", [tools(["list_tasks", { tag: "content" }]), says("Two, sir.")]);
+    const toolResult = JSON.stringify(state.calls.at(-1)!.messages.filter((message) => message.role === "tool"));
+    expect(toolResult).toContain("Film the grammar reel");
+    expect(toolResult).toContain("Post the forum poster");
+    expect(toolResult).not.toContain("Call the bank");
+    void listed;
+  });
+
+  it("the Plan board's moves: Someday clears the date and its reminders; an undated task gets today's best free time; This week keeps its time of day", async () => {
+    const { moveToLane } = await import("../src/lib/actions");
+    vi.setSystemTime(at("2026-11-22T13:30"));
+    const shirt = task({ title: "Buy a zippered shirt" });
+    const call = task({ title: "Call the bank", due_at: "2026-11-22T15:00", duration_minutes: 10 });
+    state.db.insert("reminders", { task_id: call.id, fire_at: at("2026-11-22T15:00").toISOString(), kind: "due", attempt: 0 });
+    expect(await moveToLane(Number(call.id), "someday", new Date())).toBe("🌙 Call the bank is on your Free Time list: no date, no reminders.");
+    const parked = byTitle("Call the bank");
+    expect(parked.free_time).toBe(true);
+    expect(parked.due_at).toBeNull();
+    expect(state.db.rows("reminders").filter((row) => row.task_id === call.id && row.state === "scheduled")).toHaveLength(0);
+    const today = await moveToLane(Number(shirt.id), "today", new Date());
+    expect(today).toMatch(/^✓ Buy a zippered shirt → today, Sun 22 Nov, \d{2}:\d{2}$/);
+    expect(local(byTitle("Buy a zippered shirt").due_at)!.slice(0, 10)).toBe("2026-11-22");
+    const week = await moveToLane(Number(shirt.id), "week", new Date());
+    expect(week).toMatch(/^✓ Buy a zippered shirt → tomorrow, Mon 23 Nov, \d{2}:\d{2}$/);
   });
 });

@@ -51,6 +51,29 @@ export type AppMedia = {
 /** One part of a task (a subtask). */
 export type AppSubtask = { id: number; task_id: number; title: string; done: boolean; position: number };
 
+/** How one day went for a habit (see habits.ts). */
+export type AppDayState = "done" | "skipped" | "missed" | "due" | "off" | "ahead";
+
+/** A habit with its run, from the log (Phase H). */
+export type AppHabit = {
+  task_id: number;
+  title: string;
+  /** Its time, HH:MM, when it has one. */
+  at: string | null;
+  rule: "daily" | "weekdays" | "weekly" | null;
+  streak: number;
+  best: number;
+  dueToday: boolean;
+  doneToday: boolean;
+  /** "🔥 3 days in a row: keep it going". */
+  line: string;
+  /** The last 14 days, oldest first. */
+  recent: { day: string; state: AppDayState }[];
+};
+
+/** A plan's sessions this week (Monday to today): "IELTS 2/3". */
+export type AppPlanProgress = { name: string; done: number; due: number; skipped: number; sessions: number };
+
 export type AppState = {
   now: string;
   tasks: Task[];
@@ -61,6 +84,10 @@ export type AppState = {
   media: AppMedia[];
   /** Tasks' parts, ordered. */
   subtasks: AppSubtask[];
+  /** His habits and their runs (Phase H). */
+  habits: AppHabit[];
+  /** His plans' progress this week. */
+  progress: AppPlanProgress[];
   settings: AppSettings;
   status: AppStatus;
 };

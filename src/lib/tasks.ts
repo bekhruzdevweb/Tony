@@ -25,6 +25,10 @@ export type Task = {
   kind?: string | null;
   /** On the 🌙 Free Time list ("in my free time", "someday"): no date, suggested when he is free. */
   free_time?: boolean | null;
+  /** A habit he chose to build (Phase H): streaks, check-ins and the coach. A plan's sessions are not habits. */
+  habit?: boolean;
+  /** His words for a theme ("content", "ielts"), lower case, without the #. */
+  tags?: string[];
   created_at: string;
   updated_at: string;
   completed_at: string | null;

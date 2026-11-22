@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { AppState } from "@/lib/app-types";
+import type { AppDayState, AppHabit, AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
 import { addMinutes, formatLongDate, formatTime, localDate } from "@/lib/time";
@@ -296,10 +296,12 @@ const FILTERS: Filter[] = [
   { id: "nodate", name: "No date", color: "var(--secondary)", test: (t) => !t.due_at },
 ];
 
-/** Filters (and labels: Tony files by project, so the labels are the projects). */
+/** Filters, and labels: his projects and his tags (#content, #ielts). */
 export function FiltersScreen({ state, now, onOpen, onToggle, onProject }: ScreenProps & { onProject: (id: number) => void }) {
   const [chosen, setChosen] = useState<Filter | null>(null);
   const open = state.tasks.filter((t) => isOpen(t) && notPrayer(t));
+  const tags = [...new Set(open.flatMap((t) => t.tags ?? []))].sort();
+  const tagFilter = (tag: string): Filter => ({ id: `tag:${tag}`, name: `#${tag}`, color: "var(--primary)", test: (t) => (t.tags ?? []).includes(tag) });
   if (chosen) {
     const tasks = open.filter((t) => chosen.test(t, now)).sort(byDue);
     return (
@@ -333,7 +335,20 @@ export function FiltersScreen({ state, now, onOpen, onToggle, onProject }: Scree
             </li>
           ))}
         </Section>
-        <Section title="Labels">
+        {tags.length > 0 && (
+          <Section title="Tags">
+            {tags.map((tag) => (
+              <li key={tag} className="border-b border-hairline">
+                <button type="button" onClick={() => setChosen(tagFilter(tag))} className="flex h-11 w-full items-center gap-3 px-1 text-left text-[14px] hover:bg-surface">
+                  <span className="text-primary">#</span>
+                  <span className="flex-1">{tag}</span>
+                  <span className="text-[12px] text-secondary">{open.filter((t) => (t.tags ?? []).includes(tag)).length}</span>
+                </button>
+              </li>
+            ))}
+          </Section>
+        )}
+        <Section title="Projects">
           {state.projects.map((project) => (
             <li key={project.id} className="border-b border-hairline">
               <button type="button" onClick={() => onProject(project.id)} className="flex h-11 w-full items-center gap-3 px-1 text-left text-[14px] hover:bg-surface">
@@ -344,6 +359,168 @@ export function FiltersScreen({ state, now, onOpen, onToggle, onProject }: Scree
             </li>
           ))}
         </Section>
+      </div>
+    </div>
+  );
+}
+
+const DAY_STYLE: Record<AppDayState, { className: string; label: string }> = {
+  done: { className: "bg-done", label: "done" },
+  skipped: { className: "bg-secondary/35", label: "skipped" },
+  missed: { className: "border-[1.5px] border-overdue/70", label: "missed" },
+  due: { className: "border-[1.5px] border-primary bg-primary/10", label: "to do today" },
+  off: { className: "bg-hairline", label: "not one of its days" },
+  ahead: { className: "bg-hairline", label: "ahead" },
+};
+const shortDayName = (day: string) => fmt(new Date(`${day}T12:00:00+05:00`), { weekday: "short", day: "numeric", month: "short" });
+
+/** One habit: its run, its last two weeks, and today's check-in. */
+function HabitCard({ habit, onCheck }: { habit: AppHabit; onCheck: (taskId: number) => void }) {
+  return (
+    <li className="rounded-card border border-hairline p-3.5">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-semibold">{habit.title}</p>
+          <p className="mt-0.5 text-[12.5px] text-secondary">
+            {[habit.rule === "weekdays" ? "Weekdays" : habit.rule === "weekly" ? "Weekly" : "Daily", habit.at].filter(Boolean).join(" · ")} · best {habit.best}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[22px] leading-none font-bold tabular-nums">{habit.streak > 0 ? `🔥${habit.streak}` : "–"}</p>
+          <p className="mt-1 text-[11px] text-secondary">in a row</p>
+        </div>
+      </div>
+      <ol className="mt-3 grid grid-cols-14 gap-1" aria-label="The last 14 days">
+        {habit.recent.map((entry) => (
+          <li key={entry.day} title={`${shortDayName(entry.day)}: ${DAY_STYLE[entry.state].label}`} aria-label={`${shortDayName(entry.day)}: ${DAY_STYLE[entry.state].label}`} className={`aspect-square rounded-[5px] ${DAY_STYLE[entry.state].className}`} />
+        ))}
+      </ol>
+      <div className="mt-3 flex items-center gap-3">
+        <p className="min-w-0 flex-1 truncate text-[13px] text-secondary">{habit.line}</p>
+        {habit.dueToday && !habit.doneToday && (
+          <button type="button" onClick={() => onCheck(habit.task_id)} className="h-9 shrink-0 rounded-full bg-done px-4 text-[13px] font-semibold text-white active:scale-95">
+            ✓ Done today
+          </button>
+        )}
+        {habit.doneToday && <span className="shrink-0 text-[13px] font-medium text-done">Done today ✓</span>}
+      </div>
+    </li>
+  );
+}
+
+/** 🔥 Habits (Phase H): each habit's run and last two weeks; then each plan's sessions this week. */
+export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (taskId: number) => void }) {
+  const habits = state.habits ?? [];
+  const progress = state.progress ?? [];
+  const today = habits.filter((habit) => habit.dueToday || habit.doneToday);
+  return (
+    <div className="flex-1 overflow-y-auto pb-8">
+      <div className={PAGE}>
+        <Title sub={today.length ? `${today.filter((habit) => habit.doneToday).length} of ${today.length} done today` : undefined}>🔥 Habits</Title>
+        {habits.length === 0 ? (
+          <Empty>No habits yet. Tell Tony &ldquo;make reading a daily habit at 21:00&rdquo;, or switch on 🌱 Habit on a repeating task.</Empty>
+        ) : (
+          <ul className="mt-4 grid gap-3 md:grid-cols-2">
+            {habits.map((habit) => (
+              <HabitCard key={habit.task_id} habit={habit} onCheck={onCheck} />
+            ))}
+          </ul>
+        )}
+        {progress.length > 0 && (
+          <Section title="📈 Plans this week">
+            {progress.map((plan) => (
+              <li key={plan.name} className="border-b border-hairline px-1 py-3">
+                <div className="flex items-baseline justify-between text-[14px]">
+                  <span className="font-medium">{plan.name}</span>
+                  <span className="text-secondary tabular-nums">
+                    {plan.done}/{plan.due} done{plan.skipped ? ` · ${plan.skipped} skipped` : ""}
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-hairline">
+                  <div className="h-full rounded-full bg-done" style={{ width: `${plan.due ? Math.round((plan.done / plan.due) * 100) : 0}%` }} />
+                </div>
+              </li>
+            ))}
+          </Section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type Lane = "inbox" | "today" | "week" | "someday";
+const LANES: { id: Lane; title: string; hint: string }[] = [
+  { id: "inbox", title: "📥 Inbox", hint: "Not planned yet" },
+  { id: "today", title: "Today", hint: "Today, and anything overdue" },
+  { id: "week", title: "This week", hint: "The next six days" },
+  { id: "someday", title: "🌙 Someday", hint: "No date, no reminders" },
+];
+const MOVES: { to: "today" | "week" | "someday"; label: string }[] = [
+  { to: "today", label: "Today" },
+  { to: "week", label: "This week" },
+  { to: "someday", label: "Someday" },
+];
+
+/**
+ * The Plan board (Phase H): every open task in one of four lanes, Inbox,
+ * Today, This week, Someday, with one tap to move it to another. Tony picks
+ * the time on the new day (its own time of day where that is free). A
+ * habit or a plan's session keeps its rhythm: it shows, but does not move.
+ */
+export function BoardScreen({ state, now, onOpen, onToggle, onLane }: ScreenProps & { onLane: (task: Task, to: "today" | "week" | "someday") => void }) {
+  const open = state.tasks.filter((t) => isOpen(t) && notPrayer(t));
+  const endOfToday = new Date(`${localDate(now)}T00:00:00+05:00`).getTime() + DAY_MS;
+  const laneOf = (task: Task): Lane | undefined => {
+    if (task.free_time) return "someday";
+    if (!task.due_at) return "inbox";
+    const at = new Date(task.due_at).getTime();
+    if (at < endOfToday) return "today";
+    if (at < endOfToday + 6 * DAY_MS) return "week";
+    return undefined;
+  };
+  const later = open.filter((t) => laneOf(t) === undefined).length;
+  return (
+    <div className="flex-1 overflow-y-auto pb-8">
+      <div className="mx-auto w-full max-w-[1200px] px-4 md:px-10">
+        <Title sub={later ? `${later} more after this week` : undefined}>Plan</Title>
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          {LANES.map((lane) => {
+            const tasks = open.filter((t) => laneOf(t) === lane.id).sort((a, b) => (a.due_at ?? a.created_at).localeCompare(b.due_at ?? b.created_at));
+            return (
+              <section key={lane.id} aria-label={lane.title} className="min-w-0 rounded-card bg-surface/60 p-2">
+                <header className="flex items-baseline justify-between px-2 pt-1 pb-2">
+                  <h2 className="text-[14px] font-bold">{lane.title}</h2>
+                  <span className="text-[12px] text-secondary">{tasks.length || lane.hint}</span>
+                </header>
+                <ul className="rounded-card bg-background">
+                  {tasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      projects={state.projects}
+                      now={now}
+                      when={lane.id === "today" ? "time" : "full"}
+                      overdue={Boolean(task.due_at) && new Date(task.due_at!).getTime() < now.getTime() && task.status !== "in_progress"}
+                      onOpen={onOpen}
+                      onToggle={onToggle}
+                      below={
+                        task.repeat_rule ? undefined : (
+                          <div className="flex flex-wrap gap-1.5 pb-2.5 pl-10 md:pl-9">
+                            {MOVES.filter((move) => move.to !== lane.id).map((move) => (
+                              <button key={move.to} type="button" onClick={() => onLane(task, move.to)} className="h-7 rounded-full border border-hairline px-2.5 text-[12px] text-secondary hover:border-primary hover:text-primary">
+                                → {move.label}
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      }
+                    />
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

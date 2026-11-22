@@ -63,6 +63,8 @@ import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } fr
 import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
 import { flipTick, hasTaskList, LIST_TICK, withoutTicks, withTicks } from "./list-ticks";
+import { habitsView } from "./habit-view";
+import { habitFor, isHabit, streakLine } from "./habits";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
 import { fetchTitle, pageTitle } from "./links";
@@ -291,6 +293,14 @@ export function getBot(): Bot | undefined {
     await showUndo(ctx.chat.id);
   });
 
+  // /habits (Phase H): each habit's week and run, a ✓ for each still to do today, and the plans' progress. Plain code.
+  tasks.command("habits", async (ctx) => {
+    await retire({ kinds: ["cmd:habits"] });
+    const view = await habitsView(new Date());
+    const sent = await sendRich(bot, ctx.chat.id, view.html, { keyboard: view.keyboard });
+    await track(sent, "cmd:habits", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+  });
+
   // /memory: what Tony keeps about him, each with 🗑. Plain code.
   tasks.command("memory", async (ctx) => {
     await retire({ kinds: ["cmd:memory"] });
@@ -450,6 +460,33 @@ export function getBot(): Bot | undefined {
       }
       await logEvent("task_tap", { task_id: taskId, action: toast.startsWith("Back") ? "undo" : "done" });
       if (chatId !== undefined && tapped) await redrawList(chatId, tapped.message_id, taskId, tapped.reply_markup ? InlineKeyboard.from(tapped.reply_markup.inline_keyboard) : undefined);
+      return;
+    }
+
+    // ✓ on /habits ("hb:<task>"): today's check-in, in plain code; the list is redrawn with the new run.
+    if (payload.startsWith("hb:")) {
+      const taskId = Number(payload.slice(3));
+      let toast = "That habit is gone, sir.";
+      try {
+        const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+        const habit = found.data as Task | null;
+        if (habit && OPEN_STATUSES.includes(habit.status) && isHabit(habit)) {
+          const before = await habitFor(habit.id);
+          if (before?.doneToday) toast = "Already done today, sir.";
+          else {
+            await finishTask(habit, "done");
+            const after = await habitFor(habit.id);
+            toast = after ? `Done, sir. ${streakLine(after)}.` : "Done, sir.";
+            await logEvent("task_tap", { task_id: habit.id, action: "done" });
+          }
+        }
+      } finally {
+        await ctx.answerCallbackQuery({ text: toast.slice(0, 190) }).catch(() => undefined);
+      }
+      if (chatId !== undefined && tapped) {
+        const view = await habitsView(new Date());
+        await editRich(bot, chatId, tapped.message_id, view.html, view.keyboard);
+      }
       return;
     }
 

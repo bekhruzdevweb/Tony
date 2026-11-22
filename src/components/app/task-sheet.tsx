@@ -5,6 +5,7 @@ import type { AppMedia, AppProject } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime, localDate } from "@/lib/time";
 import { Icon, isOpen } from "./ui";
+import { normalTags, tagText } from "@/lib/tags";
 
 export type SheetTarget = { task?: Task; day?: string; projectId?: number; focus?: "notes" };
 
@@ -34,12 +35,19 @@ export function TaskSheet(props: {
   const [duration, setDuration] = useState(task?.duration_minutes ? String(task.duration_minutes) : "");
   const [repeat, setRepeat] = useState<string>(task?.repeat_rule ?? "none");
   const [persistent, setPersistent] = useState(task?.persistent ?? false);
+  const [habit, setHabit] = useState(task?.habit ?? false);
+  const [tags, setTags] = useState(tagText(task?.tags));
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
     if (!title.trim() || saving) return;
     setSaving(true);
     const payload: Record<string, unknown> = { title: title.trim(), notes, priority, project, repeat, persistent, duration: duration ? Number(duration) : task?.duration_minutes ? 0 : undefined };
+    // Tags as typed ("#content ielts"), and a habit only when it repeats.
+    const typedTags = normalTags(tags.split(/[\s,]+/));
+    if (task ? typedTags.join(" ") !== (task.tags ?? []).join(" ") : typedTags.length > 0) payload.tags = typedTags;
+    const wantsHabit = habit && repeat !== "none";
+    if (task ? wantsHabit !== Boolean(task.habit) : wantsHabit) payload.habit = wantsHabit;
     // Times are Tashkent time. A date with no time means 09:00 that day.
     const dueText = date ? `${date}T${time || "09:00"}` : "";
     const before = due ? `${localDate(due)}T${formatTime(due)}` : "";
@@ -174,6 +182,22 @@ export function TaskSheet(props: {
               </select>
             </label>
           </div>
+
+          <label className="block">
+            <span className={label}>Tags</span>
+            <input className={field} placeholder="#content #ielts" value={tags} autoCapitalize="none" onChange={(event) => setTags(event.target.value)} />
+          </label>
+
+          {repeat !== "none" && (
+            <label className="flex min-h-11 items-center justify-between gap-4 rounded-card bg-surface px-3.5 py-3">
+              <span>
+                <span className="block text-body">🌱 Habit</span>
+                <span className="block text-caption text-secondary">Tony keeps its streak and checks in when it slips</span>
+              </span>
+              <input type="checkbox" className="peer sr-only" checked={habit} onChange={(event) => setHabit(event.target.checked)} />
+              <span className="relative h-8 w-13 shrink-0 rounded-full bg-secondary/30 transition-colors peer-checked:bg-done peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:top-0.5 after:left-0.5 after:size-7 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
+            </label>
+          )}
 
           <label className="flex min-h-11 items-center justify-between gap-4 rounded-card bg-surface px-3.5 py-3">
             <span>

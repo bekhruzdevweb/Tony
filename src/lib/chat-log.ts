@@ -26,6 +26,7 @@ export type MessageKind =
   | "cmd:routine"
   | "cmd:undo"
   | "cmd:memory"
+  | "cmd:habits"
   | "plan"
   | "voice"
   // An apology, "I don't know that command", and the message that caused it.
