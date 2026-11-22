@@ -45,3 +45,12 @@ describe("a kept file in a few words", () => {
     expect(fileGist({ kind: "video", note: null, caption: "this is how i should be uploading stories daily", description: null })).toBe("video: this is how i should be uploading stories daily");
   });
 });
+
+describe("a silent video is not given words", async () => {
+  const { inventedSpeech } = await import("../src/lib/voice");
+  it("drops the transcriber's stock phrases", () => {
+    expect(inventedSpeech("Субтитры сделал DimaTorzok")).toBe(true);
+    expect(inventedSpeech("Thank you for watching!")).toBe(true);
+    expect(inventedSpeech("Today I'll show you how I post stories every day")).toBe(false);
+  });
+});

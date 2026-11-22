@@ -1,5 +1,5 @@
 import "server-only";
-import { transcribeAudio } from "./voice";
+import { inventedSpeech, transcribeAudio } from "./voice";
 import { isPromoCaption } from "./library-rules";
 import { randomUUID } from "node:crypto";
 import type { Bot, InlineKeyboard } from "grammy";
@@ -120,7 +120,7 @@ export async function rehearVideo(id: number): Promise<string | undefined> {
   const bytes = await storedBytes(media).catch(() => undefined);
   if (!bytes) return undefined;
   const heard = await transcribeAudio(bytes, "video.mp4", "video/mp4").catch((error) => (console.error("Could not hear the stored video:", error), undefined));
-  if (!heard?.trim()) return undefined;
+  if (!heard?.trim() || inventedSpeech(heard)) return undefined;
   const description = `Said in it: ${heard.trim().slice(0, 1500)}`;
   await updateMedia(media.id, { description });
   return description;

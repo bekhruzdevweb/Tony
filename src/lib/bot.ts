@@ -79,7 +79,7 @@ import { readDocument, readableDocument, readImage } from "./vision";
 /** How much of a document he sends goes into the message itself. */
 const DOCUMENT_IN_MESSAGE = 15_000;
 import { asksForVoice, DAILY_VOICE_LIMIT, sayAloud, setVoiceMode, voiceState } from "./speech";
-import { downloadTelegramFile, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
+import { downloadTelegramFile, inventedSpeech, MAX_VOICE_SECONDS, transcribeAudio } from "./voice";
 
 let cached: { token: string; bot: Bot } | undefined;
 
@@ -1641,7 +1641,7 @@ export function getBot(): Bot | undefined {
     }
     if (bytes && !message.animation && (media.duration ?? 0) >= 3) {
       const heard = await transcribeAudio(bytes, "video.mp4", "video/mp4").catch(() => undefined);
-      if (heard?.trim()) parts.push(`Said in it: ${heard.trim().slice(0, 1500)}`);
+      if (heard?.trim() && !inventedSpeech(heard)) parts.push(`Said in it: ${heard.trim().slice(0, 1500)}`);
     }
     if (media.duration) parts.push(`Length: ${media.duration} s`);
     return parts.length > (media.duration ? 1 : 0) ? parts.join("\n") : undefined;

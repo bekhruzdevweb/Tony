@@ -89,3 +89,13 @@ export async function transcribeVoice(bot: Bot, fileId: string): Promise<string>
   // Telegram names voice notes .oga; transcription services expect .ogg for the same Opus audio.
   return transcribeAudio(bytes, name.replace(/\.oga$/i, ".ogg"), "audio/ogg");
 }
+
+/**
+ * Words a transcriber invents for a video with music or no speech ("Субтитры сделал DimaTorzok", 23 Nov:
+ * the stories video), never what was said: such a reading counts as nothing heard.
+ */
+export function inventedSpeech(text: string): boolean {
+  const words = text.trim();
+  if (words.split(/\s+/).filter(Boolean).length < 3) return true;
+  return /(субтитр|редактор субтитров|продолжение следует|amara\.org|thanks? (you )?for watching|subtitles? by|please subscribe|подписывайтесь|dimatorzok)/i.test(words);
+}
