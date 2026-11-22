@@ -156,7 +156,7 @@ async function modelProposal(input: {
       ? `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never at the same time as a fixed event or another task. He asked for all of them: place every task, with no limit per day; leave one out only when no free time is left.`
       : `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never within an hour of a fixed event or of another task; at most ${MAX_PER_DAY} new tasks a day.`,
     `Follow his habits where one applies. Put first, and earliest in the day, tasks that serve one of his goals (lines starting 'Goal'), then urgent (P1, P2) and overdue tasks.${all ? "" : " If a task does not fit, leave it out and say why."}`,
-    "Each reason is short, plain, and addressed to him: 'you work out in the evenings', 'free hour after classes'.",
+    "Each reason is short, plain, and addressed to him: 'you work out in the evenings', 'free hour after classes'. A reason never says 'today' for another day: name the day ('Monday is full').",
   ].join(" ");
   const user = [
     `Now: ${weekdayOf(now)} ${localDate(now)} ${formatTime(now)}.`,

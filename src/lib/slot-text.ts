@@ -32,11 +32,11 @@ const minuteId = (at: Date) => Math.round(at.getTime() / 60_000);
  *  10:00–14:00 is taken by **Watch: Instagram Masterclass**."
  * `when` is "on Mon 23 Nov" or "tomorrow, Sat 21 Nov". One question, no "inbox".
  */
-export function slotQuestion(input: { title: string; marks: string; when: string; options: SlotOption[]; taken?: string }): string {
+export function slotQuestion(input: { title: string; marks: string; when: string; options: SlotOption[]; taken?: string; note?: string }): string {
   const [best] = input.options;
   const reason = best.why ? `, ${best.why}` : "";
   const ask = input.options.length === 1 ? `Only **${clock(best.at)}** is free${reason}.` : `Best: **${clock(best.at)}**${reason}.`;
-  return [`**${input.title}**${input.marks}`, `When ${input.when.replace(/,$/, "")}? ${ask}`, ...(input.taken ? [`${input.taken}.`] : [])].join("\n");
+  return [`**${input.title}**${input.marks}`, `When ${input.when.replace(/,$/, "")}? ${ask}`, ...(input.taken ? [`${input.taken}.`] : []), ...(input.note ? [input.note] : [])].join("\n");
 }
 
 /** Tony's own pick, for a kind he said "decide yourself" for: the receipt says so and why. */
@@ -67,7 +67,7 @@ export const awaitsAnswer = (slot: { kind: "ask" | "auto" | "split" } | undefine
 
 /** The buttons under the question: best first (⭐), then [✏️ Other time]; [✏️ Change] under Tony's own pick; [✂️ Split …] for halves. */
 export function slotButtons(
-  slot: { kind: "ask"; taskId: number; day: string; options: SlotOption[] } | { kind: "auto"; taskId: number; day: string } | { kind: "split"; taskId: number; day: string; parts: Date[] },
+  slot: { kind: "ask"; taskId: number; day: string; options: SlotOption[]; inbox?: boolean } | { kind: "auto"; taskId: number; day: string } | { kind: "split"; taskId: number; day: string; parts: Date[] },
 ): Button[][] {
   const other = { text: "✏️ Other time", data: `sl:other:${slot.taskId}:${slot.day}` };
   if (slot.kind === "auto") return [[{ text: "✏️ Change", data: `sl:edit:${slot.taskId}:${slot.day}` }]];
@@ -75,5 +75,8 @@ export function slotButtons(
     const [a, b] = slot.parts;
     return [[{ text: `✂️ Split ${clock(a)} + ${clock(b)}`, data: `sl:split:${slot.taskId}:${minuteId(a)}:${minuteId(b)}` }], [other]];
   }
-  return [slot.options.map((option, index) => ({ text: `${index === 0 ? "⭐ " : ""}${clock(option.at)}`, data: `sl:at:${slot.taskId}:${minuteId(option.at)}` })), [other]];
+  const times = slot.options.map((option, index) => ({ text: `${index === 0 ? "⭐ " : ""}${clock(option.at)}`, data: `sl:at:${slot.taskId}:${minuteId(option.at)}` }));
+  // The smart inbox (Phase I): Tony's day for something with no day, or a later one, or the inbox after all.
+  if (slot.inbox) return [times, [{ text: "📅 Later day", data: `sl:later:${slot.taskId}:${slot.day}` }, other, { text: "📥 Inbox", data: `sl:keep:${slot.taskId}:${slot.day}` }]];
+  return [times, [other]];
 }

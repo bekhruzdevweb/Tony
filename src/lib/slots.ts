@@ -109,6 +109,14 @@ export async function runProposal(offerId: number, now = new Date()): Promise<st
   if (!offer || offer.kind !== "action") return "That proposal has gone, sir.";
   if (offer.used_at) return "Already settled, sir.";
   const { tool, args, said, heard } = offer.payload;
+  // Several proposals joined into one (one ✓ for all of them): each is run, and each says what it did.
+  if (tool === "batch") {
+    const ids = Array.isArray(args.offers) ? args.offers.map(Number).filter(Number.isFinite) : [];
+    await db.from("offers").update({ used_at: now.toISOString(), used_as: "done" }).eq("id", offerId);
+    const lines: string[] = [];
+    for (const id of ids) lines.push(await runProposal(id, now));
+    return lines.join("\n");
+  }
   const outcome = await runTool(tool, args, now, said ?? undefined, heard ?? undefined);
   await db.from("offers").update({ used_at: now.toISOString(), used_as: outcome.ok ? "done" : "failed" }).eq("id", offerId);
   if (!outcome.ok) return `⚠️ That did not work, sir: ${outcome.error}`;
@@ -140,4 +148,18 @@ export async function runProposal(offerId: number, now = new Date()): Promise<st
   const fact = (outcome as { fact?: unknown }).fact;
   if (typeof fact === "string") return `📝 Remembered: ${fact}`;
   return `Done, sir.${savedMarks({})}`;
+}
+
+/**
+ * The words for several proposals as one: "I'll drop **A**." ×3 becomes "I'll drop these 3: **A**, **B**
+ * and **C**." when they share their verb, else each on its own line.
+ */
+export function joinedSay(says: string[]): string {
+  const parts = says.map((say) => /^(I'll \w+) (.+?)\.?$/.exec(say.trim()));
+  const verb = parts[0]?.[1];
+  if (verb && parts.every((part) => part && part[1] === verb)) {
+    const things = parts.map((part) => part![2]);
+    return `${verb} these ${things.length}: ${things.slice(0, -1).join(", ")} and ${things.at(-1)}.`;
+  }
+  return says.join("\n");
 }

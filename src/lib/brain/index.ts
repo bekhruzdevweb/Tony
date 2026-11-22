@@ -5,7 +5,9 @@ import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage
 import { env } from "../env";
 import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
-import { placeTask } from "../slots";
+import { joinedSay, placeTask } from "../slots";
+import { fullNote, soonestSlot } from "../smart-inbox";
+import { wantsSuggestion } from "../smart-inbox-rules";
 import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
@@ -254,6 +256,7 @@ export async function think(
   const streaks = new Map<number, string>();
   const routineSet: { field: string; value: string | null; on?: boolean }[] = [];
   let proposal: { offerId: number; say: string } | undefined;
+  const proposals: { offerId: number; say: string }[] = [];
   let askComplete: { taskId: number; title: string } | undefined;
   let reply: string | undefined;
   // Items a rule sends (phase b), rule lines, his rules to show, and a backup-model answer (phase e).
@@ -355,7 +358,7 @@ export async function think(
           if (typeof streak === "string" && Number.isFinite(touchedId)) streaks.set(touchedId, streak);
           const told = (outcome as { routine?: { field: string; value: string | null; on?: boolean } }).routine;
           if (call.function.name === "routine" && told) routineSet.push(told);
-          if ((outcome as { proposal_id?: unknown }).proposal_id !== undefined) proposal = { offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") };
+          if ((outcome as { proposal_id?: unknown }).proposal_id !== undefined) proposals.push({ offerId: Number((outcome as { proposal_id?: unknown }).proposal_id), say: String((outcome as { say?: unknown }).say ?? "") });
           if (TASK_TOOLS.has(call.function.name) && Number.isFinite(touchedId)) {
             const reminderAt = (outcome as { reminder_at?: unknown }).reminder_at;
             const tool = (name === "library" ? "update_task" : name) as DoneAction["tool"];
@@ -399,6 +402,9 @@ export async function think(
       reply = tidyReply(choices.question, [...taskIds]) || choices.question;
       break;
     }
+    // Several proposals in one turn are one question with one ✓ (23 Nov 04:18: thirteen removals were
+    // proposed, only the last had a button, and his ✓ removed one session of thirteen).
+    if (proposals.length > 0 && !proposal) proposal = await joinProposals(proposals);
     // He confirms with ✓ or changes it with ✏️; the words are the proposal itself.
     if (proposal) {
       reply = tidyReply(proposal.say, [...taskIds]) || proposal.say;
@@ -628,6 +634,18 @@ export async function think(
       } else {
         slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
       }
+    } else if (named.size === 0 && undated.length === 1 && planId === undefined && wantsSuggestion(ownWords(text))) {
+      // The smart inbox (Phase I, 23 Nov: "suggest me a specific time. Then I just click and it saves until that
+      // day"): a new thing with no day gets the first day that is not full, at its best free time. Nothing is
+      // set until he taps; [📅 Later day] looks further on, [📥 Inbox] leaves it unplanned.
+      const id = undated[0];
+      const task = stored.get(id)!;
+      const suggestion = task.status === "inbox" && !task.free_time ? await soonestSlot(task, now).catch((error) => (console.error("Smart inbox:", error), undefined)) : undefined;
+      if (suggestion) {
+        decided.add(id);
+        slot = { kind: "ask", taskId: id, title: task.title, day: suggestion.day, options: suggestion.options, inbox: true, minutes: taskMinutes(task) };
+        slotLines.push(slotQuestion({ title: task.title, marks: savedMarks(marks(id)), when: dayLabel(suggestion.day, now).when, options: suggestion.options, note: fullNote(suggestion.full, now) || undefined }));
+      }
     }
 
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
@@ -729,7 +747,7 @@ export async function think(
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */
 export type Slot =
-  | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string; minutes?: number }
+  | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string; minutes?: number; inbox?: boolean }
   | { kind: "auto"; taskId: number; title: string; day: string; at: Date; why: string }
   | { kind: "split"; taskId: number; title: string; day: string; parts: Date[]; minutes: number };
 
@@ -842,4 +860,13 @@ async function recentReminders(now: Date): Promise<Touch[]> {
   return rows
     .filter((row) => byId.has(row.task_id!) && (row.how === "done" || OPEN_STATUSES.includes(byId.get(row.task_id!)!.status as Task["status"])))
     .map((row) => ({ ...row, title: byId.get(row.task_id!)!.title }));
+}
+
+/** Several proposals made in one turn, as one: "I'll drop these 3: A, B, C." with one ✓ that runs them all. */
+async function joinProposals(list: { offerId: number; say: string }[]): Promise<{ offerId: number; say: string }> {
+  if (list.length === 1) return list[0];
+  const say = joinedSay(list.map((item) => item.say));
+  const { data, error } = await requireDb().from("offers").insert({ kind: "action", payload: { say, tool: "batch", args: { offers: list.map((item) => item.offerId) } } }).select("id").single();
+  if (error || !data) return list[list.length - 1];
+  return { offerId: (data as { id: number }).id, say };
 }

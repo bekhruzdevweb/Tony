@@ -1182,3 +1182,76 @@ describe("22 Nov evening: an early reminder says it is early, 'all' means all, b
     for (const row of three) expect(local(byTitle(String(row.title)).due_at) ?? "inbox").not.toMatch(/^2026-11-23/);
   });
 });
+
+// ── Phase I (23 Nov): the smart inbox, the night poll, "yes, remove them all" ──
+describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes", () => {
+  const recorder = () => {
+    const sent: { name: string; text: string; extra?: Record<string, unknown> }[] = [];
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown, extra?: Record<string, unknown>) => {
+          if (String(name).startsWith("send")) sent.push({ name: String(name), text: typeof text === "string" ? text : JSON.stringify(text), extra });
+          return { message_id: 900 + sent.length, ...(String(name) === "sendPoll" ? { poll: { id: `poll-${sent.length}` } } : {}) };
+        },
+      },
+    );
+    return { bot: { api } as never, sent };
+  };
+  /** A day already full: seven tasks at 09:00 onwards. */
+  const fill = (date: string) => Array.from({ length: 7 }, (_, n) => task({ title: `Busy ${date} ${n}`, due_at: `${date}T${String(9 + n).padStart(2, "0")}:00`, duration_minutes: 30 }));
+
+  it("'I want to shoot videos like this' (no day) with tomorrow full: the day after, and it says tomorrow is full", async () => {
+    fill("2026-11-24");
+    const result = await run("I want to shoot videos like this reel", "2026-11-23T21:00", [tools(["add_task", { title: "Shoot videos like this reel", reply: "" }])]);
+    const slot = result.thought?.slot;
+    expect(slot?.kind).toBe("ask");
+    expect(slot?.day).toBe("2026-11-25");
+    expect(result.replies[0]).toContain("When on Wed 25 Nov?");
+    expect(result.replies[0]).toContain("Tue 24 Nov is full.");
+    // Nothing is set until he taps.
+    expect(byTitle("Shoot videos like this reel").due_at).toBeNull();
+    const { slotButtons } = await import("../src/lib/slot-text");
+    const rows = slotButtons(slot as never);
+    expect(rows[1].map((button) => button.text)).toEqual(["📅 Later day", "✏️ Other time", "📥 Inbox"]);
+  });
+
+  it("04:12 vote on Sunday's 'Which ones tomorrow?': Monday, only what moved is counted, a full Monday sends the rest on", async () => {
+    fill("2026-11-23");
+    const picks = [task({ title: "Write posts", due_at: "2026-11-22T12:14" }), task({ title: "Buy a zippered shirt" })];
+    state.db.insert("polls", { poll_id: "p1", message_id: 5, kind: "plan", task_id: null, options: [...picks.map((row) => ({ task: row.id })), { none: true }], created_at: at("2026-11-22T21:00").toISOString() });
+    const { handlePollAnswer } = await import("../src/lib/polls");
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-23T04:12"));
+    await handlePollAnswer(bot, 42, "p1", [0, 1], new Date());
+    // Monday has seven already: both go to Tuesday, said so, and the view is Monday's (the day asked about).
+    expect(local(byTitle("Write posts").due_at)).toMatch(/^2026-11-24/);
+    expect(local(byTitle("Buy a zippered shirt").due_at)).toMatch(/^2026-11-24/);
+    const view = sent.find((message) => message.text.includes("next free day"))!.text;
+    expect(view).toContain("Very good, sir. Mon 23 Nov is full, so they go to the next free day:");
+    expect(view).toContain("• Write posts → Tue 24 Nov 12:15");
+    expect(view).not.toContain("Tue 24 Nov</b>\n\nTo do");
+  });
+
+  it("04:18 'Yes, remove them all' after 'Remove all 13 sessions…?': every removal runs, none waits for a ✓", async () => {
+    const sessions = [1, 2, 3].map((n) => task({ title: `IELTS session ${n}`, due_at: `2026-11-2${3 + n}T09:00` }));
+    said("tony", "Remove all 3 sessions of the old IELTS plan?", "2026-11-23T04:18");
+    const result = await run("Yes, remove them all", "2026-11-23T04:18", [
+      tools(...sessions.map((row): [string, Record<string, unknown>] => ["propose", { say: `I'll drop **${row.title}**.`, tool: "update_task", args: { id: row.id, status: "dropped" } }])),
+      "FAIL",
+    ]);
+    for (const row of sessions) expect(byTitle(String(row.title)).status).toBe("dropped");
+    expect(result.thought?.proposal).toBeUndefined();
+  });
+
+  it("three proposals in one turn are one question with one ✓ that does all three", async () => {
+    const rows = [1, 2, 3].map((n) => task({ title: `Old task ${n}`, due_at: `2026-11-2${3 + n}T09:00` }));
+    const result = await run("these old ones can go", "2026-11-23T10:00", [
+      tools(...rows.map((row): [string, Record<string, unknown>] => ["propose", { say: `I'll drop **${row.title}**.`, tool: "update_task", args: { id: row.id, status: "dropped" } }])),
+      "FAIL",
+    ]);
+    expect(result.replies[0]).toBe("I'll drop these 3: **Old task 1**, **Old task 2** and **Old task 3**.");
+    await runProposal(Number(result.thought?.proposal?.offerId), at("2026-11-23T10:01"));
+    for (const row of rows) expect(byTitle(String(row.title)).status).toBe("dropped");
+  });
+});

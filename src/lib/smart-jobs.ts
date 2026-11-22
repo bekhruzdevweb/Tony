@@ -7,7 +7,7 @@ import { countFreeTime, shouldSuggestFreeTime, suggestFreeTime } from "./free-ti
 import { noteFollowUp, sameDayFollowUp, weeklyInboxReview, type Row } from "./followups";
 import { esc, plain } from "./html";
 import type { LibraryItem } from "./library-rules";
-import { loadMedia, mediaCaption, needsReading, rereadDocument, sendMedia } from "./media";
+import { loadMedia, mediaCaption, needsReading, rehearVideo, rereadDocument, sendMedia } from "./media";
 import { readableDocument } from "./vision";
 import { mainPriorityNudge } from "./main-priority";
 import { weeklyMemoryReview } from "./memory-review";
@@ -168,6 +168,19 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
     if (!next) return;
     await logEvent("document_reread", { id: next.id });
     await rereadDocument(next.id);
+  });
+  // A video kept before Tony could hear videos (the stories format, 21 Nov) is heard from its copy: one a minute, each once.
+  await job("rehear", async () => {
+    const db = requireDb();
+    const { data } = await db.from("media").select("id").eq("kind", "video").is("description", null).not("storage_path", "is", null).order("id", { ascending: false }).limit(20);
+    const waiting = ((data ?? []) as { id: number }[]).map((row) => row.id);
+    if (waiting.length === 0) return;
+    const tried = await db.from("events").select("detail").eq("kind", "video_reheard").limit(200);
+    const done = new Set(((tried.data ?? []) as { detail: { id?: number } }[]).map((row) => Number(row.detail?.id)));
+    const next = waiting.find((id) => !done.has(id));
+    if (next === undefined) return;
+    await logEvent("video_reheard", { id: next });
+    await rehearVideo(next);
   });
   // Once an hour: the burst waiting room is tidied.
   if (now.getMinutes() === 7) await job("prune", () => pruneIncoming(now));

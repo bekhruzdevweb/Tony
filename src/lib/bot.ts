@@ -54,6 +54,7 @@ import { choicesFor, getRoutine } from "./routine";
 import { routineLines } from "./routine-rules";
 import { placeTask, runProposal, splitTask } from "./slots";
 import { awaitsAnswer, dayLabel, slotButtons, slotQuestion } from "./slot-text";
+import { fullNote, soonestSlot } from "./smart-inbox";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
 import { HistoryOff, recentChanges, undoChange } from "./history";
 import { forgetFact, memoryList } from "./memory";
@@ -735,6 +736,23 @@ export function getBot(): Bot | undefined {
         } finally {
           await answer();
         }
+        return;
+      }
+      if (action === "keep") {
+        // [📥 Inbox] under the smart inbox's suggestion: it stays unplanned, and the question goes.
+        const found = await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle();
+        const title = (found.data as { title?: string } | null)?.title ?? "It";
+        return showOutcome(`📥 **${title}** stays in the inbox.`);
+      }
+      if (action === "later") {
+        // [📅 Later day]: the next day after this one that has room, in the same message.
+        const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+        const task = found.data as Task | null;
+        if (!task) return showOutcome("That task no longer exists, sir.");
+        const suggestion = await soonestSlot(task, new Date(), { after: value });
+        if (!suggestion) return showOutcome(`**${task.title}**: the next two weeks are full, sir. It stays in the inbox.`);
+        const text = slotQuestion({ title: task.title, marks: "", when: dayLabel(suggestion.day, new Date()).when, options: suggestion.options, note: fullNote(suggestion.full, new Date()) || undefined });
+        await showOutcome(text, keyboardOf(slotButtons({ kind: "ask", taskId, day: suggestion.day, options: suggestion.options, inbox: true })), "waiting");
         return;
       }
       if (action === "edit") {
@@ -1550,6 +1568,11 @@ export function getBot(): Bot | undefined {
           docFailed = true;
         }
       }
+      // A video is seen through its cover frame and heard through what is said in it (23 Nov 04:12: "ideas for my
+      // stories" could not use the stories video, which Tony had kept without knowing what was in it).
+      if (file.kind === "video" || file.kind === "video_note" || file.kind === "animation") {
+        imageText = await readVideo(message, bytes).catch((error) => (console.error("Could not read the video:", error), undefined));
+      }
       const description = imageText ?? (file.kind === "document" ? [docName, docText].filter(Boolean).join("\n") || undefined : undefined);
       saved = await saveMedia({ kind: file.kind, fileId: file.id, uniqueId: file.unique, mime: file.mime, caption: words, description, bytes }).catch(
         (error) => (console.error("Could not save the media:", error), undefined),
@@ -1572,7 +1595,7 @@ export function getBot(): Bot | undefined {
     // What was read from it (fenced as material below), or a word on why nothing was.
     // A long document goes to the brain in part (about 4,000 words); library read gives the rest.
     const docPart = docText && docText.length > DOCUMENT_IN_MESSAGE ? `${docText.slice(0, DOCUMENT_IN_MESSAGE)}\n(… the document goes on: library read gives the rest)` : docText;
-    const content = imageText ? `Text in the image: ${imageText}` : docPart ? `Text in the document${docName ? ` "${docName}"` : ""}:\n${docPart}` : undefined;
+    const content = imageText && file && file.kind !== "photo" && file.kind !== "document" ? `What is in the ${thing}: ${imageText}` : imageText ? `Text in the image: ${imageText}` : docPart ? `Text in the document${docName ? ` "${docName}"` : ""}:\n${docPart}` : undefined;
     const remark = content
       ? undefined
       : imageFailed
@@ -1603,6 +1626,25 @@ export function getBot(): Bot | undefined {
         ? `${words}\n\n[He attached a ${thing}${remark ? `. ${remark}` : ""}]${fenced}`
         : `[He sent you a ${thing}${remark ? `. ${remark}` : ""}]${fenced}`;
     return { asked, shared, saved };
+  };
+
+  /** A video, as words: its cover frame read like a photo, and what is said in it, heard like a voice note. */
+  const readVideo = async (message: Message, bytes: ArrayBuffer | undefined): Promise<string | undefined> => {
+    const media = message.video ?? message.video_note ?? message.animation;
+    if (!media) return undefined;
+    const parts: string[] = [];
+    const thumb = media.thumbnail;
+    if (thumb) {
+      const frame = await downloadTelegramFile(bot, thumb.file_id).catch(() => undefined);
+      const seen = frame ? await readImage(frame.bytes, "image/jpeg").catch(() => undefined) : undefined;
+      if (seen) parts.push(`Cover frame: ${seen}`);
+    }
+    if (bytes && !message.animation && (media.duration ?? 0) >= 3) {
+      const heard = await transcribeAudio(bytes, "video.mp4", "video/mp4").catch(() => undefined);
+      if (heard?.trim()) parts.push(`Said in it: ${heard.trim().slice(0, 1500)}`);
+    }
+    if (media.duration) parts.push(`Length: ${media.duration} s`);
+    return parts.length > (media.duration ? 1 : 0) ? parts.join("\n") : undefined;
   };
 
   /** A voice note, heard: its words (kept with the original), or why it could not be heard. */

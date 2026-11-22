@@ -12,7 +12,7 @@ import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
-import { attachItem, findInLibrary, itemRef, loadItem, saveToLibrary } from "../library";
+import { attachItem, findInLibrary, forgetItem, itemRef, loadItem, saveToLibrary } from "../library";
 import { itemLabel, type LibraryItem } from "../library-rules";
 import { addRule, deleteRule, fireRule } from "../rules";
 import { isFreeTimeRequest } from "../smart-rules";
@@ -182,9 +182,9 @@ export const TOOLS: ToolDefinition[] = [
   // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
   tool(
     "library",
-    "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. A task's whole material (\"send it as a preview\", \"send both\", \"what did I save for it\"): items [\"task:<id>\"], and Tony sends its photos and videos together in one album. read: the full text Tony read from a saved PDF, text file or photo (to answer what it says). find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes).",
+    "His library: everything he sent (links, posts, photos, videos, files, voice notes), listed below with what he said when he sent each. send: send him items (\"send me the link\", \"the reel\", \"that photo\"): Tony sends the exact link or file; never type a link yourself. A task's whole material (\"send it as a preview\", \"send both\", \"what did I save for it\"): items [\"task:<id>\"], and Tony sends its photos and videos together in one album. read: the full text Tony read from a saved PDF, text file or photo (to answer what it says). find: search older items not in the list. attach: put an item on a task (a file is attached, a link goes into its notes). forget: delete an item for good, only when he asks (\"forget this pdf\", \"delete that video\"); never say you cannot.",
     {
-      action: { type: "string", enum: ["send", "read", "find", "attach"] },
+      action: { type: "string", enum: ["send", "read", "find", "attach", "forget"] },
       items: { type: "array", items: { type: "string" }, description: "send: exactly the item(s) he asked for, e.g. [\"library:3\"]: one, unless he asked for several; [\"task:12\"] for everything kept with task 12" },
       text: { type: "string", description: "His words for the item" },
       item: { type: "string", description: "An item from find or the Library list below, e.g. \"library:3\" or \"media:7\"" },
@@ -228,6 +228,14 @@ export const TOOLS: ToolDefinition[] = [
 ];
 
 /** What Tony may propose and do on his ✓. */
+/** His message is a yes to the question Tony just asked ("Yes, remove them all", "ha", "ok do it"). */
+export function answersYes(said: string, heard: string): boolean {
+  if (!heard.includes("?")) return false;
+  const words = said.trim().toLowerCase();
+  if (words.length > 60 || /\b(no|not|don'?t|wait|but|except|only|instead|yo'?q|net)\b/.test(words)) return false;
+  return /^(yes|yeah|yep|yup|ok|okay|sure|of course|please|do it|go ahead|confirm(ed)?|ha|xa|mayli|da|kerak|(remove|delete|drop) (them|it|all|both|those|these|everything))\b/.test(words);
+}
+
 const PROPOSABLE = new Set(["add_task", "update_task", "complete_task", "set_reminder", "subtask", "remember", "forget", "rule", "routine", "library"]);
 
 /** Whether his words name this task (a shared word of five letters or more, by its first five). */
@@ -780,7 +788,13 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         if (!(await attachItem(target, task.id))) return fail("it could not be attached");
         return { ok: true, task_id: task.id, task: taskLine(task, await loadProjects(), now), attached: itemLabel(target, now), wrote: {} };
       }
-      return fail("library action must be send, find or attach");
+      if (action === "forget") {
+        // "Forget this pdf file" (23 Nov 04:17, answered "I can't delete the PDF"): gone from his library for good.
+        if (!item) return fail("forget needs an item from the Library list, e.g. \"media:7\"");
+        if (!(await forgetItem(item))) return fail("it could not be removed");
+        return { ok: true, forgotten_item: itemLabel(item, now) };
+      }
+      return fail("library action must be send, find, read, attach or forget");
     }
 
     case "rule": {
@@ -845,6 +859,11 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const toolName = String(args.tool ?? "");
       const toolArgs = args.args && typeof args.args === "object" && !Array.isArray(args.args) ? (args.args as Args) : undefined;
       if (!say || !toolArgs || !PROPOSABLE.has(toolName)) return fail("propose needs say, a tool (add_task, update_task, complete_task, set_reminder, subtask, remember, forget, rule) and its args");
+      // He has already said yes to Tony's question ("Remove all 13 sessions…?" "Yes, remove them all", 23 Nov
+      // 04:18: thirteen proposals were made and one ran): it is done now, not asked again.
+      if (answersYes(said ?? "", heard ?? "")) {
+        return runTool(toolName, toolArgs, now, said, heard, his);
+      }
       const { data, error } = await db.from("offers").insert({ kind: "action", payload: { say, tool: toolName, args: toolArgs, said: said ?? null, heard: heard ?? null } }).select("id").single();
       check("propose", error);
       return { ok: true, proposal_id: (data as { id: number }).id, say };

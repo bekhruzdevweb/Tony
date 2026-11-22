@@ -26,6 +26,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 | F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |
+| I | Smart inbox: a new thing with no day gets the first day that is not full (7 tasks) at its best free time, one tap to set ([📅 Later day] [✏️ Other time] [📥 Inbox]); the evening poll keeps its day after midnight and sends overflow to the next free day; a yes to Tony's question runs it, several proposals are one ✓; videos are read (cover frame and speech); kept files named in reminders; "forget this file" works | Live, awaiting your check |
 | H | Habits and organizing: habits you choose with streaks (/habits, reminders, the board, Sunday's week), plans' progress, tags (#content), the Plan board (Today · This week · Someday); a short call inside a long block is not a clash | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
@@ -662,6 +663,13 @@ Your idea: the one thing Tony does not let you leave unfinished.
   on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
   next week; anything else moves to tomorrow). Every tap counts as an answer.
 - **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
+
+## Smart inbox (I, 23 Nov)
+
+- **A suggested day.** Something with no day ("I want to shoot videos like this" + a link) is saved, and Tony asks once: "When on Wed 25 Nov? Best: **15:00** … Mon 23 and Tue 24 Nov are full." A day is full at 7 tasks (prayers not counted). The search starts today, or tomorrow after 20:00, and goes up to two weeks ahead. One tap sets it, the question leaves the chat, and the reminder comes on that day with the link and files. [📅 Later day] looks at the next day with room. [📥 Inbox] keeps it unplanned. "Put it in the inbox", "someday" and "just save it" skip the question.
+- **The evening poll** ("Which ones tomorrow?") plans the day it asked about, even when he votes after midnight. Only what moved is counted. When that day is full, the rest go to the next free day, each with its date and time.
+- **A yes is a yes.** "Yes, remove them all" to Tony's own question runs every change. Several proposals in one reply are one question with one ✓.
+- **Videos are read** by their cover frame and what is said in them. Videos kept before this are heard in the background. A reminder names each kept file ("📎 file: an 8-week IELTS Academic study plan (below)"). "Forget this pdf" deletes the file.
 
 ## Habits and organizing (H, 22 Nov)
 

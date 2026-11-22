@@ -1,4 +1,5 @@
 import "server-only";
+import { transcribeAudio } from "./voice";
 import { isPromoCaption } from "./library-rules";
 import { randomUUID } from "node:crypto";
 import type { Bot, InlineKeyboard } from "grammy";
@@ -110,6 +111,34 @@ export async function rereadDocument(id: number): Promise<string | undefined> {
   const description = [name, text].filter(Boolean).join("\n");
   await updateMedia(media.id, { description });
   return description;
+}
+
+/** A kept video with no words for it: what is said in it, heard from its stored copy. Undefined if nothing is heard. */
+export async function rehearVideo(id: number): Promise<string | undefined> {
+  const media = await loadMedia(id);
+  if (!media || media.kind !== "video" || media.description) return undefined;
+  const bytes = await storedBytes(media).catch(() => undefined);
+  if (!bytes) return undefined;
+  const heard = await transcribeAudio(bytes, "video.mp4", "video/mp4").catch((error) => (console.error("Could not hear the stored video:", error), undefined));
+  if (!heard?.trim()) return undefined;
+  const description = `Said in it: ${heard.trim().slice(0, 1500)}`;
+  await updateMedia(media.id, { description });
+  return description;
+}
+
+/**
+ * A kept file in a few words, for the line that announces it: "file: an 8-week IELTS Academic study plan",
+ * "video: this is how i should be uploading stories daily". His own words first, then what was read in it.
+ */
+export function fileGist(item: Pick<Media, "kind" | "description" | "note" | "caption">): string {
+  const kind = item.kind === "document" ? "file" : item.kind === "video_note" ? "round video" : item.kind === "animation" ? "GIF" : item.kind;
+  const own = mediaCaption(item);
+  if (own) return `${kind}: ${own.slice(0, 90)}`;
+  const summary = /Summary:\s*(?:This (?:document|file|PDF|image|video) (?:is|shows|contains|gives) )?([^.(\n]+)/i.exec(item.description ?? "")?.[1]?.trim();
+  if (summary) return `${kind}: ${summary.slice(0, 90)}`;
+  const first = item.description?.split("\n")[0]?.trim();
+  if (first && /\.\w{2,5}$/.test(first) && first.length <= 90) return `${kind}: ${first}`;
+  return kind;
 }
 
 /** The private copy of a file, when one was kept (files up to 20 MB). */

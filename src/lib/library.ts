@@ -130,6 +130,20 @@ export async function loadItem(ref: string): Promise<LibraryItem | undefined> {
   return undefined;
 }
 
+/** Deletes an item for good, when he asks: a file with its private copy, or a link or post. Read back. */
+export async function forgetItem(item: LibraryItem): Promise<boolean> {
+  const db = requireDb();
+  if (item.source === "media") {
+    const found = await db.from("media").select("storage_path").eq("id", item.id).maybeSingle();
+    const path = (found.data as { storage_path?: string | null } | null)?.storage_path;
+    if (path) await db.storage.from("tony-media").remove([path]).catch(() => undefined);
+    const { error } = await db.from("media").delete().eq("id", item.id);
+    return !error;
+  }
+  const { error } = await db.from("library").delete().eq("id", item.id);
+  return !error;
+}
+
 /**
  * Attaches an item to a task, read back: a file is linked to it (its
  * reminder sends the original), a link or post goes into its notes.

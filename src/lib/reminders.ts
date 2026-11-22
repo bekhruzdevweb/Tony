@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { deleteNow, retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
-import { mediaCaption, mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
+import { fileGist, mediaCaption, mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
 import { habitFor, isHabit, streakLine } from "./habits";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
@@ -219,9 +219,15 @@ export async function runTick(
     const together = [lead, ...mergeable(lead, ((soon.data ?? []) as (Reminder & { task: Task | null })[]).filter(plainFirst).filter((other) => other.id !== lead.id))];
     if (together.length >= 2) {
       // Each with what it holds, folded (the IELTS kickoff's checklist at 20:15).
+      // What is kept with each, named in its line, so a file below is known for what it is (23 Nov: the IELTS
+      // plan came as a bare PDF under the reminders).
+      const filesOf = new Map<number, Awaited<ReturnType<typeof mediaListForTask>>>();
+      for (const reminder of together) filesOf.set(reminder.task!.id, await mediaListForTask(reminder.task!.id).catch(() => []));
       const lines = together.map((reminder, index) => {
         const held = notesBlock(reminder.task!.notes, 500);
-        return `${index + 1}. ${b(formatTime(new Date(reminder.task!.due_at ?? reminder.fire_at)))} ${b(reminder.task!.title)}${held ? `\n${held}` : ""}`;
+        const files = filesOf.get(reminder.task!.id) ?? [];
+        const kept = files.length ? `\n📎 ${esc(files.slice(0, 3).map(fileGist).join(" · "))}${files.length > 3 ? ` +${files.length - 3}` : ""} (below)` : "";
+        return `${index + 1}. ${b(formatTime(new Date(reminder.task!.due_at ?? reminder.fire_at)))} ${b(reminder.task!.title)}${kept}${held ? `\n${held}` : ""}`;
       });
       const keyboard = new InlineKeyboard();
       together.forEach((reminder, index) => {
@@ -242,7 +248,7 @@ export async function runTick(
         // What is kept with each of them comes with it, under its name (22 Nov: the stories format and the
         // IELTS plan would have stayed behind when their reminders went out together at 13:00 and 20:15).
         for (const reminder of together) {
-          const files = await mediaListForTask(reminder.task!.id).catch(() => []);
+          const files = filesOf.get(reminder.task!.id) ?? [];
           if (files.length) {
             const ids = await sendTogether(bot, chatId, files, reminder.task!.title, { silent: true }).catch((error) => (console.error("Could not send a task's files with the reminders:", error), [] as number[]));
             // They go from the chat with the task, once it is done, skipped or moved.
