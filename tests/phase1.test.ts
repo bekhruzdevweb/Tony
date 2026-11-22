@@ -37,7 +37,7 @@ describe("8. Night rule: 00:00–05:00, 'tomorrow' is the day after he sleeps", 
     expect(formatWhen(at("2026-11-20T17:51"), at("2026-11-20T17:31"))).toBe("today, Fri 20 Nov, 17:51");
     expect(formatWhen(at("2026-11-23T10:00"), at("2026-11-20T17:31"))).toBe("Mon 23 Nov, 10:00");
     // At 00:08 on Saturday, Saturday 10:00 is "tomorrow" to him; 01:00 is still tonight.
-    expect(formatWhen(at("2026-11-21T10:00"), at("2026-11-21T00:08"))).toBe("tomorrow, Sat 21 Nov, 10:00");
+    expect(formatWhen(at("2026-11-21T10:00"), at("2026-11-21T00:08"))).toBe("today, Sat 21 Nov, 10:00");
     expect(formatWhen(at("2026-11-21T01:00"), at("2026-11-21T00:08"))).toBe("tonight, Sat 21 Nov, 01:00");
     expect(confirmationFor([{ tool: "set_reminder", title: "Call the barber", status: "todo", due_at: at("2026-11-21T08:30").toISOString() }], at("2026-11-20T17:31"))).toBe(
       "✓ **Call the barber** → tomorrow, Sat 21 Nov, **08:30**",

@@ -211,7 +211,9 @@ export function TaskRow(props: {
   const done = !isOpen(task);
   const project = projects.find((p) => p.id === task.project_id);
   const due = task.due_at ? new Date(task.due_at) : undefined;
-  const chip = due && when !== "none" ? dateChip(due, now, Boolean(overdue) && !done, when === "full") : undefined;
+  const dated = due && when !== "none" ? dateChip(due, now, Boolean(overdue) && !done, when === "full") : undefined;
+  // An anytime task (Phase J) shows its day without a time.
+  const chip = dated && task.anytime ? { ...dated, text: dated.text.replace(/\s*\d{1,2}:\d{2}$/, "").trim() || "Today" } : dated;
   const ring = PRIORITY[task.priority] ?? PRIORITY[4];
   const description = task.notes?.split("\n")[0];
   const parts = actions?.parts(task.id) ?? [];

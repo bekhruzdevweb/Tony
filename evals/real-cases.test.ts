@@ -185,9 +185,10 @@ describe("3. When the AI fails", () => {
 
   it("recovers on the retry", async () => {
     const result = await run("add buy notebook", "2026-11-20T12:00", ["FAIL", tools(["add_task", { title: "Buy notebook" }])]);
-    expect(byTitle("Buy notebook").status).toBe("inbox");
-    // Phase I: the smart inbox suggests the first day with room; it stays in the inbox until he taps.
-    expect(result.replies[0]).toMatch(/Buy notebook[\s\S]*When today, Fri 20 Nov\? Best:/);
+    // Phase J: a small thing gets no time: today, anytime, with one quiet check at 20:00.
+    expect(byTitle("Buy notebook").anytime).toBe(true);
+    expect(local(byTitle("Buy notebook").due_at)).toBe("2026-11-20T20:00");
+    expect(result.replies[0]).toBe("✓ **Buy notebook** → today, Fri 20 Nov, anytime");
     expect(state.db.rows("messages").filter((row) => row.role === "user")).toHaveLength(1);
   });
 });
@@ -1150,7 +1151,7 @@ describe("22 Nov 01:49–01:59: 'post stories in this format', the preview, the 
     const added = await run("can u add this one to stories task\n\nthis is how i should be uploading stories daily\n\n[He attached a video. (A video; you cannot see inside it.)]", "2026-11-22T01:53", [
       tools(["library", { action: "attach", item: `media:${video.id}`, task_id: id }]),
     ]);
-    expect(added.replies[0]).toBe("✓ **Post stories in this format** → Sun 22 Nov, **13:00** · 🖼 1 photo · 🎞 1 video");
+    expect(added.replies[0]).toBe("✓ **Post stories in this format** → today, Sun 22 Nov, **13:00** · 🖼 1 photo · 🎞 1 video");
   });
 
   it("01:53 'send it to me as preview pls': everything kept with the task goes, together; 'send me the video' sends the video only", async () => {
@@ -1222,9 +1223,12 @@ describe("22 Nov 02:28–02:32: the IELTS plan into his schedule", () => {
       [
         "Today is your kickoff at 20:15; the plan itself starts tomorrow.",
         "",
-        "✓ **IELTS: Writing Task 2 + Speaking Part 3** → Mon 23 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
-        "✓ **IELTS: Reading + Listening (learn)** → Tue 24 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
-        "✓ **IELTS: Full mock** → Sat 28 Nov, **18:00** · 🔁 weekly until Sun 17 Jan 2027",
+        // Three or more: one item each, the repeat they share said once (23 Nov 04:21: five ran together).
+        "✓ 3 set:",
+        "- **IELTS: Writing Task 2 + Speaking Part 3** → tomorrow, Mon 23 Nov, **18:00**",
+        "- **IELTS: Reading + Listening (learn)** → Tue 24 Nov, **18:00**",
+        "- **IELTS: Full mock** → Sat 28 Nov, **18:00**",
+        "🔁 weekly until Sun 17 Jan 2027 for all 3",
       ].join("\n"),
     );
     expect(tasks().filter((row) => String(row.title).startsWith("IELTS")).map((row) => [row.repeat_rule, row.repeat_until])).toEqual([

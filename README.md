@@ -26,6 +26,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 | F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |
+| J | Calm and clear: every line on its own line, 3+ receipts as one short list; after midnight the day just begun is "today"; small things get no time ("anytime", one quiet check at 20:00); three priorities (urgent is chased 15 min after its time, then hourly, until he answers or it is done; important; normal); no clash for two things he put together | Live, awaiting your check |
 | I | Smart inbox: a new thing with no day gets the first day that is not full (7 tasks) at its best free time, one tap to set ([📅 Later day] [✏️ Other time] [📥 Inbox]); the evening poll keeps its day after midnight and sends overflow to the next free day; a yes to Tony's question runs it, several proposals are one ✓; videos are read (cover frame and speech); kept files named in reminders; "forget this file" works | Live, awaiting your check |
 | H | Habits and organizing: habits you choose with streaks (/habits, reminders, the board, Sunday's week), plans' progress, tags (#content), the Plan board (Today · This week · Someday); a short call inside a long block is not a clash | Live, awaiting your check |
 
@@ -663,6 +664,13 @@ Your idea: the one thing Tony does not let you leave unfinished.
   on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
   next week; anything else moves to tomorrow). Every tap counts as an answer.
 - **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
+
+## Calm and clear (J, 23 Nov)
+
+- **One line, one thing.** Markdown joins single lines into a paragraph, so Tony's replies are sent with each line kept apart. Three or more receipts are one short list, and a repeat they share is said once under it.
+- **"Today" after midnight.** At 04:27 Monday is "today, Mon 23 Nov" in everything Tony writes. If he says "tmr" at night, the same day is still named "tomorrow", his way.
+- **Anytime.** A small thing ("clean my room", 15 minutes or less, "no need for a time") goes on its day with no time. It is shown as "anytime", takes no time from the day, and gets one quiet check at 20:00 ([Done] [Tomorrow] [Skip]).
+- **Three priorities.** Urgent (1) means it must be done that day: a reminder at its time, again 15 minutes later if he does not answer, then every hour until he answers or it is done. Quiet hours end it. "Busy, in an hour" moves it, and the chase starts again from there. Important (2). Normal (4, the default). The app shows Urgent, Important and Normal.
 
 ## Smart inbox (I, 23 Nov)
 

@@ -287,8 +287,8 @@ export function SearchScreen({ state, now, onOpen, onToggle }: ScreenProps) {
 
 type Filter = { id: string; name: string; color: string; test: (task: Task, now: Date) => boolean };
 const FILTERS: Filter[] = [
-  { id: "p1", name: "Priority 1", color: "var(--p1)", test: (t) => t.priority === 1 },
-  { id: "p2", name: "Priority 2", color: "var(--p2)", test: (t) => t.priority === 2 },
+  { id: "p1", name: "Urgent", color: "var(--p1)", test: (t) => t.priority === 1 },
+  { id: "p2", name: "Important", color: "var(--p2)", test: (t) => t.priority === 2 },
   { id: "overdue", name: "Overdue", color: "var(--overdue)", test: (t, now) => Boolean(t.due_at) && new Date(t.due_at!).getTime() < now.getTime() && t.status !== "in_progress" },
   { id: "persistent", name: "Persistent", color: "var(--accent)", test: (t) => t.persistent },
   { id: "repeating", name: "Repeating", color: "var(--primary)", test: (t) => Boolean(t.repeat_rule) },

@@ -44,6 +44,13 @@ export function notesBlock(notes: string | null | undefined, limit = 900): strin
 }
 
 export function dueReminder(task: Task): { text: string; keyboard: InlineKeyboard } {
+  // An anytime task (Phase J): the one quiet check of its day, with no time named.
+  if (task.anytime) {
+    return {
+      text: `Sir, still on today's list: ${b(task.title)}.`,
+      keyboard: new InlineKeyboard().text("Done", data("done", task.id)).text("Tomorrow", data("tomorrow", task.id)).text("Skip", data("skip", task.id)),
+    };
+  }
   return {
     text: `Sir, a reminder: ${b(task.title)}.`,
     keyboard: new InlineKeyboard()

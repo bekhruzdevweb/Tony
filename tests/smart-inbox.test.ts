@@ -54,3 +54,12 @@ describe("a silent video is not given words", async () => {
     expect(inventedSpeech("Today I'll show you how I post stories every day")).toBe(false);
   });
 });
+
+describe("each line on its own line (23 Nov 04:21)", async () => {
+  const { keepLines } = await import("../src/lib/rich");
+  it("keeps receipt lines and a question apart, tables and lists together", () => {
+    expect(keepLines("**Make my own IELTS plan**\nWhen today, Mon 23 Nov? Only **10:45** is free.")).toBe("**Make my own IELTS plan**\n\nWhen today, Mon 23 Nov? Only **10:45** is free.");
+    expect(keepLines("✓ 2 set:\n- **A** → 18:00\n- **B** → 19:00\n🔁 weekly")).toBe("✓ 2 set:\n\n- **A** → 18:00\n- **B** → 19:00\n\n🔁 weekly");
+    expect(keepLines("| a | b |\n|---|---|\n| 1 | 2 |")).toBe("| a | b |\n|---|---|\n| 1 | 2 |");
+  });
+});

@@ -2,7 +2,7 @@ import "server-only";
 import { InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
 import { b, code, esc, expandable, i } from "./html";
-import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
+import { clockOf, isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, localDate, TIMEZONE } from "./time";
 
 /**
@@ -80,11 +80,11 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
   const shownOverdue = options.skipCarried ? overdue.filter((t) => due(t) >= start.getTime()) : overdue;
   if (shownOverdue.length > 0) {
     parts.push(
-      [`⚠️ ${b("Overdue")}`, ...shownOverdue.map((task) => taskLine(task, projects, now.getTime() - due(task) < DAY_MS && localDate(new Date(task.due_at!)) === localDate(now) ? formatTime(new Date(task.due_at!)) : `${weekday(new Date(task.due_at!))} ${formatTime(new Date(task.due_at!))}`))].join("\n"),
+      [`⚠️ ${b("Overdue")}`, ...shownOverdue.map((task) => taskLine(task, projects, now.getTime() - due(task) < DAY_MS && localDate(new Date(task.due_at!)) === localDate(now) ? clockOf(task) : `${weekday(new Date(task.due_at!))} ${clockOf(task)}`))].join("\n"),
     );
   }
   if (open.length > 0) {
-    parts.push([b("To do"), ...open.map((task) => `${taskLine(task, projects, formatTime(new Date(task.due_at!)))}${task.status === "in_progress" ? ` · ${i("started")}` : ""}`)].join("\n"));
+    parts.push([b("To do"), ...open.map((task) => `${taskLine(task, projects, clockOf(task))}${task.status === "in_progress" ? ` · ${i("started")}` : ""}`)].join("\n"));
   }
   if (done.length > 0) {
     const lines = [`✅ ${b("Done")}`, ...done.map((task) => `${code(formatTime(new Date(task.completed_at!)))} ${esc(task.title)}`)].join("\n");
@@ -95,7 +95,7 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
   const key = dayKey(day);
   const keyboard = new InlineKeyboard();
   for (const task of [...overdue, ...open].slice(0, MAX_BUTTONS)) {
-    keyboard.text(`☐ ${formatTime(new Date(task.due_at!))}  ${clip(task.title, 34)}`, `ck:${key}:${task.id}`).row();
+    keyboard.text(`☐ ${clockOf(task)}  ${clip(task.title, 34)}`, `ck:${key}:${task.id}`).row();
   }
   for (const task of done.slice(-3)) keyboard.text(`☑ ${clip(task.title, 38)}`, `ck:${key}:${task.id}`).row();
 

@@ -3,7 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
 import { doneKeyboard, rescheduleKeyboard, type Action } from "./reminder-messages";
 import { scheduleReminder, settleReminders } from "./reminders";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { ANYTIME_HOUR, OPEN_STATUSES, type Task } from "./tasks";
 import { b } from "./html";
 import { finishTask } from "./recurrence";
 import { addMinutes, formatTime, formatWhen, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
@@ -202,6 +202,13 @@ export async function runAction(action: Action, taskId: number, arg: number | un
       // Tomorrow (after midnight: the coming morning) at its own time of day if that is free.
       // An undated task has no time of its own: he is asked, never placed silently.
       if (!task.due_at) return askOnDay(task, hisTomorrow(now), now);
+      // Anytime (Phase J): tomorrow, still with no time.
+      if (task.anytime) {
+        const at = parseLocalDateTime(`${localDate(hisTomorrow(now))}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
+        await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
+        await scheduleReminder(task.id, at);
+        return { text: `✓ ${b(task.title)} → ${b(`${formatWhen(at, now).replace(/, \d{2}:\d{2}$/, "")}, anytime`)}`, keyboard: null };
+      }
       const slot = await timeOnDay(task, hisTomorrow(now), now);
       if (!slot) return { text: `Tomorrow is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };
       await updateTask(task.id, { due_at: slot.at.toISOString(), status: "todo" });

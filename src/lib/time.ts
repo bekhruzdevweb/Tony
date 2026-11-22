@@ -137,16 +137,16 @@ export function formatDay(at: Date, now = new Date(), timeZone = TIMEZONE): stri
   return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short", year }).format(at).replace(",", "");
 }
 
-/**
- * "today", "tomorrow" or "tonight" for a moment, by the day he is living (at
- * 00:08 on Saturday, Saturday morning is "tomorrow"); undefined for other days.
- */
+/** "today", "tomorrow" or "tonight" for a moment, by the calendar; undefined for other days. */
 export function relativeDay(at: Date, now = new Date(), timeZone = TIMEZONE): "today" | "tomorrow" | "tonight" | undefined {
   const day = localDate(at, timeZone);
-  if (isNight(now, timeZone) && day === localDate(now, timeZone) && isNight(at, timeZone)) return "tonight";
-  const his = hisDate(now, timeZone);
-  if (day === his) return "today";
-  if (day === localDate(addMinutes(parseLocalDateTime(`${his}T12:00`, timeZone)!, 24 * 60), timeZone)) return "tomorrow";
+  const today = localDate(now, timeZone);
+  if (isNight(now, timeZone) && day === today && isNight(at, timeZone)) return "tonight";
+  // After midnight the day just begun is "today", as he calls it (23 Nov 04:27: "today remind me…" came
+  // back "When tomorrow, Mon 23 Nov?"; 22 Nov 01:50: "sorry i meant today"). His own "tomorrow" said at
+  // night still means the coming morning (hisTomorrow); only Tony's words follow the calendar.
+  if (day === today) return "today";
+  if (day === localDate(addMinutes(parseLocalDateTime(`${today}T12:00`, timeZone)!, 24 * 60), timeZone)) return "tomorrow";
   return undefined;
 }
 
@@ -166,7 +166,8 @@ export function dayWordIn(said: string): "today" | "tomorrow" | undefined {
  */
 export function formatWhen(at: Date, now = new Date(), timeZone = TIMEZONE, said?: string): string {
   let relative: string | undefined = relativeDay(at, now, timeZone);
-  if (said !== undefined && relative === "tomorrow" && isNight(now, timeZone) && localDate(at, timeZone) === localDate(now, timeZone)) relative = dayWordIn(said);
+  // After midnight the day just begun is named his way when he named it ("tmr" stays "tomorrow"), else "today".
+  if (said !== undefined && relative === "today" && isNight(now, timeZone) && localDate(at, timeZone) === localDate(now, timeZone)) relative = dayWordIn(said) ?? "today";
   return `${relative ? `${relative}, ` : ""}${formatDay(at, now, timeZone)}, ${formatTime(at, timeZone)}`;
 }
 

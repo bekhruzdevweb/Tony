@@ -2,7 +2,7 @@
  * Small, pure rules that keep Tony honest. No database, no model: each is
  * covered by a regression test in tests/brain-checks.test.ts.
  */
-import { formatDay, formatTime, formatWhen, parseLocalDateTime } from "../time";
+import { formatDay, formatTime, formatWhen, parseLocalDateTime, relativeDay } from "../time";
 
 export type ReminderDecision = "move" | "same" | "extra";
 
@@ -50,6 +50,8 @@ export type DoneAction = {
   media?: { photo: number; video: number; file: number };
   /** On the 🌙 Free Time list. */
   free_time?: boolean | null;
+  /** On its day with no time (Phase J). */
+  anytime?: boolean | null;
   /** Words saved in its notes this time (shown short). */
   note?: string;
   /** A check-in comes after this many untouched days. */
@@ -109,16 +111,29 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
       return `🔔 ${title}: reminder ${bold(new Date(action.reminder_at))}${action.due_at ? ` (task at **${formatTime(new Date(action.due_at))}**)` : ""}`;
     }
     if (!action.due_at) return action.free_time ? `✓ ${title} → 🌙 Free Time` : `✓ ${title} in the inbox`;
+    // No time on its day (Phase J): the day only.
+    if (action.anytime) {
+      const day = new Date(action.due_at);
+      const relative = relativeDay(day, now);
+      return `✓ ${title} → ${relative ? `${relative}, ` : ""}${formatDay(day, now)}, anytime`;
+    }
     const until = action.repeat_until ? parseLocalDateTime(`${action.repeat_until}T12:00`) : undefined;
     const repeats = action.repeat ? ` · 🔁 ${action.repeat}${until ? ` until ${formatDay(until, now)}` : ""}` : "";
     return `✓ ${title} → ${bold(new Date(action.due_at))}${repeats}`;
   };
   const unique = actions.filter((action, index) => actions.findIndex((other) => other.title === action.title && other.tool === action.tool && other.reminder_at === action.reminder_at) === index);
   // One small receipt line per task, under Tony's own words (Phase 2): no "sir", no "Done, sir:" header.
-  return unique.map(line).join("\n");
+  // Several at once (23 Nov 04:21: five workouts ran together as one paragraph): one list item each, and a
+  // repeat they all share is said once under the list.
+  const lines = unique.map(line);
+  if (lines.length < 3) return lines.join("\n");
+  const tails = lines.map((text) => / · 🔁 [^·]+/.exec(text)?.[0]);
+  const shared = tails[0] && tails.every((tail) => tail === tails[0]) ? tails[0] : undefined;
+  const items = lines.map((text) => `- ${(shared ? text.replace(shared, "") : text).replace(/^✓ /, "")}`);
+  return [`✓ ${lines.length} ${lines.every((text) => text.includes(" → ")) ? "set" : "updated"}:`, ...items, ...(shared ? [`${shared.replace(/^ · /, "")} for all ${lines.length}`] : [])].join("\n");
 }
 
-export type TimedTask = { id: number; title: string; due_at: string | null; duration_minutes?: number | null; kind?: string | null; status: string };
+export type TimedTask = { id: number; title: string; due_at: string | null; duration_minutes?: number | null; kind?: string | null; status: string; anytime?: boolean | null };
 
 const OPEN = new Set(["inbox", "todo", "in_progress"]);
 const CLASH_MINUTES = 30;
@@ -142,11 +157,12 @@ function breakInside(short: TimedTask, block: TimedTask): boolean {
 }
 
 export function clashesWith(task: TimedTask, others: TimedTask[]): TimedTask[] {
-  if (!task.due_at || task.kind === "prayer") return [];
+  // An anytime task takes no time from the day (Phase J): it clashes with nothing.
+  if (!task.due_at || task.kind === "prayer" || task.anytime) return [];
   const start = new Date(task.due_at).getTime();
   const end = start + (task.duration_minutes ?? 0) * 60_000;
   return others.filter((other) => {
-    if (other.id === task.id || !other.due_at || other.kind === "prayer" || !OPEN.has(other.status)) return false;
+    if (other.id === task.id || !other.due_at || other.kind === "prayer" || other.anytime || !OPEN.has(other.status)) return false;
     if (breakInside(task, other) || breakInside(other, task)) return false;
     const otherStart = new Date(other.due_at).getTime();
     const otherEnd = otherStart + (other.duration_minutes ?? 0) * 60_000;

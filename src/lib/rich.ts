@@ -282,11 +282,37 @@ export function markdownToPlain(markdown: string): string {
     .replace(/&amp;/g, "&");
 }
 
+const TABLE_LINE = /^\s*\|/;
+const LIST_LINE = /^\s*([-*+]|\d+[.)])\s/;
+
+/**
+ * Every line on its own line. In markdown a single newline joins two lines into one paragraph (23 Nov 04:21:
+ * five receipts, a question and a clash note ran together as one block; 04:27: the title and "When…?" did
+ * too). Lines that are not rows of one table or items of one list are kept apart with a blank line.
+ */
+export function keepLines(markdown: string): string {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let fenced = false;
+  lines.forEach((line, index) => {
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    out.push(line);
+    const next = lines[index + 1];
+    if (fenced || next === undefined || !line.trim() || !next.trim() || /^\s*```/.test(next)) return;
+    const sameTable = TABLE_LINE.test(line) && TABLE_LINE.test(next);
+    const sameList = (LIST_LINE.test(line) || /^\s{2,}\S/.test(line)) && (LIST_LINE.test(next) || /^\s{2,}\S/.test(next));
+    const quote = /^\s*>/.test(line) && /^\s*>/.test(next);
+    if (!sameTable && !sameList && !quote) out.push("");
+  });
+  return out.join("\n");
+}
+
 /**
  * Sends one of the brain's replies: rich markdown as a rich message, or, if
  * Telegram refuses it, the same reply converted to HTML.
  */
-export async function sendMarkdown(bot: Bot, chatId: number, markdown: string, options: { keyboard?: InlineKeyboard; silent?: boolean; fallback?: string } = {}): Promise<number> {
+export async function sendMarkdown(bot: Bot, chatId: number, raw: string, options: { keyboard?: InlineKeyboard; silent?: boolean; fallback?: string } = {}): Promise<number> {
+  const markdown = keepLines(raw);
   try {
     const sent = await bot.api.sendRichMessage(chatId, { markdown }, { reply_markup: options.keyboard, disable_notification: options.silent });
     return sent.message_id;

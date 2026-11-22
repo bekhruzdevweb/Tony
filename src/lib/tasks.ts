@@ -1,6 +1,6 @@
 import "server-only";
 import { requireDb } from "./db";
-import { dayBounds } from "./time";
+import { dayBounds, formatTime } from "./time";
 
 export type TaskStatus = "inbox" | "todo" | "in_progress" | "done" | "skipped" | "dropped" | "draft";
 
@@ -27,6 +27,8 @@ export type Task = {
   free_time?: boolean | null;
   /** A habit he chose to build (Phase H): streaks, check-ins and the coach. A plan's sessions are not habits. */
   habit?: boolean;
+  /** A task for a day with no time (Phase J): shown as "anytime", one quiet check at 20:00 if still open. */
+  anytime?: boolean;
   /** His words for a theme ("content", "ielts"), lower case, without the #. */
   tags?: string[];
   created_at: string;
@@ -35,6 +37,20 @@ export type Task = {
 };
 
 export const OPEN_STATUSES: TaskStatus[] = ["inbox", "todo", "in_progress"];
+
+/** An anytime task's check comes at this hour of its day (Phase J). */
+export const ANYTIME_HOUR = 20;
+
+/** A task's time as he reads it: "09:00", or "anytime" for a task with no time (Phase J). */
+export const clockOf = (task: { due_at: string | null; anytime?: boolean | null }): string => (task.anytime ? "anytime" : task.due_at ? formatTime(new Date(task.due_at)) : "");
+
+/**
+ * Priorities as he named them (23 Nov): urgent (1) is chased the same day: 15 minutes after its time if
+ * he does not answer, then every hour until he answers or it is done; important (2); normal (4).
+ */
+export const PRIORITY_NAMES: Record<number, string> = { 1: "urgent", 2: "important", 3: "important", 4: "normal" };
+/** The urgent chase, in minutes after its time: 15 min, then hourly for the rest of the day (quiet hours end it). */
+export const URGENT_LADDER = [0, 15, ...Array.from({ length: 14 }, (_, n) => 75 + n * 60)];
 
 /** One of the five daily prayers (see prayer.ts): calm, kept out of counts, overdue lists and nudges. */
 export const PRAYER_KIND = "prayer";

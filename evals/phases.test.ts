@@ -1255,3 +1255,36 @@ describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes
     for (const row of rows) expect(byTitle(String(row.title)).status).toBe("dropped");
   });
 });
+
+// ── Phase J (23 Nov): anytime tasks, three priorities, "today" after midnight ──
+describe("Phase J: no time for small things, urgent is chased, today is today", () => {
+  it("'clean my room today, no need for a time': today, anytime, never asked", async () => {
+    const result = await run("clean my room today, no need for a time", "2026-11-23T10:00", [tools(["add_task", { title: "Clean my room", anytime: true, reply: "" }])]);
+    const room = byTitle("Clean my room");
+    expect(room.anytime).toBe(true);
+    expect(local(room.due_at)).toBe("2026-11-23T20:00");
+    expect(result.thought?.slot).toBeUndefined();
+    expect(result.replies[0]).toBe("✓ **Clean my room** → today, Mon 23 Nov, anytime");
+  });
+
+  it("'today remind me to make an IELTS plan' at 04:27: 'today, Mon 23 Nov', never 'tomorrow'", async () => {
+    const result = await run("today remind me to make a plan for ielts", "2026-11-23T04:27", [tools(["add_task", { title: "Make my own IELTS plan", day: "2026-11-23", reply: "" }])]);
+    expect(result.replies[0]).toContain("When today, Mon 23 Nov?");
+    expect(result.replies[0]).not.toContain("tomorrow");
+  });
+
+  it("'train today, it's urgent': priority 1, chased 15 min after its time, then hourly", async () => {
+    await run("I have to train at 18:00 today, it's urgent", "2026-11-23T10:00", [tools(["add_task", { title: "Workout", due_at: "2026-11-23T18:00", priority: 1, reply: "" }])]);
+    const workout = byTitle("Workout");
+    expect(workout.priority).toBe(1);
+    expect(workout.persistent).toBe(true);
+    expect((workout.persistent_schedule as number[]).slice(0, 4)).toEqual([0, 15, 75, 135]);
+  });
+
+  it("an anytime task's check at 20:00 names no time, with Done / Tomorrow / Skip", async () => {
+    const room = task({ title: "Clean my room", due_at: "2026-11-23T20:00", anytime: true });
+    const { dueReminder } = await import("../src/lib/reminder-messages");
+    const message = dueReminder(room as never);
+    expect(message.text).toBe("Sir, still on today's list: <b>Clean my room</b>.");
+  });
+});

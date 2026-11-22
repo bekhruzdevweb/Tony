@@ -8,7 +8,7 @@ import { requireDb } from "./db";
 import { b, code, esc, expandable, i } from "./html";
 import { scheduleReminder } from "./reminders";
 import { getSettings } from "./settings";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { clockOf, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, localDate, parseClock, parseLocalDateTime, TIMEZONE } from "./time";
 import { getRoutine } from "./routine";
 import { blockedRanges, kindOf, preferredRanges, routineLines } from "./routine-rules";
@@ -259,7 +259,7 @@ export async function buildPlan(options: PlanOptions): Promise<PlanResult> {
   if (options.scope === "day" && localDate(day) === localDate(now) && !options.exactDay) {
     const settings = await getSettings();
     const window = windowOf(now, settings.quiet_start);
-    const { data } = await requireDb().from("tasks").select("due_at, duration_minutes, kind, status, title").in("status", OPEN_STATUSES).gte("due_at", window.start.toISOString()).lt("due_at", window.end.toISOString());
+    const { data } = await requireDb().from("tasks").select("due_at, duration_minutes, kind, status, title, anytime").in("status", OPEN_STATUSES).gte("due_at", window.start.toISOString()).lt("due_at", window.end.toISOString());
     const freeMinutes = freeMinutesLeft(now, window, (data ?? []) as Booked[]);
     if (planDay(now, freeMinutes) === "tomorrow") {
       day = dayBounds(addMinutes(now, 24 * 60)).start;
@@ -309,7 +309,7 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   // Fixed: anything that already has a time still ahead in the days being planned.
   const horizonEnd = dayBounds(days[days.length - 1]).end.getTime();
   const fixed: Busy[] = tasks
-    .filter((task) => task.due_at && new Date(task.due_at).getTime() >= now.getTime() && new Date(task.due_at).getTime() < horizonEnd)
+    .filter((task) => task.due_at && !task.anytime && new Date(task.due_at).getTime() >= now.getTime() && new Date(task.due_at).getTime() < horizonEnd)
     .map((task) => ({ at: new Date(task.due_at!), title: task.title }));
 
   // To place: overdue tasks and the inbox, most pressing first.
@@ -452,7 +452,7 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
 
   type Line = { at: Date; html: string };
   const lines: Line[] = [
-    ...fixed.map((task) => ({ at: new Date(task.due_at!), html: `${code(formatTime(new Date(task.due_at!)))} ${esc(task.title)}${task.persistent ? " 🔔" : ""}` })),
+    ...fixed.map((task) => ({ at: new Date(task.due_at!), html: `${code(clockOf(task))} ${esc(task.title)}${task.persistent ? " 🔔" : ""}` })),
     ...plan.items.map((item) => ({ at: new Date(item.at), html: `${code(formatTime(new Date(item.at)))} ➕ ${b(item.title)}${item.why ? `\n      ${i(item.why)}` : ""}` })),
   ].sort((x, y) => x.at.getTime() - y.at.getTime());
 

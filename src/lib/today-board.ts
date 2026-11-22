@@ -10,7 +10,7 @@ import { progress, subtasksFor } from "./subtasks";
 import { finishTask } from "./recurrence";
 import { scheduleReminder } from "./reminders";
 import { getSettings, updateSettings } from "./settings";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { clockOf, OPEN_STATUSES, type Task } from "./tasks";
 import { habitStats, isHabit } from "./habits";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
@@ -141,9 +141,9 @@ export async function boardView(day: Date): Promise<Board> {
   const lines = [
     ...carried.flatMap((task) => {
       const at = new Date(task.due_at!);
-      return [`☐ ⚠️ ${weekday(at)} ${formatTime(at)} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)];
+      return [`☐ ⚠️ ${weekday(at)} ${clockOf(task)} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)];
     }),
-    ...timed.flatMap((task) => [`☐ ${formatTime(new Date(task.due_at!))} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)]),
+    ...timed.flatMap((task) => [`☐ ${clockOf(task)} ${esc(task.title)}${count(task)}${bell(task)}${fire(task)}`, ...partLines(task)]),
     ...done.map((task) => `☑ <s>${doneAt(task)} ${esc(task.title)}</s>${count(task)}`),
   ];
   // The first line is what the pinned banner shows, so it is the short one.
@@ -205,11 +205,11 @@ export async function boardView(day: Date): Promise<Board> {
   if (total === 0) sections.push({ type: "paragraph", text: "Nothing is due today, sir." });
   if (carried.length) {
     sections.push({ type: "heading", size: 4, text: "⚠️ From earlier days" });
-    sections.push({ type: "list", items: carried.map((task) => openItem(task, `${weekday(new Date(task.due_at!))} ${formatTime(new Date(task.due_at!))}`)) } as RichBlock);
+    sections.push({ type: "list", items: carried.map((task) => openItem(task, `${weekday(new Date(task.due_at!))} ${clockOf(task)}`)) } as RichBlock);
   }
   if (timed.length) {
     sections.push({ type: "heading", size: 4, text: "To do" });
-    sections.push({ type: "list", items: timed.map((task) => openItem(task, formatTime(new Date(task.due_at!)))) } as RichBlock);
+    sections.push({ type: "list", items: timed.map((task) => openItem(task, clockOf(task))) } as RichBlock);
   }
   if (total > 0 && carried.length + timed.length === 0) sections.push({ type: "paragraph", text: "🎉 Everything for today is done, sir." });
   if (done.length) {

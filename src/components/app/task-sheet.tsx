@@ -7,6 +7,9 @@ import { formatTime, localDate } from "@/lib/time";
 import { Icon, isOpen } from "./ui";
 import { normalTags, tagText } from "@/lib/tags";
 
+/** His three priorities (23 Nov): urgent is chased that day, hourly, until he answers or it is done. */
+const PRIORITY_LABEL: Record<number, string> = { 1: "Urgent", 2: "Important", 4: "Normal" };
+
 export type SheetTarget = { task?: Task; day?: string; projectId?: number; focus?: "notes" };
 
 const field = "w-full rounded-card bg-surface px-3.5 py-3 text-body outline-none placeholder:text-secondary focus:ring-2 focus:ring-primary/40";
@@ -30,7 +33,7 @@ export function TaskSheet(props: {
   const [notes, setNotes] = useState(task?.notes ?? "");
   const [date, setDate] = useState(due ? localDate(due) : (target.day ?? ""));
   const [time, setTime] = useState(due ? formatTime(due) : "");
-  const [priority, setPriority] = useState(task?.priority ?? 4);
+  const [priority, setPriority] = useState(task?.priority === 3 ? 2 : (task?.priority ?? 4));
   const [project, setProject] = useState(projects.find((p) => p.id === (task?.project_id ?? target.projectId))?.name ?? "none");
   const [duration, setDuration] = useState(task?.duration_minutes ? String(task.duration_minutes) : "");
   const [repeat, setRepeat] = useState<string>(task?.repeat_rule ?? "none");
@@ -140,8 +143,8 @@ export function TaskSheet(props: {
 
           <div>
             <span className={label}>Priority</span>
-            <div className="grid grid-cols-4 gap-1 rounded-card bg-surface p-1">
-              {[1, 2, 3, 4].map((p) => (
+            <div className="grid grid-cols-3 gap-1 rounded-card bg-surface p-1">
+              {[1, 2, 4].map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -149,7 +152,7 @@ export function TaskSheet(props: {
                   aria-pressed={priority === p}
                   className={`h-10 rounded-[9px] text-sub font-medium transition-colors ${priority === p ? "bg-background shadow-sm" : "text-secondary"}`}
                 >
-                  P{p}
+                  {PRIORITY_LABEL[p]}
                 </button>
               ))}
             </div>

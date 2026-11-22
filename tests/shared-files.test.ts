@@ -123,12 +123,12 @@ describe("documents he sends are read", () => {
 describe("after midnight, the day just begun is named his way", () => {
   const now = new Date("2026-11-21T20:50:00Z"); // Sun 22 Nov, 01:50 in Tashkent
   const one = new Date("2026-11-22T08:00:00Z"); // Sun 22 Nov, 13:00
-  it("'tmr' → tomorrow, 'today' → today, no word → the weekday and date alone", () => {
+  it("'tmr' → tomorrow, 'today' → today, no word → today (23 Nov: the calendar day, as he calls it)", () => {
     expect(formatWhen(one, now, undefined, "tmr remind me at 1 p.m.")).toBe("tomorrow, Sun 22 Nov, 13:00");
     expect(formatWhen(one, now, undefined, "sorry i meant today")).toBe("today, Sun 22 Nov, 13:00");
-    expect(formatWhen(one, now, undefined, "can u add this one to stories task")).toBe("Sun 22 Nov, 13:00");
-    // Without his words (briefs, reminders), as before.
-    expect(formatWhen(one, now)).toBe("tomorrow, Sun 22 Nov, 13:00");
+    expect(formatWhen(one, now, undefined, "can u add this one to stories task")).toBe("today, Sun 22 Nov, 13:00");
+    // Without his words (briefs, reminders): the calendar's "today".
+    expect(formatWhen(one, now)).toBe("today, Sun 22 Nov, 13:00");
     // In the daytime nothing changes.
     expect(formatWhen(one, new Date("2026-11-22T05:00:00Z"), undefined, "sorry i meant today")).toBe("today, Sun 22 Nov, 13:00");
   });

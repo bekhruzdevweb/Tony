@@ -18,7 +18,7 @@ const DEFAULT_MINUTES = 30;
 const AFTERNOON_HOUR = 13;
 
 export type Interval = { start: number; end: number; title?: string };
-export type Busy = { due_at: string | null; duration_minutes?: number | null; kind?: string | null; status?: string; title?: string };
+export type Busy = { due_at: string | null; duration_minutes?: number | null; kind?: string | null; status?: string; title?: string; anytime?: boolean | null };
 export type ToPlace = {
   id: number;
   title: string;
@@ -54,7 +54,8 @@ export function isDeep(title: string, minutes: number, priority: number): boolea
 export function busyIntervals(tasks: Busy[]): Interval[] {
   const open = new Set(["inbox", "todo", "in_progress", undefined]);
   return tasks
-    .filter((task) => task.due_at && open.has(task.status))
+    // An anytime task (Phase J) holds no time of the day.
+    .filter((task) => task.due_at && open.has(task.status) && !task.anytime)
     .map((task) => {
       const at = new Date(task.due_at!).getTime();
       if (task.kind === "prayer") return { start: at - PRAYER_MARGIN, end: at + PRAYER_MARGIN };

@@ -5,7 +5,7 @@
  * [✏️ Other time]. Pure: no database, no Telegram, tested in tests/change1.test.ts.
  */
 import type { SlotOption } from "./routine-rules";
-import { formatDay, formatTime, parseLocalDateTime, relativeDay } from "./time";
+import { dayWordIn, formatDay, formatTime, isNight, parseLocalDateTime, relativeDay } from "./time";
 
 /**
  * A day in words, always with its weekday and date, "today" and "tomorrow"
@@ -13,10 +13,12 @@ import { formatDay, formatTime, parseLocalDateTime, relativeDay } from "./time";
  * `when` reads "tomorrow, Sat 21 Nov," or "on Mon 23 Nov"; `plain` reads
  * "Tomorrow, Sat 21 Nov," or "Mon 23 Nov".
  */
-export function dayLabel(day: string, now: Date): { when: string; plain: string } {
+export function dayLabel(day: string, now: Date, said?: string): { when: string; plain: string } {
   const noon = parseLocalDateTime(`${day}T12:00`)!;
   const name = formatDay(noon, now);
-  const relative = relativeDay(noon, now);
+  let relative: string | undefined = relativeDay(noon, now);
+  // After midnight the day just begun is named his way: "tmr" stays "tomorrow", otherwise "today".
+  if (said !== undefined && relative === "today" && isNight(now)) relative = dayWordIn(said) ?? "today";
   if (!relative) return { when: `on ${name}`, plain: name };
   return { when: `${relative}, ${name},`, plain: `${relative[0].toUpperCase()}${relative.slice(1)}, ${name},` };
 }

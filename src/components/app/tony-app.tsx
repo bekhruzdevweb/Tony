@@ -375,10 +375,10 @@ function RowMenu(props: {
           ))}
         </div>
         <div className="border-t border-hairline px-4 pt-3 pb-1 text-[12px] font-semibold text-secondary">Priority</div>
-        <div className="grid grid-cols-4 gap-1 px-3 pb-2">
-          {[1, 2, 3, 4].map((p) => (
+        <div className="grid grid-cols-3 gap-1 px-3 pb-2">
+          {[1, 2, 4].map((p) => (
             <button key={p} type="button" onClick={() => onPriority(p)} aria-pressed={task.priority === p} className={`flex h-10 items-center justify-center gap-1.5 rounded-lg text-[13px] ${task.priority === p ? "bg-surface font-semibold" : "hover:bg-surface"}`}>
-              <span className="size-3 rounded-full" style={{ background: `var(--p${p})` }} />P{p}
+              <span className="size-3 rounded-full" style={{ background: `var(--p${p})` }} />{p === 1 ? "Urgent" : p === 2 ? "Important" : "Normal"}
             </button>
           ))}
         </div>

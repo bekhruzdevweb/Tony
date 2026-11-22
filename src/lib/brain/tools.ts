@@ -6,7 +6,7 @@ import { buildPlan } from "../planner";
 import { finishTask } from "../recurrence";
 import { getSettings } from "../settings";
 import { scheduleReminder, settleReminders } from "../reminders";
-import { MAX_TITLE_LENGTH, OPEN_STATUSES, type Task } from "../tasks";
+import { ANYTIME_HOUR, MAX_TITLE_LENGTH, OPEN_STATUSES, URGENT_LADDER, type Task } from "../tasks";
 import { addMinutes, dayBounds, formatDue, parseLocalDateTime, toWholeMinute } from "../time";
 import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
@@ -21,6 +21,7 @@ import { givenTimes, heldToGivenTime, hisTitle, mergeNotes, nightTomorrow, ownWo
 import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
+import { startDate } from "../smart-inbox-rules";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 import { normalTag, normalTags, prefixTag, tagsFor } from "../tags";
 import { namesDay } from "./checks";
@@ -37,7 +38,8 @@ const taskFields = {
   title: { type: "string", description: "Short: 2-6 words, without the time, never a link or a question." },
   due_at: { type: "string", description: TIME },
   project: { type: "string" },
-  priority: { type: "integer", description: "1 urgent to 4 normal" },
+  priority: { type: "integer", description: "1 urgent (must be done that day: Tony chases it 15 min after its time, then hourly until he answers or it is done), 2 important, 4 normal (the default)" },
+  anytime: { type: "boolean", description: "A small thing with no time on its day (\"clean my room\", \"quick\", \"no need for a time\", \"anytime today\", tasks of 5-15 min): with day (or none: today). No time is asked or shown; one quiet check at 20:00 if still open." },
   persistent: { type: "boolean" },
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
   repeat_until: { type: "string", description: "YYYY-MM-DD: the last day a repeating task comes round (a plan's end date)" },
@@ -46,7 +48,7 @@ const taskFields = {
   day: { type: "string", description: "YYYY-MM-DD: a day he named WITHOUT a time. Leave due_at out; Tony picks or offers the time from his routine." },
   pick_time: {
     type: "boolean",
-    description: "With day: his own words say the time does not matter for this task (\"no need to add any time\", \"any time is fine\", \"you choose\", \"it doesn't take long\"). Tony then picks the best free time that day himself and says it was his pick, instead of asking.",
+    description: "With day: he says \"you choose\" / \"pick a time for me\" for a real task that needs a slot. Tony picks the best free time that day himself. For a small thing that needs no time at all, use anytime instead.",
   },
   nudge_after_days: { type: "integer", description: "\"Remind me if I don't check it for N days\": N. A check-in comes if the task sits untouched that long." },
   free_time: { type: "boolean", description: "\"In my free time\", \"someday\", \"when I'm free\": the 🌙 Free Time list, no date and no day." },
@@ -315,9 +317,18 @@ async function readFields(
     patch.title = (title || args.title.trim()).slice(0, MAX_TITLE_LENGTH);
   }
   if (args.priority !== undefined) {
-    const priority = Number(args.priority);
-    if (![1, 2, 3, 4].includes(priority)) return { error: "priority must be 1, 2, 3 or 4" };
+    const named = typeof args.priority === "string" ? ({ urgent: 1, important: 2, normal: 4 } as Record<string, number>)[args.priority.toLowerCase()] : undefined;
+    const priority = named ?? Number(args.priority);
+    if (![1, 2, 3, 4].includes(priority)) return { error: "priority must be urgent (1), important (2) or normal (4)" };
     patch.priority = priority;
+    // Urgent is chased that day (23 Nov): 15 minutes after its time, then hourly, until he answers or it is done.
+    if (priority === 1 && args.persistent !== false) {
+      patch.persistent = true;
+      patch.persistent_schedule = URGENT_LADDER;
+    } else if (priority !== 1 && args.persistent === undefined) {
+      patch.persistent = false;
+      patch.persistent_schedule = null;
+    }
   }
   if (typeof args.persistent === "boolean") patch.persistent = args.persistent;
   if (typeof args.habit === "boolean") patch.habit = args.habit;
@@ -391,6 +402,19 @@ async function readFields(
     if (night) dayOnly = localDate(night);
   }
   if (dayOnly && dayOnly < localDate(now)) return { error: `${dayOnly} has already passed. Ask him which day he means.` };
+  // A task with no time on its day (Phase J, 23 Nov: "clean your room … I should not be having any timeline"):
+  // kept at 20:00 of that day for one quiet check, shown as "anytime", never asked about.
+  if (args.anytime === true) {
+    const day = dayOnly ?? (dueAt ? localDate(dueAt) : typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day.trim()) ? args.day.trim() : startDate(now));
+    let at = parseLocalDateTime(`${day}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
+    if (at.getTime() <= now.getTime()) at = toWholeMinute(new Date(now.getTime() + 30 * 60_000));
+    patch.anytime = true;
+    patch.due_at = at.toISOString();
+    return { patch, dueAt: at, dayOnly: undefined };
+  }
+  if (args.anytime === false) patch.anytime = false;
+  // A time he gives takes it out of "anytime".
+  if (dueAt) patch.anytime = false;
   return { patch, dueAt, dayOnly };
 }
 
