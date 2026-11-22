@@ -2,7 +2,7 @@ import "server-only";
 import type { Bot } from "grammy";
 import { sendHtml, track } from "./chat-log";
 import { requireDb } from "./db";
-import { habitFacts, habitName, habitStats, type HabitStats } from "./habits";
+import { habitFacts, habitName, habitStats, isHabit, type HabitStats } from "./habits";
 import { b, esc, i } from "./html";
 import { logMessage } from "./messages";
 import type { Settings } from "./settings";
@@ -62,10 +62,18 @@ export function coachLine(all: HabitStats[]): string | undefined {
   return undefined;
 }
 
-/** The brief's habit section, as HTML: one line of facts per habit. */
+/** A habit with something to report: a streak, a last time, or a miss. A brand-new one has nothing yet. */
+const hasNews = (habit: HabitStats) => habit.streak > 0 || habit.lastDone !== undefined || habit.missesThisWeek > 0 || habit.missedRun > 0;
+
+/**
+ * The brief's habit section, as HTML: one line of facts per habit that has
+ * any, so "no current streak, best 0, not done since tracking began" never
+ * fills the brief (22 Nov: seven such lines, "Looks like very very mess").
+ */
 export function habitsSection(all: HabitStats[]): string | undefined {
-  if (all.length === 0) return undefined;
-  return [`🔥 ${b("Habits")}`, ...all.map((habit) => `${esc(habit.task.title)} · ${i(habitFacts(habit))}`)].join("\n");
+  const worth = all.filter(hasNews);
+  if (worth.length === 0) return undefined;
+  return [`🔥 ${b("Habits")}`, ...worth.map((habit) => `${esc(habit.task.title)} · ${i(habitFacts(habit))}`)].join("\n");
 }
 
 /** Everything the coach needs for the morning brief. Never throws. */
@@ -152,16 +160,17 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
     }
   }
 
-  // Key one-off tasks (persistent, or priority 1-2) due within 30 minutes and not started.
+  // Key tasks (persistent, or priority 1-2) due within 30 minutes and not started: one-off tasks, and a
+  // plan's sessions, which are judged by their own date like any task (habits were handled above).
   const soon = await requireDb()
     .from("tasks")
     .select()
-    .is("repeat_rule", null)
     .eq("status", "todo")
     .gt("due_at", now.toISOString())
     .lte("due_at", new Date(now.getTime() + NUDGE_LEAD_MINUTES * 60_000).toISOString());
   if (soon.error) console.error(`Coach: ${soon.error.message}`);
   for (const task of (soon.data ?? []) as Task[]) {
+    if (isHabit(task)) continue;
     if (!task.persistent && task.priority > 2) continue;
     const at = formatTime(new Date(task.due_at!));
     due.push({ habit: { task } as HabitStats, kind: "nudge:task", text: `${task.title} is at ${at}, sir: thirty minutes. Time to get ready.`, firm: false });

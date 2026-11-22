@@ -668,3 +668,152 @@ describe("Main priority: chased until it is done", () => {
     expect(nudges(sent)).toHaveLength(1);
   });
 });
+
+// ── 22 Nov 12:37: his twelve screenshots ───────────────────────────────
+describe("22 Nov 12:37: plans are not habits, the task in focus, a clean chat", () => {
+  /** A bot that keeps each message, its method and its options (a file's caption). */
+  const recorder = () => {
+    const sent: { name: string; text: string; extra?: Record<string, unknown> }[] = [];
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown, extra?: Record<string, unknown>) => {
+          if (String(name).startsWith("send")) sent.push({ name: String(name), text: typeof text === "string" ? text : JSON.stringify(text), extra });
+          return { message_id: 700 + sent.length };
+        },
+      },
+    );
+    return { bot: { api } as never, sent };
+  };
+
+  it("Sun 09:30: the IELTS Sunday review, first due Sun 29 Nov, is not 'at 10:00' today; a plan's sessions are not habits", async () => {
+    const { runCoach } = await import("../src/lib/coach");
+    const { habitStats } = await import("../src/lib/habits");
+    task({ title: "IELTS: Sunday review", due_at: "2026-11-29T10:00", repeat_rule: "weekly", repeat_until: "2027-01-10", priority: 2, created_at: at("2026-11-22T02:50").toISOString() });
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T09:30"));
+    expect(await habitStats(new Date())).toEqual([]);
+    expect(await runCoach(bot, 42, await getSettings(), new Date())).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a habit first due in two weeks is not due on this Sunday, and misses only what came after its first date", async () => {
+    const { habitStats } = await import("../src/lib/habits");
+    task({ title: "Sunday long run", due_at: "2026-12-06T08:00", repeat_rule: "weekly", created_at: at("2026-11-22T09:00").toISOString() });
+    vi.setSystemTime(at("2026-11-22T09:30"));
+    expect((await habitStats(new Date()))[0].dueToday).toBe(false);
+    // 6 Dec passed without it: one miss, not three (22 Nov, 29 Nov and 6 Dec).
+    vi.setSystemTime(at("2026-12-07T09:00"));
+    expect((await habitStats(new Date()))[0].missedRun).toBe(1);
+  });
+
+  it("Mon 08:30: today's IELTS session at 09:00 still gets its thirty-minute word, as a key task", async () => {
+    const { runCoach } = await import("../src/lib/coach");
+    task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", repeat_until: "2027-01-10", priority: 2 });
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-23T08:30"));
+    expect(await runCoach(bot, 42, await getSettings(), new Date())).toBe(1);
+    expect(sent[0].text).toBe("IELTS: Writing Task 2 (learn) + Speaking Part 3 is at 09:00, sir: thirty minutes. Time to get ready.");
+  });
+
+  it("the morning brief: no 🔥 Habits for a plan's sessions, and three tasks at 20:15 are one clash line", async () => {
+    task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", repeat_until: "2027-01-10", priority: 2 });
+    for (const title of ["Posting stories on Instagram", "Instagram reel (saved link)", "Start IELTS exam preparation"]) task({ title, due_at: "2026-11-23T20:15", duration_minutes: 30 });
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-23T08:00"));
+    await runBriefs(bot, 42, await getSettings(), new Date());
+    const brief = sent.find((message) => message.text.includes("Good morning"))!.text;
+    expect(brief).not.toContain("Habits");
+    expect(brief.match(/Clash: /g)).toHaveLength(1);
+    expect(brief).toContain("Clash: Posting stories on Instagram, Instagram reel (saved link) and Start IELTS exam preparation are all at 20:15");
+  });
+
+  it("12:14 'I need to reschedule this task for tomorrow' just after ▶️ on the Freya's Talking posts: the brain is told that task is meant, not the 12:00 video", async () => {
+    const video = task({ title: "Watch saved video", due_at: "2026-11-22T12:00" });
+    const posts = task({ title: "Write Telegram posts like Freya's Talking", due_at: "2026-11-22T12:14", status: "in_progress" });
+    state.db.insert("reminders", { task_id: video.id, fire_at: at("2026-11-22T12:00").toISOString(), kind: "due", attempt: 0, state: "sent", sent_at: at("2026-11-22T12:00").toISOString() });
+    state.db.insert("events", { kind: "freetime_answer", detail: { task_id: posts.id, key: "other:afternoon", answer: "now" }, created_at: at("2026-11-22T12:14").toISOString() });
+    await run("I need to reschedule this task for tomorrow.", "2026-11-22T12:14", [says("When tomorrow, sir?")]);
+    const asked = JSON.stringify(state.calls[0].messages);
+    expect(asked).toContain(`he means #${posts.id}.`);
+    expect(asked).toContain(`about #${video.id} \\"Watch saved video\\" came before that: it is not the one.`);
+  });
+
+  it("a reply to the coach's IELTS nudge, or to a voice note, is read as about that message", async () => {
+    const { taskForTrackedMessage } = await import("../src/lib/reminders");
+    const { loggedText } = await import("../src/lib/mistakes");
+    const review = task({ title: "IELTS: Sunday review", due_at: "2026-11-29T10:00" });
+    state.db.insert("chat_messages", { message_id: 593, kind: "reminder", task_id: review.id });
+    state.db.insert("events", { kind: "voice_note", detail: { message_id: 640, text: "Your workout is at 18:00, sir." } });
+    expect((await taskForTrackedMessage(593))?.title).toBe("IELTS: Sunday review");
+    expect(await taskForTrackedMessage(999)).toBeUndefined();
+    expect(await loggedText(640)).toBe("Your workout is at 18:00, sir.");
+  });
+
+  it("'⏰ Still open from today: Message teacher…' goes once that task is done; a follow-up about two waits for both", async () => {
+    const { track, retireSettled } = await import("../src/lib/chat-log");
+    const teacher = task({ title: "Message teacher about launching group", due_at: "2026-11-22T10:00" });
+    const podcast = task({ title: "Watch podcast and take notes", due_at: "2026-11-22T11:15" });
+    vi.setSystemTime(at("2026-11-22T12:00"));
+    await track(596, "prompt", { taskIds: [Number(teacher.id)] });
+    await track(598, "prompt", { taskIds: [Number(teacher.id), Number(podcast.id)] });
+    const fate = (id: number) => state.db.rows("chat_messages").find((row) => Number(row.message_id) === id)!.delete_after;
+    vi.setSystemTime(at("2026-11-22T12:22"));
+    await runAction("done", Number(teacher.id), undefined, new Date());
+    await retireSettled(new Date());
+    expect(fate(596)).not.toBeNull();
+    expect(fate(598)).toBeNull();
+    // He moves the podcast to tomorrow (its time is ahead now, changed after the follow-up went out).
+    const row = state.db.rows("tasks").find((task) => task.id === podcast.id)!;
+    row.due_at = at("2026-11-23T07:15").toISOString();
+    row.updated_at = at("2026-11-22T12:23").toISOString();
+    vi.setSystemTime(at("2026-11-22T12:23"));
+    await retireSettled(new Date());
+    expect(fate(598)).not.toBeNull();
+  });
+
+  it("12:36 five workouts, Monday to Friday: the plan's table shows each one's day", async () => {
+    const { planView } = await import("../src/lib/planner");
+    const days = ["2026-11-23T18:00", "2026-11-24T18:30", "2026-11-25T18:00", "2026-11-26T18:00", "2026-11-27T18:00"];
+    const titles = ["Workout: Upper A (push + crutch muscles)", "Workout: Legs A (standing + thighs)", "Workout: Cardio seated march", "Workout: Upper B (pull + grip)", "Workout: Legs B (hips + core)"];
+    const made = titles.map((title, n) => task({ title, repeat_rule: "weekly", repeat_until: "2027-01-31", duration_minutes: n === 2 ? 20 : 40 }));
+    const plan = state.db.insert("plans", {
+      scope: "week",
+      day: "2026-11-23",
+      status: "proposed",
+      planned_by: "model",
+      compact: true,
+      lead: "Here's what I'll do, sir:",
+      why: "Each workout is on the day you chose.",
+      left_out: [],
+      items: made.map((row, n) => ({ task_id: row.id, title: row.title, at: at(days[n]).toISOString(), why: "evening slot" })),
+    });
+    const view = await planView(plan as never, at("2026-11-22T12:36"));
+    expect(view.html).toContain("<b>🧭 The week · Mon 23 Nov – Fri 27 Nov</b>");
+    expect(view.html).toContain("<tr><th>Day</th><th>Time</th><th>Task</th><th>Length</th></tr>");
+    expect(view.html).toContain("<tr><td>Mon 23 Nov</td><td>18:00</td><td>Workout: Upper A (push + crutch muscles)</td><td>40 min</td></tr>");
+    expect(view.html).toContain("<tr><td>Fri 27 Nov</td><td>18:00</td><td>Workout: Legs B (hips + core)</td><td>40 min</td></tr>");
+  });
+
+  it("'change this title to Write 3 posts like Freya's Talking': the task in focus is renamed, and the receipt shows the old and new names", async () => {
+    const posts = task({ title: "Write Telegram posts like Freya's Talking", due_at: "2026-11-22T12:14", status: "in_progress" });
+    state.db.insert("events", { kind: "task_tap", detail: { task_id: posts.id, action: "start" }, created_at: at("2026-11-22T12:14").toISOString() });
+    const result = await run("change this title to Write 3 posts like Freya's Talking", "2026-11-22T12:20", [tools(["update_task", { id: posts.id, title: "Write 3 posts like Freya's Talking" }])]);
+    expect(JSON.stringify(state.calls[0].messages)).toContain(`he means #${posts.id}.`);
+    expect(byTitle("Write 3 posts like Freya's Talking").id).toBe(posts.id);
+    expect(result.replies[0]).toBe("✏️ ~~Write Telegram posts like Freya's Talking~~ → **Write 3 posts like Freya's Talking**");
+  });
+
+  it("12:00 the reminder for 'Watch saved video' brings the video without the downloader's 'Спасибо, что пользуетесь - @SaveAsBot'ом'", async () => {
+    const video = task({ title: "Watch saved video", due_at: "2026-11-22T12:00" });
+    state.db.insert("media", { kind: "video", file_id: "VID", caption: "​​Спасибо, что пользуетесь - @SaveAsBot'ом", task_id: video.id, created_at: at("2026-11-21T19:17").toISOString() });
+    state.db.insert("reminders", { task_id: video.id, fire_at: at("2026-11-22T12:00").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T11:59").toISOString();
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T12:00"));
+    await runTick(bot, 42, new Date());
+    const reminder = sent.find((message) => message.name === "sendVideo")!;
+    expect(String(reminder.extra?.caption)).not.toContain("SaveAsBot");
+    expect(String(reminder.extra?.caption)).toContain("Watch saved video");
+  });
+});

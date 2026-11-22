@@ -22,6 +22,25 @@ export async function markSent(text: string, telegramMessageId: number | undefin
 
 type Logged = { id: number; role: "user" | "tony"; text: string; created_at: string; telegram_message_id?: number | null };
 
+/**
+ * What one of Tony's Telegram messages said, if Tony knows: a reply he sent
+ * (see markSent), or a voice note (its words are noted when it is sent).
+ * Used when he replies to that message, so his words are read as about it.
+ */
+export async function loggedText(telegramMessageId: number): Promise<string | undefined> {
+  try {
+    const db = requireDb();
+    const found = await db.from("messages").select("text").eq("telegram_message_id", telegramMessageId).limit(1);
+    const text = ((found.data ?? []) as { text: string }[])[0]?.text;
+    if (text) return text;
+    const voices = await db.from("events").select("detail").eq("kind", "voice_note").order("id", { ascending: false }).limit(60);
+    const voice = ((voices.data ?? []) as { detail: { message_id?: number; text?: string } | null }[]).find((row) => Number(row.detail?.message_id) === telegramMessageId);
+    return voice?.detail?.text || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Saves a mistake: the message he marked (if Tony knows it), his words before it, and the eight messages around it. */
 export async function saveMistake(telegramMessageId: number | undefined, note?: string): Promise<boolean> {
   const db = requireDb();

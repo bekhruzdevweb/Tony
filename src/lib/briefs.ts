@@ -13,7 +13,7 @@ import { sendPlanPoll, sendWeekPoll } from "./polls";
 import type { Settings } from "./settings";
 import { postBoard, shortLabel } from "./today-board";
 import { coachForBrief } from "./coach";
-import { allClashes, clashSentence } from "./brain/checks";
+import { clashLinesFor } from "./brain/checks";
 import { sayAloud } from "./speech";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
@@ -140,8 +140,9 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const view = await dayView(now, now, { skipCarried: Boolean(open) });
   // The coach: one personal line from the habit log, and each habit's facts.
   const coach = await coachForBrief(now);
-  // Two things at once today: flagged so they can be sorted before the day starts.
-  const clashLines = allClashes(view.open).map(([a, c]) => `⚠️ ${esc(`Clash: ${clashSentence(a, c)}`)}`);
+  // Two things at once today: flagged so they can be sorted before the day starts. Tasks clashing with
+  // one another are one line, and at most three lines are shown (22 Nov: six pairs filled the brief).
+  const clashLines = clashLinesFor(view.open).map((line) => `⚠️ ${esc(line)}`);
   // His focus right now (this week's and this month's goals), right under the greeting.
   const goalRows = ((await requireDb().from("memory").select("id, fact, layer, goal, mentions, confirmed_at, created_at").eq("goal", true)).data ?? []) as Parameters<typeof currentGoals>[0];
   const goals = currentGoals(goalRows, now).slice(0, 3);

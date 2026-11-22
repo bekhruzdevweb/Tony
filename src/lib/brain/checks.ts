@@ -30,6 +30,10 @@ export function isDuplicateReminder(waiting: { fire_at: string }[], at: Date): b
 export type DoneAction = {
   tool: "add_task" | "update_task" | "complete_task" | "set_reminder" | "subtask";
   title: string;
+  /** Its title before this change, when he renamed it. */
+  renamedFrom?: string;
+  /** With a rename: whether its time changed too (else the time is not repeated). */
+  dueChanged?: boolean;
   /** How it repeats, and until when (YYYY-MM-DD), shown as "🔁 weekly until Sun 17 Jan". */
   repeat?: string | null;
   repeat_until?: string | null;
@@ -95,6 +99,8 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
     if (action.status === "dropped") return `✓ ${title} removed`;
     if (action.status === "skipped") return `✓ ${title} skipped`;
     if (action.tool === "subtask" && action.parts) return `☑ ${title}: ${action.parts} parts done`;
+    // "Change this title to …": the old name and the new one; the time only if that changed too.
+    if (action.renamedFrom && !action.dueChanged && !action.reminder_at) return `✏️ ~~${action.renamedFrom}~~ → ${title}`;
     // Every time named with its weekday and date ("tomorrow, Sat 21 Nov, 08:30"), the clock time in bold.
     const bold = (at: Date) => formatWhen(at, now, undefined, said).replace(/(\d{2}:\d{2})$/, "**$1**");
     if (action.reminder_at) {
@@ -154,6 +160,55 @@ export function nextFreeSlot(task: TimedTask, others: TimedTask[], latest: Date)
   return undefined;
 }
 
+/** At most this many clash lines in the morning brief; the rest are counted. */
+export const MAX_CLASH_LINES = 3;
+
+/**
+ * The clashes as groups: tasks that clash with one another, directly or
+ * through a third, are one group. Three tasks at 20:15 are one line, not
+ * three pairs (22 Nov: six clash lines in the brief).
+ */
+export function clashGroups(tasks: TimedTask[]): TimedTask[][] {
+  const group = new Map<number, number>();
+  const find = (id: number): number => {
+    const parent = group.get(id) ?? id;
+    if (parent === id) return id;
+    const root = find(parent);
+    group.set(id, root);
+    return root;
+  };
+  const byId = new Map<number, TimedTask>();
+  for (const [a, c] of allClashes(tasks)) {
+    byId.set(a.id, a);
+    byId.set(c.id, c);
+    const [ra, rc] = [find(a.id), find(c.id)];
+    if (ra !== rc) group.set(rc, ra);
+  }
+  const groups = new Map<number, TimedTask[]>();
+  for (const task of byId.values()) groups.set(find(task.id), [...(groups.get(find(task.id)) ?? []), task]);
+  return [...groups.values()]
+    .map((members) => members.sort((x, y) => x.due_at!.localeCompare(y.due_at!) || x.id - y.id))
+    .sort((x, y) => x[0].due_at!.localeCompare(y[0].due_at!));
+}
+
+const andList = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/** One group's line: "Posting stories, Reel and IELTS kickoff are all at 20:15" / "Workout (18:00) and Reading (18:20) overlap". */
+export function clashGroupSentence(members: TimedTask[]): string {
+  if (members.length === 2) return clashSentence(members[0], members[1]);
+  const times = new Set(members.map((task) => formatTime(new Date(task.due_at!))));
+  if (times.size === 1) return `${andList(members.map((task) => task.title))} are all at ${[...times][0]}`;
+  return `${andList(members.map((task) => `${task.title} (${formatTime(new Date(task.due_at!))})`))} overlap`;
+}
+
+/** The brief's clash lines: one per group, at most MAX_CLASH_LINES, then how many more. */
+export function clashLinesFor(tasks: TimedTask[]): string[] {
+  const groups = clashGroups(tasks);
+  const lines = groups.slice(0, MAX_CLASH_LINES).map((members) => `Clash: ${clashGroupSentence(members)}`);
+  if (groups.length > MAX_CLASH_LINES) lines.push(`…and ${groups.length - MAX_CLASH_LINES} more clash${groups.length - MAX_CLASH_LINES === 1 ? "" : "es"} later today`);
+  return lines;
+}
+
 /** "Workout and Reading are both at 18:00" / "Workout (18:00) and Reading (18:20) overlap". */
 export function clashSentence(a: TimedTask, b: TimedTask): string {
   const ta = formatTime(new Date(a.due_at!));
@@ -166,13 +221,31 @@ export function clashSentence(a: TimedTask, b: TimedTask): string {
  * means the reminder Tony sent most recently, if it was in the last 15
  * minutes. Returns the note for the model, naming the task.
  */
-export function recentReminderNote(sent: { task_id: number | null; title: string; sent_at: string }[], now: Date): string | undefined {
+export function recentReminderNote(sent: Touch[], now: Date): string | undefined {
   const recent = sent
     .filter((row) => row.task_id !== null && now.getTime() - new Date(row.sent_at).getTime() <= 15 * 60_000)
-    .sort((a, b) => b.sent_at.localeCompare(a.sent_at))[0];
-  if (!recent) return undefined;
-  return `You reminded him about task #${recent.task_id} "${recent.title}" at ${formatTime(new Date(recent.sent_at))}. If he says "this one", "it" or "that" and his message names no other task and asks for no new one, he means that task; when his message also asks for something new ("put it in the inbox, remind me to study…"), "it" is that new thing.`;
+    .sort((a, b) => b.sent_at.localeCompare(a.sent_at));
+  const latest = recent[0];
+  if (!latest) return undefined;
+  const at = formatTime(new Date(latest.sent_at));
+  const what =
+    latest.how === "started"
+      ? `He started task #${latest.task_id} "${latest.title}" at ${at} with your button`
+      : latest.how === "done"
+        ? `He ticked off task #${latest.task_id} "${latest.title}" at ${at} with your button`
+        : latest.how === "moved"
+          ? `He moved task #${latest.task_id} "${latest.title}" at ${at} with your button`
+          : `You reminded him about task #${latest.task_id} "${latest.title}" at ${at}`;
+  // The newest touch wins over an older reminder (22 Nov 12:14: he started the Freya's Talking posts
+  // from Tony's question, said "I need to reschedule this task for tomorrow", and the 12:00 reminder
+  // for "Watch saved video" was moved instead).
+  const older = recent.find((row) => row.task_id !== latest.task_id);
+  const notThat = older ? ` Your ${formatTime(new Date(older.sent_at))} message about #${older.task_id} "${older.title}" came before that: it is not the one.` : "";
+  return `${what}: that is the task in focus. If he says "this task", "this one", "it" or "that" and his message names no other task and asks for no new one, he means #${latest.task_id}.${notThat} When his message also asks for something new ("put it in the inbox, remind me to study…"), "it" is that new thing.`;
 }
+
+/** Something that just happened to one task: Tony reminded him of it, or he tapped one of its buttons. */
+export type Touch = { task_id: number | null; title: string; sent_at: string; how?: "reminded" | "started" | "done" | "moved" };
 
 /** The newest message, marked so it is never mistaken for an earlier one. */
 export function latestMessage(text: string, note?: string): string {

@@ -7,7 +7,7 @@ import { ensurePrayers } from "@/lib/prayer";
 import { moveNoteListsOnce } from "@/lib/subtasks";
 import { runSelfTestJob, runSmartJobs } from "@/lib/smart-jobs";
 import { budgetLeft } from "@/lib/safety";
-import { runCleanup } from "@/lib/chat-log";
+import { retireSettled, runCleanup } from "@/lib/chat-log";
 import { getDb } from "@/lib/db";
 import { pruneUpdates } from "@/lib/dedupe";
 import { env } from "@/lib/env";
@@ -64,7 +64,8 @@ export async function POST(request: Request) {
       // Proposed tasks never confirmed ("Looks good") are let go after two days.
       await getDb()!.from("tasks").delete().eq("status", "draft").lt("created_at", new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString()).then(({ error }) => error && console.error(`Draft cleanup: ${error.message}`));
     }
-    // Last, tidy the chat: remove messages whose time has come.
+    // Last, tidy the chat: messages about tasks that are now settled, and every message whose time has come.
+    await retireSettled();
     const cleaned = await runCleanup(bot, chatId).catch((error) => (console.error("Cleanup failed:", error), undefined));
     // Once after a deployment, a full sweep of the chat. After the answer, so the clock is not kept waiting.
     after(() => sweepOnceAfterDeploy(bot, chatId).catch((error) => console.error("One-time sweep failed:", error)));

@@ -101,25 +101,97 @@ async function quietly(label: string, work: () => PromiseLike<{ error: { message
 }
 
 /** Records a message so it can be tidied away later. */
-export function track(
+export async function track(
   messageId: number,
   kind: MessageKind,
-  options: { taskId?: number; deleteAfter?: Date; incoming?: boolean } = {},
+  options: { taskId?: number; taskIds?: number[]; deleteAfter?: Date; incoming?: boolean } = {},
 ): Promise<void> {
-  return quietly("track", () =>
-    requireDb()
+  const ids = [...new Set([...(options.taskIds ?? []), ...(options.taskId !== undefined ? [options.taskId] : [])])].filter(Number.isFinite);
+  const row = {
+    message_id: messageId,
+    kind,
+    // One task: its own column, so settling that task removes the message (see settleReminders).
+    task_id: options.taskId ?? (ids.length === 1 ? ids[0] : null),
+    incoming: options.incoming ?? false,
+    delete_after: options.deleteAfter?.toISOString() ?? null,
+  };
+  const db = requireDb();
+  if (ids.length === 0) return quietly("track", () => db.from("chat_messages").upsert(row, { onConflict: "message_id" }));
+  try {
+    const { error } = await db.from("chat_messages").upsert({ ...row, task_ids: ids }, { onConflict: "message_id" });
+    if (!error) return;
+    // Before migration 0030 there is no task_ids column: the message is still recorded.
+    if (!/task_ids/i.test(error.message)) console.error(`track: ${error.message}`);
+  } catch (error) {
+    console.error("track:", error);
+  }
+  return quietly("track", () => db.from("chat_messages").upsert(row, { onConflict: "message_id" }));
+}
+
+/** A tapped message whose task is settled goes this soon: he sees the outcome, then the chat is clean. */
+export const SETTLED_MINUTES = 1;
+/** A confirmation of something done or moved, in his own words, goes after this long. */
+export const DONE_CONFIRMATION_MINUTES = 10;
+export const minutesFromNow = (minutes: number, now = new Date()) => new Date(now.getTime() + minutes * 60_000);
+
+/** What a tracked message is ("prompt", "brief:morning", ...), if Tony recorded it. */
+export async function trackedKind(messageId: number): Promise<MessageKind | undefined> {
+  try {
+    const { data } = await requireDb().from("chat_messages").select("kind").eq("message_id", messageId).limit(1);
+    return ((data ?? []) as { kind: MessageKind }[])[0]?.kind;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * From the minute tick: a message about one or more tasks (a follow-up, a
+ * list of what is still open, a receipt, a question about a time) goes on the
+ * next tick once every task in it is settled: no longer open, or moved to a
+ * time still ahead after the message was sent. However it was settled, by a
+ * button, in his words or in the app (22 Nov: "⏰ Still open from today:
+ * Message teacher…" stayed after that task was done). Briefs are kept.
+ * Returns how many were marked. Never throws.
+ */
+export async function retireSettled(now = new Date()): Promise<number> {
+  try {
+    const db = requireDb();
+    const { data, error } = await db
       .from("chat_messages")
-      .upsert(
-        {
-          message_id: messageId,
-          kind,
-          task_id: options.taskId ?? null,
-          incoming: options.incoming ?? false,
-          delete_after: options.deleteAfter?.toISOString() ?? null,
-        },
-        { onConflict: "message_id" },
-      ),
-  );
+      .select("message_id, task_ids, created_at, kind, delete_after")
+      .is("deleted_at", null)
+      .eq("protected", false)
+      .not("task_ids", "is", null)
+      .gte("created_at", new Date(now.getTime() - DELETABLE_HOURS * 60 * 60_000).toISOString())
+      .order("id", { ascending: false })
+      .limit(60);
+    if (error) return 0;
+    const rows = ((data ?? []) as { message_id: number; task_ids: number[] | null; created_at: string; kind: MessageKind; delete_after: string | null }[]).filter(
+      (row) => !row.kind.startsWith("brief") && (row.task_ids ?? []).length > 0 && !(row.delete_after && new Date(row.delete_after).getTime() <= now.getTime()),
+    );
+    if (rows.length === 0) return 0;
+    const ids = [...new Set(rows.flatMap((row) => (row.task_ids ?? []).map(Number)))];
+    const tasks = await db.from("tasks").select("id, status, due_at, updated_at").in("id", ids);
+    if (tasks.error) return 0;
+    const byId = new Map(((tasks.data ?? []) as { id: number; status: string; due_at: string | null; updated_at: string }[]).map((task) => [Number(task.id), task]));
+    const open = new Set(["inbox", "todo", "in_progress"]);
+    const settled = (id: number, sentAt: number) => {
+      const task = byId.get(id);
+      if (!task || !open.has(task.status)) return true;
+      return Boolean(task.due_at && new Date(task.due_at).getTime() > now.getTime() && new Date(task.updated_at).getTime() > sentAt + 1_000);
+    };
+    let marked = 0;
+    for (const row of rows) {
+      const sentAt = new Date(row.created_at).getTime();
+      if (!(row.task_ids ?? []).map(Number).every((id) => settled(id, sentAt))) continue;
+      await setFate(Number(row.message_id), { deleteAfter: now });
+      marked++;
+    }
+    return marked;
+  } catch (error) {
+    console.error("retireSettled:", error);
+    return 0;
+  }
 }
 
 /** Changes what will happen to one tracked message (for example, a tapped reminder becomes a confirmation). */

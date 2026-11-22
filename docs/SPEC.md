@@ -195,7 +195,9 @@ Tools the AI can call:
 | remember | Save a fact the user stated |
 | forget | Delete a saved fact |
 
-Button taps (Start, Done, Snooze, Skip, Move) bypass the AI and call the code directly, so they are instant and free.
+Button taps (Start, Done, Snooze, Skip, Move) bypass the AI and call the code directly, so they are instant and free. So does "✓ Done" at the end of a task line in a list reply.
+
+A repeating task with an end date (repeat_until) is a plan's session, not a habit: habits (streaks, misses, coach nudges) are open-ended repeating tasks only. Messages about tasks (follow-ups, time questions, receipts) record their tasks in chat_messages.task_ids and are removed once every one of them is settled; a tapped reminder goes a minute after a settling tap.
 
 ## Build phases (Claude Code)
 

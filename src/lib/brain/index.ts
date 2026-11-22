@@ -1,7 +1,7 @@
 import "server-only";
 import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
-import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction } from "./checks";
+import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction, type Touch } from "./checks";
 import { env } from "../env";
 import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
@@ -169,6 +169,10 @@ export async function think(
   showRules?: boolean;
   /** He asked for a file or link and nothing went out: the closest few, one button each ("lib:send:…"). */
   libraryChoices?: { text: string; data: string }[];
+  /** The tasks this turn changed. */
+  changed?: number[];
+  /** Every change was done, dropped or moved, and nothing else happened: its confirmation can go soon. */
+  settled?: boolean;
 }> {
   const { channel = "telegram", now = new Date(), context: note, part, rejected = [], held = [] } = options;
   const tools: string[] = [];
@@ -193,7 +197,7 @@ export async function think(
   const heard = [lastTony, context.shared?.text].filter(Boolean).join("\n");
   // What he himself said lately: the only source of facts to remember.
   const his = [part?.full ?? text, ...history.filter((m) => m.role === "user").slice(-2).map((m) => m.text)].join("\n");
-  // "This one" with nothing replied to: the reminder sent in the last 15 minutes.
+  // "This one" with nothing replied to: the task touched last in the last 15 minutes (a reminder, or a button he tapped).
   const recent = await recentReminders(now);
   // The request is named word for word, so a sentence inside it is never taken for one of the others
   // (21 Nov 22:09: "…for tomorrow? And I already shoot an app tutorial on Zoom." moved the reel and left the tutorial open).
@@ -208,7 +212,7 @@ export async function think(
   const rejectedNote = rejected.length
     ? `He says what you just sent (${rejected.map((ref, index) => `${ref}${rejectedItems[index] ? ` "${itemLabel(rejectedItems[index], now)}"` : ""}`).join(", ")}) is NOT the one. Never send it again: pick another from "Fits his words best" or the library list, or ask which with ask, naming them.`
     : undefined;
-  const notes = [partNote, note, rejectedNote, ruleNote, note?.includes("replying to your reminder") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
+  const notes = [partNote, note, rejectedNote, ruleNote, note?.includes("He is replying to") ? undefined : recentReminderNote(recent, now)].filter(Boolean).join(" ");
   // A forwarded post or a page he only sent: material, never instructions. Any change it seems to ask for waits for his tap.
   const materialOnly = isMaterialOnly(text) || Boolean(note?.startsWith("He sent a link:"));
   const messages: ChatMessage[] = [
@@ -607,10 +611,14 @@ export async function think(
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
       const task = stored.get(id);
       if (!task || decided.has(id)) return [];
+      // A new title: the receipt says what it was, so "change this title to …" reads back the change.
+      const before = context.tasks.find((known) => known.id === id)?.title;
+      const renamed = change.tool === "update_task" && before && before !== task.title && typeof change.wrote?.title === "string" ? before : undefined;
       return [
         {
           tool: change.tool,
           title: task.title,
+          ...(renamed ? { renamedFrom: renamed, dueChanged: "due_at" in (change.wrote ?? {}) } : {}),
           status: task.status,
           due_at: task.due_at,
           free_time: task.free_time,
@@ -689,7 +697,12 @@ export async function think(
   const listed = [...sources].filter(([url]) => !fetched.some((page) => page.url === url) && !reply!.includes(url)).slice(0, 4);
   if (listed.length > 0) reply = `${reply}\n\n**Sources**\n${listed.map(([url, title]) => `- [${title.replace(/[[\]]/g, "")}](${url})`).join("\n")}`;
   await logMessage("tony", reply, channel);
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices };
+  // Only done, dropped or moved: the confirmation goes from the chat soon after (22 Nov: "after i complete
+  // the task ... chat is getting worse"). Anything added, noted or asked keeps the usual hours.
+  const settling = (change: { tool: DoneAction["tool"]; wrote?: Record<string, unknown> }) =>
+    change.tool === "complete_task" || (change.tool === "update_task" && Boolean(change.wrote) && Object.keys(change.wrote!).every((key) => ["status", "due_at", "day"].includes(key)));
+  const settled = changes.size > 0 && [...changes.values()].every(settling) && saved.length + remembered.length + forgotten.length + routineSet.length + ruleLines.length === 0 && !clash && !slot && !proposal;
+  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices, changed: [...changes.keys()], settled };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */
@@ -784,13 +797,27 @@ async function findClash(changed: Task[], now: Date): Promise<Clash | undefined>
 }
 
 /** Reminders sent in the last 15 minutes, with their tasks' titles. */
-async function recentReminders(now: Date): Promise<{ task_id: number | null; title: string; sent_at: string }[]> {
+/** What happened to his tasks in the last 15 minutes: reminders sent, and buttons he tapped (Start, Done, a move). */
+async function recentReminders(now: Date): Promise<Touch[]> {
   const db = requireDb();
-  const { data } = await db.from("reminders").select("task_id, sent_at").in("state", ["sent", "acknowledged"]).gte("sent_at", new Date(now.getTime() - 15 * 60_000).toISOString());
-  const rows = ((data ?? []) as { task_id: number | null; sent_at: string }[]).filter((row) => row.task_id !== null);
+  const since = new Date(now.getTime() - 15 * 60_000).toISOString();
+  const [sent, taps] = await Promise.all([
+    db.from("reminders").select("task_id, sent_at").in("state", ["sent", "acknowledged"]).gte("sent_at", since),
+    db.from("events").select("kind, detail, created_at").in("kind", ["task_tap", "freetime_answer"]).gte("created_at", since),
+  ]);
+  const tapped = ((taps.data ?? []) as { kind: string; detail: { task_id?: number; action?: string; answer?: string } | null; created_at: string }[])
+    .filter((row) => Number.isFinite(Number(row.detail?.task_id)))
+    .map((row): Omit<Touch, "title"> => {
+      const action = row.kind === "freetime_answer" ? (row.detail?.answer === "now" ? "start" : "later") : String(row.detail?.action ?? "");
+      return { task_id: Number(row.detail!.task_id), sent_at: row.created_at, how: action === "start" ? "started" : action === "done" ? "done" : "moved" };
+    });
+  const rows = [...((sent.data ?? []) as { task_id: number | null; sent_at: string }[]).filter((row) => row.task_id !== null).map((row) => ({ ...row, how: "reminded" as const })), ...tapped];
   if (rows.length === 0) return [];
-  const tasks = await db.from("tasks").select("id, title, kind, status").in("id", rows.map((row) => row.task_id!));
-  // A task he already ticked off is not what "it" means any more.
-  const byId = new Map(((tasks.data ?? []) as { id: number; title: string; kind: string | null; status: string }[]).filter((task) => task.kind !== "prayer" && OPEN_STATUSES.includes(task.status as Task["status"])).map((task) => [task.id, task.title]));
-  return rows.filter((row) => byId.has(row.task_id!)).map((row) => ({ ...row, title: byId.get(row.task_id!)! }));
+  const tasks = await db.from("tasks").select("id, title, kind, status").in("id", [...new Set(rows.map((row) => row.task_id!))]);
+  // A task he already ticked off is not what "it" means any more (unless he just ticked it with a button).
+  const known = (tasks.data ?? []) as { id: number; title: string; kind: string | null; status: string }[];
+  const byId = new Map(known.filter((task) => task.kind !== "prayer").map((task) => [task.id, task]));
+  return rows
+    .filter((row) => byId.has(row.task_id!) && (row.how === "done" || OPEN_STATUSES.includes(byId.get(row.task_id!)!.status as Task["status"])))
+    .map((row) => ({ ...row, title: byId.get(row.task_id!)!.title }));
 }

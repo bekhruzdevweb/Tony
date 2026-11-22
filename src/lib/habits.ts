@@ -65,8 +65,16 @@ export async function logHabit(task: Pick<Task, "id" | "due_at" | "repeat_rule">
 }
 
 /**
- * The stats for every open repeating task, from real data only. Returns an
- * empty list if the habit tables are not there yet.
+ * Whether a repeating task is a habit: an open-ended routine. The sessions of
+ * a plan (a weekly IELTS session, a 12-week workout plan) end on a date
+ * (repeat_until): they are the plan's tasks, not habits, so they get no
+ * streaks, no "missed" counts and no habit nudges ("why ielts is habit???", 22 Nov).
+ */
+export const isHabit = (task: Pick<Task, "repeat_rule" | "repeat_until">) => Boolean(task.repeat_rule) && !task.repeat_until;
+
+/**
+ * The stats for every open habit (see isHabit), from real data only. Returns
+ * an empty list if the habit tables are not there yet.
  */
 export async function habitStats(now = new Date()): Promise<HabitStats[]> {
   const db = requireDb();
@@ -78,7 +86,7 @@ export async function habitStats(now = new Date()): Promise<HabitStats[]> {
     console.error(`habitStats: ${(tasks.error ?? settings.error)!.message}`);
     return [];
   }
-  const habits = (tasks.data ?? []) as Task[];
+  const habits = ((tasks.data ?? []) as Task[]).filter(isHabit);
   if (habits.length === 0) return [];
   const logs = await db
     .from("habit_log")
@@ -108,10 +116,17 @@ export async function habitStats(now = new Date()): Promise<HabitStats[]> {
     const created = localDate(new Date(task.created_at));
     // The day a habit is set up is never a miss: it may have been set up after its time.
     const firstDue = done.has(created) || skipped.has(created) ? created : addDays(created, 1);
-    const start = firstLogged && firstLogged < firstDue ? firstLogged : firstDue > trackingFrom ? firstDue : trackingFrom;
+    // A habit that has never been ticked starts on its first date: one set up today for next Sunday
+    // has missed nothing before then.
+    const nextDay = task.due_at ? localDate(new Date(task.due_at)) : undefined;
+    const counted = firstLogged && firstLogged < firstDue ? firstLogged : firstDue > trackingFrom ? firstDue : trackingFrom;
+    const start = !firstLogged && nextDay && nextDay > counted ? nextDay : counted;
 
-    const dueToday = due(today);
     const doneToday = done.has(today);
+    // Today is one of its days only if its next date has come: its weekday alone is not enough
+    // (22 Nov: a weekly session first due Sun 29 Nov was "due today" on Sun 22 Nov, and Tony said
+    // "Your IELTS is at 10:00, sir"). Once ticked today it has rolled on, so a day logged counts too.
+    const dueToday = due(today) && (doneToday || skipped.has(today) || !nextDay || nextDay <= today);
 
     // Current streak: back from today; today not yet done does not break it.
     let streak = 0;

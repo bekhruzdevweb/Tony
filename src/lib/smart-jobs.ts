@@ -44,10 +44,21 @@ const keyboardOf = (rows: Row[]) => {
   return keyboard;
 };
 
+/** The tasks a message's buttons are about ("fu:done:43", "ft:now:49", "fu:all:43,50"). */
+export function tasksOfRows(rows: Row[]): number[] {
+  const ids = rows.flat().flatMap((button) => {
+    const match = /^(?:fu|ft):[a-z]+:([\d,]+)$/.exec(button.data);
+    return match ? match[1].split(",").map(Number) : [];
+  });
+  return [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
+}
+
 /** Sends a message written in markdown as HTML (so its buttons can redraw it), tracked and logged. */
 async function send(bot: Bot, chatId: number, markdown: string, rows: Row[] = [], options: { silent?: boolean } = {}): Promise<number> {
   const id = await sendHtml(bot, chatId, markdownToHtml(markdown), { keyboard: rows.length ? keyboardOf(rows) : undefined, silent: options.silent });
-  await track(id, "prompt");
+  // With its tasks, so it goes once they are settled, by a button or in his words
+  // (22 Nov: "⏰ Still open from today: Message teacher…" stayed after that task was done).
+  await track(id, "prompt", { taskIds: tasksOfRows(rows) });
   await logMessage("tony", plain(markdownToHtml(markdown)));
   return id;
 }

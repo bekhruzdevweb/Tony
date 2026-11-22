@@ -6,7 +6,7 @@ import { answerFreeTime, freeTimeList } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
 import { libraryView, loadItem, saveToLibrary } from "./library";
-import { markSent, saveMistake } from "./mistakes";
+import { loggedText, markSent, saveMistake } from "./mistakes";
 import { deleteRule, rulesView } from "./rules";
 import { latestBackup } from "./safety";
 import { describeUrl } from "./library-rules";
@@ -15,14 +15,18 @@ import { runEvening } from "./briefs";
 import {
   CONFIRMATION_HOURS,
   deleteNow,
+  DONE_CONFIRMATION_MINUTES,
   editHtml,
   ERROR_MINUTES,
   hoursFromNow,
+  minutesFromNow,
   protect,
   retire,
   sendTracked,
   setFate,
+  SETTLED_MINUTES,
   track,
+  trackedKind,
   VOICE_REPLY_HOURS,
   type MessageKind,
 } from "./chat-log";
@@ -37,7 +41,7 @@ import { handlePollAnswer } from "./polls";
 import { finishTask } from "./recurrence";
 import { applyPlan, buildPlan, dismissPlan, loadPlan, notePlanMessage, planView, removePlanItem, shiftPlanItem } from "./planner";
 import { parseAction } from "./reminder-messages";
-import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage } from "./reminders";
+import { addScheduledTask, otherReminderMessages, scheduleReminder, taskForReminderMessage, taskForTrackedMessage } from "./reminders";
 import { createLoginCode } from "./session";
 import { getSettings, setPendingSlot, updateSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
@@ -58,6 +62,7 @@ import { dayFromText } from "./schedule";
 import { closestCommand, connectTelegram, HELP, knownCommand, TODAY_ALIASES } from "./telegram-setup";
 import { addMinutes, formatTime, hisTomorrow, localDate, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
 import { BoardNotReady, postBoard, shortLabel, toggleFromBoard } from "./today-board";
+import { flipTick, hasTaskList, LIST_TICK, withoutTicks, withTicks } from "./list-ticks";
 import { useOffer } from "./offers";
 import { allDone, progress, setSubtaskDone } from "./subtasks";
 import { fetchTitle, pageTitle } from "./links";
@@ -433,6 +438,21 @@ export function getBot(): Bot | undefined {
       return;
     }
 
+    // "✓ Done" / "↩ Undo" on a line of a list reply ("lt:<task>"): the same tick as on the board, in plain code,
+    // and that line is redrawn ticked or unticked.
+    if (payload.startsWith(LIST_TICK)) {
+      const taskId = Number(payload.slice(LIST_TICK.length));
+      let toast = "My apologies, sir. That did not go through.";
+      try {
+        toast = await toggleFromBoard(taskId);
+      } finally {
+        await ctx.answerCallbackQuery({ text: toast }).catch(() => undefined);
+      }
+      await logEvent("task_tap", { task_id: taskId, action: toast.startsWith("Back") ? "undo" : "done" });
+      if (chatId !== undefined && tapped) await redrawList(chatId, tapped.message_id, taskId, tapped.reply_markup ? InlineKeyboard.from(tapped.reply_markup.inline_keyboard) : undefined);
+      return;
+    }
+
     // A checklist box ("ck:<day>:<task>"): tick the task off, or untick it, and redraw the list.
     if (payload.startsWith("ck:")) {
       const [, key, id] = payload.split(":");
@@ -625,13 +645,14 @@ export function getBot(): Bot | undefined {
       // The question stays in the chat until he answers it (the day he named lives only in its buttons;
       // 21 Nov 20:25: "…23 November" was asked, never answered, and removed with the receipts at 23:26).
       // Answered, it becomes a receipt and is tidied away like one; a new question in its place stays.
+      // Answered, the outcome shows for a minute and then goes, so the chat stays clean (22 Nov).
       const showOutcome = async (text: string, keyboard?: InlineKeyboard, fate: "answered" | "waiting" = "answered") => {
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
         if (!edited && chatId !== undefined) {
           const sent = await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
-          await track(sent, "confirmation", { deleteAfter: fate === "waiting" ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
+          await track(sent, fate === "waiting" ? "prompt" : "confirmation", { taskId, deleteAfter: fate === "waiting" ? undefined : minutesFromNow(DONE_CONFIRMATION_MINUTES) });
         }
-        if (edited && tapped) await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: fate === "waiting" ? null : hoursFromNow(CONFIRMATION_HOURS) });
+        if (edited && tapped) await setFate(tapped.message_id, { kind: fate === "waiting" ? "prompt" : "confirmation", deleteAfter: fate === "waiting" ? null : minutesFromNow(SETTLED_MINUTES) });
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
@@ -751,6 +772,8 @@ export function getBot(): Bot | undefined {
       await ctx.answerCallbackQuery({ text: line }).catch(() => undefined);
       if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, `${base}\n${line}`, undefined, isCaption);
       else await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+      // Every task in it is handled: the follow-up goes in a minute (a brief keeps its place).
+      if (tapped && (await trackedKind(tapped.message_id)) === "prompt") await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: minutesFromNow(SETTLED_MINUTES) });
       await logMessage("tony", line);
       return;
     }
@@ -806,6 +829,12 @@ export function getBot(): Bot | undefined {
       const rows = (tapped?.reply_markup?.inline_keyboard ?? []).map((row) => row.filter((button) => !("callback_data" in button) || !String(button.callback_data).endsWith(`:${taskId}`))).filter((row) => row.length > 0);
       if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, line ? `${base}\n${line}` : base, rows.length ? InlineKeyboard.from(rows) : undefined, isCaption);
       else await ctx.editMessageReplyMarkup({ reply_markup: rows.length ? InlineKeyboard.from(rows) : undefined }).catch(() => undefined);
+      // No task left to answer in it ("📅 All to tomorrow" alone is not one): the follow-up goes in a minute,
+      // unless it is waiting for steps or a time he will type. A brief keeps its place.
+      const left = rows.flat().some((button) => "callback_data" in button && /^fu:(?!all:)/.test(String(button.callback_data)));
+      if (tapped && !left && action !== "steps" && action !== "slot" && action !== "sched" && (await trackedKind(tapped.message_id)) === "prompt") {
+        await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: minutesFromNow(SETTLED_MINUTES) });
+      }
       if (line) await logMessage("tony", plain(line));
       return;
     }
@@ -899,12 +928,14 @@ export function getBot(): Bot | undefined {
         return;
       }
     }
-    let outcome;
+    let outcome: Awaited<ReturnType<typeof runAction>> | undefined;
     try {
       outcome = await runAction(parsed.action, parsed.taskId, parsed.arg);
     } finally {
-      // Always stop the button's spinner, even when the action failed.
-      await ctx.answerCallbackQuery().catch(() => undefined);
+      // Always stop the button's spinner, even when the action failed. A settled task (done, skipped,
+      // moved) gets its outcome as a small note on the screen too: the message itself goes in a minute.
+      const settledNow = outcome?.text && !outcome.waiting && !outcome.keyboard && parsed.action !== "start";
+      await ctx.answerCallbackQuery(settledNow ? { text: plain(outcome!.text!).slice(0, 190) } : undefined).catch(() => undefined);
     }
     // He answered about this task: his main priority's chase counts from here (main-priority.ts).
     await logEvent("task_tap", { task_id: parsed.taskId, action: parsed.action });
@@ -915,20 +946,27 @@ export function getBot(): Bot | undefined {
       await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch((error) => console.error("Could not update the buttons:", error));
       return;
     }
+    // Done, skipped, dropped or moved: nothing more to ask about this task (22 Nov: "after i reschedule the
+    // task it should be deleted from chat or after i complete the task cuz otherwise chat is getting worse").
+    const settled = !outcome.waiting && !keyboard && parsed.action !== "start";
 
     const edited = base !== undefined && chatId !== undefined && tapped ? await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${outcome.text}`, keyboard, isCaption) : false;
-    // A message too old to edit still gets its answer, as a new message (with its buttons, if it asks something).
-    if (!edited) await say(ctx, outcome.text, { keyboard, kind: "confirmation", taskId: parsed.taskId, deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
+    // A message too old to edit still gets its answer: a question as a new message; a settled outcome was the note on the screen.
+    if (!edited && !settled) await say(ctx, outcome.text, { keyboard, kind: outcome.waiting ? "prompt" : "confirmation", taskId: parsed.taskId, deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
     await logMessage("tony", plain(outcome.text));
 
     if (tapped) {
       // Settling the task marked all its messages for removal. The one just
       // tapped now carries the answer: after Start it waits for Done and
       // stays; a question about the time still waits for his answer and stays;
-      // otherwise it is a confirmation and goes in a few hours.
+      // a settled task's message shows the outcome for a minute and goes.
       await setFate(
         tapped.message_id,
-        parsed.action === "start" ? { kind: "reminder", deleteAfter: null } : { kind: "confirmation", deleteAfter: outcome.waiting && edited ? null : hoursFromNow(CONFIRMATION_HOURS) },
+        parsed.action === "start"
+          ? { kind: "reminder", deleteAfter: null }
+          : outcome.waiting && edited
+            ? { kind: "prompt", deleteAfter: null }
+            : { kind: "confirmation", deleteAfter: settled ? minutesFromNow(SETTLED_MINUTES) : hoursFromNow(CONFIRMATION_HOURS) },
       );
     }
     // Until the tick removes them, this task's other reminders at least lose their buttons.
@@ -992,14 +1030,24 @@ export function getBot(): Bot | undefined {
   // Returns what Tony said and whether something was confirmed done.
   const answer = async (ctx: Context, text: string, options: { note?: string; keepHours?: number; link?: string } = {}): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
     let context = options.note;
-    const repliedTo = ctx.message?.reply_to_message?.message_id;
+    const replied = ctx.message?.reply_to_message;
+    const repliedTo = replied?.message_id;
     if (repliedTo !== undefined) {
       await protect(repliedTo);
-      const task = await taskForReminderMessage(repliedTo).catch(() => undefined);
-      if (task) {
-        const about = `He is replying to your reminder about task #${task.id} "${task.title}". His message is about that task.`;
-        context = context ? `${context} ${about}` : about;
+      // A reminder, a coach nudge or a follow-up about one task: his message is about that task.
+      const task = (await taskForReminderMessage(repliedTo).catch(() => undefined)) ?? (await taskForTrackedMessage(repliedTo).catch(() => undefined));
+      let about: string | undefined;
+      if (task) about = `He is replying to your reminder about task #${task.id} "${task.title}". His message is about that task.`;
+      else if (replied?.from?.is_bot) {
+        // Any other message of Tony's: what it said, so the answer is about that and nothing else
+        // (22 Nov 12:28: "okay what things i have to do can u show me?" under the IELTS message got every task).
+        const words = ("text" in replied && replied.text) || ("caption" in replied && replied.caption) || (await loggedText(repliedTo));
+        if (words) about = `He is replying to your message: "${String(words).replace(/\s+/g, " ").slice(0, 600)}". His message is about that: answer about that only, not his whole list.`;
+      } else if (replied) {
+        const words = ("text" in replied && replied.text) || ("caption" in replied && replied.caption);
+        if (words) about = `He is replying to his own earlier message: "${String(words).replace(/\s+/g, " ").slice(0, 400)}".`;
       }
+      if (about) context = context ? `${context} ${about}` : about;
     }
 
     // "typing…" lasts about five seconds in Telegram; renew it for as long
@@ -1208,6 +1256,27 @@ export function getBot(): Bot | undefined {
     };
   };
 
+  /** His open tasks' ids and titles (not prayers), to find which one a list line names. */
+  const openTaskTitles = async (): Promise<Pick<Task, "id" | "title">[]> => {
+    const { data } = await requireDb().from("tasks").select("id, title, kind").in("status", OPEN_STATUSES).limit(200);
+    return ((data ?? []) as { id: number; title: string; kind: string | null }[]).filter((task) => task.kind !== "prayer");
+  };
+
+  /** A list reply's line ticked or unticked after "✓ Done" / "↩ Undo" on it, in place. */
+  const redrawList = async (chatId: number, messageId: number, taskId: number, markup: InlineKeyboard | undefined) => {
+    const { data } = await requireDb().from("events").select("id, detail").eq("kind", "list_reply").order("id", { ascending: false }).limit(40);
+    const row = ((data ?? []) as { id: number; detail: { message_id?: number; markdown?: string } | null }[]).find((event) => Number(event.detail?.message_id) === messageId);
+    if (!row?.detail?.markdown) return;
+    const found = await requireDb().from("tasks").select("status, completed_at").eq("id", taskId).maybeSingle();
+    const task = found.data as Pick<Task, "status" | "completed_at"> | null;
+    // Done, or a repeating one ticked today (it has rolled on to its next date).
+    const done = task ? task.status === "done" || Boolean(task.completed_at && localDate(new Date(task.completed_at)) === localDate(new Date())) : true;
+    const markdown = flipTick(row.detail.markdown, taskId, done);
+    if (markdown === row.detail.markdown) return;
+    await bot.api.editMessageText(chatId, messageId, { markdown }, { reply_markup: markup }).catch((error) => console.error("Could not redraw the list:", error));
+    await requireDb().from("events").update({ detail: { ...row.detail, markdown } }).eq("id", row.id);
+  };
+
   /** Shows what the brain did for one request: the reply, its buttons, a plan or a question. */
   const present = async (ctx: Context, text: string, thought: Thought, options: { keepHours?: number; link?: string }): Promise<{ reply: string; confirmed: boolean; completed: boolean }> => {
     {
@@ -1285,11 +1354,24 @@ export function getBot(): Bot | undefined {
       }
       // He asked for a file or link and nothing went out: the closest few, one tap each (never a second guess, 21 Nov 20:21).
       if (thought.libraryChoices?.length) keyboard = keyboardOf(thought.libraryChoices.map((option) => [option]));
-      const sent = await sendMarkdown(bot, ctx.chat!.id, boldTimes(named), { keyboard });
+      // A task list: each of his open tasks gets "✓ Done" at the end of its line (a tap on the
+      // native box is never reported to Tony, 22 Nov: "why i can't tick the tasks to complete??").
+      const shown = boldTimes(named);
+      const ticks = hasTaskList(shown) ? withTicks(shown, await openTaskTitles()) : undefined;
+      const sent = await sendMarkdown(bot, ctx.chat!.id, ticks?.markdown ?? shown, { keyboard, ...(ticks?.ticked.length ? { fallback: withoutTicks(ticks.markdown) } : {}) });
+      if (ticks?.ticked.length) await logEvent("list_reply", { message_id: sent, markdown: ticks.markdown });
       // Which message this reply became, so a 👎 on it finds its words (phase e).
       await markSent(reply, sent);
-      // A question about the time for a day he named stays until he answers it (see awaitsAnswer).
-      if (confirmed) await track(sent, "confirmation", { deleteAfter: awaitsAnswer(slot) ? undefined : hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS) });
+      // A question about the time for a day he named stays until he answers it (see awaitsAnswer), in his
+      // words or with a button; then it goes with the task's other messages. Only done or moved: the receipt
+      // goes after ten minutes (22 Nov: "after i complete the task … chat is getting worse").
+      if (confirmed) {
+        const waits = awaitsAnswer(slot);
+        await track(sent, waits ? "prompt" : "confirmation", {
+          taskIds: thought.changed,
+          deleteAfter: waits ? undefined : thought.settled ? minutesFromNow(DONE_CONFIRMATION_MINUTES) : hoursFromNow(options.keepHours ?? CONFIRMATION_HOURS),
+        });
+      }
       // What he asked for (or one of his rules sends), after the words: files together, links one by one.
       if (thought.sendItems?.length) await sendLibraryItems(ctx.chat!.id, thought.sendItems);
       // A small acknowledgement on his own message when something was written down or ticked off.
@@ -1493,8 +1575,9 @@ export function getBot(): Bot | undefined {
         continue;
       }
       if (message.photo || message.video || message.video_note || message.document || message.animation || message.forward_origin || (!message.text && message.caption)) {
-        // An album's photos and videos are all kept (a post he forwards is all of them); its extra files without words are not.
-        if (message.media_group_id && !(message.text ?? message.caption ?? "").trim() && !message.photo && !message.video) continue;
+        // An album's photos, videos and documents are all read (a post he forwards is all of them; two PDFs he
+        // sends together are both his plan: 22 Nov 12:36, the stretching plan sent with the workout plan was dropped).
+        if (message.media_group_id && !(message.text ?? message.caption ?? "").trim() && !message.photo && !message.video && !message.document) continue;
         const read = await readShare(message);
         if (read) {
           parts.push(read.asked);

@@ -2,6 +2,7 @@ import "server-only";
 import { InputFile, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { env } from "./env";
+import { logEvent } from "./events";
 import { joinPcm, pcmToOggOpus, readWav } from "./ogg-opus";
 import { localDate, minuteOfDay, TIMEZONE } from "./time";
 
@@ -326,6 +327,9 @@ export async function sayAloud(
     });
     // Counted towards the day's three, unless he asked for it.
     if (!asked) await countVoice(allowed.state, now);
+    // What it said, so a reply to this voice note is understood (22 Nov: "okay what things i have to do"
+    // in reply to the IELTS nudge got the whole list).
+    await logEvent("voice_note", { message_id: sent.message_id, text: words.slice(0, 600), occasion });
     return sent.message_id;
   } catch (error) {
     console.error("Spoken message failed:", error);

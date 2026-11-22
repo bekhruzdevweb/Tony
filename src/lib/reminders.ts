@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
 import { retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
-import { mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
+import { mediaCaption, mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
 import { logMessage } from "./messages";
 import { sayAloud } from "./speech";
 import { busyAround, getRoutine } from "./routine";
@@ -394,7 +394,9 @@ export async function runTick(
         };
         // If he attached a photo or file to this task, the reminder is the original itself, with his note;
         // the task's notes go with it when they fit a caption, and after it when they do not.
-        const caption = attached ? (attached.note || attached.caption ? `${message.text}\n${i(attached.note ?? attached.caption ?? "")}` : message.text) : "";
+        // His note or his own caption, never a downloader's "Спасибо, что пользуетесь - @SaveAsBot'ом" (22 Nov 12:00).
+        const own = attached ? mediaCaption(attached) : "";
+        const caption = attached ? (own ? `${message.text}\n${i(own)}` : message.text) : "";
         const withNotes = held && caption.length + held.length + 1 <= 1000 ? `${caption}\n${held}` : caption;
         messageId = attached
           ? await sendMedia(bot, chatId, attached, withNotes, options)
@@ -484,6 +486,20 @@ export async function taskForReminderMessage(messageId: number): Promise<Task | 
   const row = (data ?? [])[0] as { task: Task | Task[] | null } | undefined;
   const task = Array.isArray(row?.task) ? row.task[0] : row?.task;
   return task ?? undefined;
+}
+
+/**
+ * The task a message of Tony's was about, when it was not a reminder from the
+ * reminders table: a coach nudge, a follow-up or a question about one task
+ * (recorded in chat_messages with its task).
+ */
+export async function taskForTrackedMessage(messageId: number): Promise<Task | undefined> {
+  const db = requireDb();
+  const tracked = await db.from("chat_messages").select("task_id").eq("message_id", messageId).limit(1);
+  const taskId = ((tracked.data ?? []) as { task_id: number | null }[])[0]?.task_id;
+  if (taskId === null || taskId === undefined) return undefined;
+  const found = await db.from("tasks").select().eq("id", Number(taskId)).maybeSingle();
+  return (found.data as Task | null) ?? undefined;
 }
 
 /** Recent reminder messages for a task, other than the one just tapped. */

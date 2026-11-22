@@ -377,14 +377,20 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
     // All of them at once, as a table; nothing is kept until "Looks good".
     const lengths = await requireDb().from("tasks").select("id, duration_minutes").in("id", plan.items.map((item) => item.task_id));
     const minutes = new Map(((lengths.data ?? []) as { id: number; duration_minutes: number | null }[]).map((row) => [row.id, row.duration_minutes]));
+    // Over several days, each row says its day: five workouts, Monday to Friday, read as one day
+    // without it (22 Nov: "He add them to the one single day?").
+    const itemDays = [...new Set(plan.items.map((item) => localDate(new Date(item.at))))].sort();
+    const spread = itemDays.length > 1;
     const rows = plan.items
       .map((item) => {
         const length = minutes.get(item.task_id);
-        return `<tr><td>${formatTime(new Date(item.at))}</td><td>${esc(item.title)}</td><td>${length ? `${length} min` : ""}</td></tr>`;
+        const at = new Date(item.at);
+        return `<tr>${spread ? `<td>${esc(shortDay(at))}</td>` : ""}<td>${formatTime(at)}</td><td>${esc(item.title)}</td><td>${length ? `${length} min` : ""}</td></tr>`;
       })
       .join("");
-    const left = plan.left_out.length ? `\n\nNo room for ${plan.left_out.map((item) => esc(item.title)).join(", ")} that day.` : "";
-    const html = `${plan.lead ? `${esc(plan.lead)}\n\n` : ""}<b>🧭 ${esc(name)} · ${esc(shortDay(first))}</b>\n<table><tr><th>Time</th><th>Task</th><th>Length</th></tr>${rows}</table>${left}`;
+    const left = plan.left_out.length ? `\n\nNo room for ${plan.left_out.map((item) => esc(item.title)).join(", ")} ${spread ? "this week" : "that day"}.` : "";
+    const span = spread ? `${shortDay(parseLocalDateTime(`${itemDays[0]}T12:00`)!)} – ${shortDay(parseLocalDateTime(`${itemDays[itemDays.length - 1]}T12:00`)!)}` : shortDay(itemDays.length ? parseLocalDateTime(`${itemDays[0]}T12:00`)! : first);
+    const html = `${plan.lead ? `${esc(plan.lead)}\n\n` : ""}<b>🧭 ${esc(spread ? "The week" : name)} · ${esc(span)}</b>\n<table><tr>${spread ? "<th>Day</th>" : ""}<th>Time</th><th>Task</th><th>Length</th></tr>${rows}</table>${left}`;
     const keyboard = new InlineKeyboard().text("✓ Looks good", `pl:ap:${plan.id}`).text("✏️ Change", `pl:adj:${plan.id}`);
     return { html, keyboard };
   }

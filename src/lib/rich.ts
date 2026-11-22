@@ -191,6 +191,8 @@ function inlineHtml(text: string): string {
 
 /** A rich-markdown reply as plain Telegram HTML: lists become lines, tables become rows. */
 export function markdownToHtml(markdown: string): string {
+  // Buttons inside the text ("✓ Done" on a task line) exist only in the rich form.
+  markdown = markdown.replace(/\s*<tg-button\b[^>]*>[^<]*<\/tg-button>/g, "");
   const out: string[] = [];
   let quote: string[] = [];
   let headerRow = true;
@@ -284,11 +286,16 @@ export function markdownToPlain(markdown: string): string {
  * Sends one of the brain's replies: rich markdown as a rich message, or, if
  * Telegram refuses it, the same reply converted to HTML.
  */
-export async function sendMarkdown(bot: Bot, chatId: number, markdown: string, options: { keyboard?: InlineKeyboard; silent?: boolean } = {}): Promise<number> {
+export async function sendMarkdown(bot: Bot, chatId: number, markdown: string, options: { keyboard?: InlineKeyboard; silent?: boolean; fallback?: string } = {}): Promise<number> {
   try {
     const sent = await bot.api.sendRichMessage(chatId, { markdown }, { reply_markup: options.keyboard, disable_notification: options.silent });
     return sent.message_id;
   } catch (error) {
+    // A reply with buttons in its text that Telegram would not take: the same reply without them.
+    if (options.fallback !== undefined && options.fallback !== markdown) {
+      console.error("A rich reply with buttons was refused; sending it without them:", error);
+      return sendMarkdown(bot, chatId, options.fallback, { keyboard: options.keyboard, silent: options.silent });
+    }
     console.error("A rich reply was refused; sending it as HTML:", error);
     return sendHtml(bot, chatId, markdownToHtml(markdown), options);
   }

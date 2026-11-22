@@ -25,6 +25,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Live, awaiting your check |
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
+| F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
@@ -413,7 +414,10 @@ checklist.
 | `/help`, `/inbox`, `/app` replies | when you send the same command again |
 | The previous Today board | when a new one is sent |
 | A reminder's earlier nudges | when the task is done, skipped, snoozed or moved |
-| A confirmation ("Noted, sir…"), including a tapped reminder | after 3 hours (24 hours if it answered a voice note) |
+| A reminder you tapped Done, Skip, Snooze or a new time on | a minute after the tap (the outcome also shows as a note on the screen) |
+| A follow-up ("⏰ Still open…"), a question about a time, or a receipt | once every task in it is done, dropped or moved on, however you did it |
+| A receipt for something done or moved in your own words | after 10 minutes |
+| Any other confirmation ("Noted, sir…") | after 3 hours (24 hours if it answered a voice note) |
 | The morning brief | at the evening review |
 | Yesterday's plan, review and polls | when the new one arrives |
 
@@ -653,6 +657,38 @@ Your idea: the one thing Tony does not let you leave unfinished.
   on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
   next week; anything else moves to tomorrow). Every tap counts as an answer.
 - **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
+
+## Fixes from 22 Nov 12:37 (F)
+
+- **Plans are not habits.** A repeating task with an end date (`repeat_until`:
+  the IELTS sessions, the 12-week workout plan) is one of a plan's sessions,
+  not a habit: no streaks, no "missed" counts, no 🔥 lines in the brief. A
+  habit's day counts only from its first date (the Sunday review first due
+  29 Nov was "at 10:00" on 22 Nov). A session due within 30 minutes still gets
+  its one spoken heads-up as a key task. Habit lines with nothing to report are
+  left out of the brief.
+- **"This task"** means the one touched last in the last 15 minutes: a
+  reminder, or a button he tapped (▶️ from the free-time question, Done, a
+  move). An older reminder is named as not the one.
+- **Replies.** A reply to any of Tony's messages (a coach nudge, a voice note,
+  a list) is read as about that message; Tony answers about that only.
+- **A clean chat.** See the tidying table: tapped reminders go a minute after
+  the tap; follow-ups, time questions and receipts go once their tasks are
+  settled (`chat_messages.task_ids`, migration `0030_chat_message_tasks.sql`).
+- **Lists you can tick.** A task list in a reply gets "✓ Done" at the end of
+  each line that names one of your open tasks (a tap on Telegram's own box is
+  never reported to the bot); "↩ Undo" puts it back. Lines that are not tasks
+  are plain bullets. "What do I have to do?" shows today; a subject or a day you
+  name is all that is shown.
+- **Week plans** show each row's day ("Mon 23 Nov · 18:00 · Upper A").
+- **Albums of files**: every document in an album is read, not only the one
+  with the caption.
+- **Renaming**: "change the title of Call barber to Call Akmal the barber" (or
+  "rename it to …" right after a reminder) reads back `✏️ ~~old~~ → new`.
+- **Downloader captions** ("Спасибо, что пользуетесь - @SaveAsBot'ом") never
+  appear under a reminder.
+- **The morning brief's clashes**: one line per group of clashing tasks, three
+  at most.
 
 ## Smart context (Phase 3)
 
