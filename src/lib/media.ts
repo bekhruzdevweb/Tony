@@ -135,7 +135,7 @@ export async function mediaListForTask(taskId: number): Promise<Media[]> {
  * example of two files or more, or a post's text kept with the task; a single
  * file stays the reminder itself. Returns whether anything was sent.
  */
-export async function sendTaskExample(bot: Bot, chatId: number, taskId: number): Promise<boolean> {
+export async function sendTaskExample(bot: Bot, chatId: number, taskId: number): Promise<number[] | false> {
   const files = await mediaListForTask(taskId);
   const posts = await requireDb().from("library").select("description").eq("task_id", taskId).eq("kind", "post").order("id").limit(3);
   const postText = ((posts.data ?? []) as { description: string | null }[]).map((row) => row.description?.trim()).filter(Boolean)[0];
@@ -143,18 +143,24 @@ export async function sendTaskExample(bot: Bot, chatId: number, taskId: number):
   if (files.length < 2 && !(files.length === 0 && text)) return false;
   const album = files.filter((item) => item.kind === "photo" || item.kind === "video").slice(0, 10);
   const captioned = album.length >= 2 && text !== undefined && text.length <= CAPTION_LIMIT;
+  // Every message sent, so they go from the chat with the task's reminder (22 Nov 16:01: the example
+  // album stayed after "Post stories in this format" was moved).
+  const sent: number[] = [];
   if (album.length >= 2) {
-    await bot.api.sendMediaGroup(
+    const group = await bot.api.sendMediaGroup(
       chatId,
       album.map((item, index) => ({ type: item.kind as "photo" | "video", media: item.file_id, ...(index === 0 && captioned ? { caption: text } : {}) })),
       { disable_notification: true },
     );
+    sent.push(...(group ?? []).map((message) => message.message_id));
   } else {
-    for (const item of files.slice(0, 3)) await sendMedia(bot, chatId, item, "", { silent: true });
+    for (const item of files.slice(0, 3)) sent.push(await sendMedia(bot, chatId, item, "", { silent: true }));
   }
   // The post's text: the album's caption when it fits, otherwise whole after it, in Telegram-sized pieces.
-  if (text && !captioned) for (let at = 0; at < text.length; at += 4000) await bot.api.sendMessage(chatId, text.slice(at, at + 4000), { disable_notification: true });
-  return true;
+  if (text && !captioned) {
+    for (let at = 0; at < text.length; at += 4000) sent.push((await bot.api.sendMessage(chatId, text.slice(at, at + 4000), { disable_notification: true })).message_id);
+  }
+  return sent;
 }
 
 export async function mediaForTask(taskId: number): Promise<Media | undefined> {

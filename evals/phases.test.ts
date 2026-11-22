@@ -762,13 +762,14 @@ describe("22 Nov 12:37: plans are not habits, the task in focus, a clean chat", 
     const fate = (id: number) => state.db.rows("chat_messages").find((row) => Number(row.message_id) === id)!.delete_after;
     vi.setSystemTime(at("2026-11-22T12:22"));
     await runAction("done", Number(teacher.id), undefined, new Date());
-    // "✓ Done" in his words: its own ten minutes.
-    await track(599, "confirmation", { taskIds: [Number(teacher.id)], deleteAfter: at("2026-11-22T12:32") });
+    // "✓ Done" in his words: its own two minutes.
+    await track(599, "confirmation", { taskIds: [Number(teacher.id)], deleteAfter: at("2026-11-22T12:24") });
     await retireSettled(new Date());
     expect(fate(596)).not.toBeNull();
     expect(fate(598)).toBeNull();
-    expect(local(fate(590))).toBe("2026-11-22T12:32");
-    expect(local(fate(599))).toBe("2026-11-22T12:32");
+    // The old receipt goes two minutes from now; the new one keeps its own two minutes.
+    expect(local(fate(590))).toBe("2026-11-22T12:24");
+    expect(local(fate(599))).toBe("2026-11-22T12:24");
     // He moves the podcast to tomorrow (its time is ahead now, changed after the follow-up went out).
     const row = state.db.rows("tasks").find((task) => task.id === podcast.id)!;
     row.due_at = at("2026-11-23T07:15").toISOString();
@@ -947,5 +948,78 @@ describe("Phase H: habits, tags and the Plan board", () => {
     expect(local(byTitle("Buy a zippered shirt").due_at)!.slice(0, 10)).toBe("2026-11-22");
     const week = await moveToLane(Number(shirt.id), "week", new Date());
     expect(week).toMatch(/^✓ Buy a zippered shirt → tomorrow, Mon 23 Nov, \d{2}:\d{2}$/);
+  });
+});
+
+// ── 22 Nov 16:05, "why still on chat" ──────────────────────────────────
+describe("16:05 'why still on chat': what has had its time leaves the chat", () => {
+  const recorder = () => {
+    const sent: { name: string; text: string; id: number; extra?: Record<string, unknown> }[] = [];
+    let next = 900;
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown, extra?: Record<string, unknown>) => {
+          if (String(name) === "sendMediaGroup") {
+            const items = (text as unknown[]).map(() => ({ message_id: ++next }));
+            sent.push({ name: "sendMediaGroup", text: "album", id: items[0].message_id });
+            return items;
+          }
+          if (String(name).startsWith("send")) sent.push({ name: String(name), text: typeof text === "string" ? text : JSON.stringify(text), id: next + 1, extra });
+          return { message_id: ++next };
+        },
+      },
+    );
+    return { bot: { api } as never, sent };
+  };
+  const row = (messageId: number) => state.db.rows("chat_messages").find((entry) => Number(entry.message_id) === messageId);
+
+  it("14:15 'Update fitness app is at 14:45, sir: thirty minutes' goes at 14:45, when its reminder takes over", async () => {
+    const { runCoach } = await import("../src/lib/coach");
+    task({ title: "Update fitness app", due_at: "2026-11-22T14:45", priority: 1, duration_minutes: 90 });
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T14:15"));
+    expect(await runCoach(bot, 42, await getSettings(), new Date())).toBe(1);
+    expect(local(row(sent[0].id)!.delete_after)).toBe("2026-11-22T14:45");
+  });
+
+  it("14:45 every part already ticked: the reminder asks to tick the task itself off", async () => {
+    const app = task({ title: "Update fitness app", due_at: "2026-11-22T14:45", priority: 1 });
+    for (const [position, title] of ["bodyweight exercise", "pull-up challenge", "more bodyweight exercises in phase 1"].entries()) state.db.insert("subtasks", { task_id: app.id, title, done: true, position });
+    state.db.insert("reminders", { task_id: app.id, fire_at: at("2026-11-22T14:45").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T14:44").toISOString();
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T14:45"));
+    await runTick(bot, 42, new Date());
+    expect(sent[0].text).toBe("Sir, a reminder: <b>Update fitness app</b>.\n<i>All 3 parts are done, sir: tap Done to tick it off.</i>");
+  });
+
+  it("13:00 the example album sent with 'Post stories in this format' goes with the task when it is moved", async () => {
+    const stories = task({ title: "Post stories in this format", due_at: "2026-11-22T13:00" });
+    state.db.insert("media", { kind: "photo", file_id: "P1", caption: "this is how i should be uploading stories daily", task_id: stories.id });
+    state.db.insert("media", { kind: "photo", file_id: "P2", task_id: stories.id });
+    state.db.insert("reminders", { task_id: stories.id, fire_at: at("2026-11-22T13:00").toISOString(), kind: "due", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T12:59").toISOString();
+    const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-22T13:00"));
+    await runTick(bot, 42, new Date());
+    const album = sent.find((message) => message.name === "sendMediaGroup")!;
+    expect(row(album.id)?.task_id).toBe(stories.id);
+    // He moves it to 18:00: the album is retired with the reminder.
+    const { scheduleReminder } = await import("../src/lib/reminders");
+    await scheduleReminder(Number(stories.id), at("2026-11-22T18:00"));
+    expect(row(album.id)!.delete_after).not.toBeNull();
+  });
+
+  it("Maghrib's heads-up: the Asr message, answered or not, goes (one prayer message at a time)", async () => {
+    const asr = task({ title: "Asr", kind: "prayer", due_at: "2026-11-22T15:51" });
+    const maghrib = task({ title: "Maghrib", kind: "prayer", due_at: "2026-11-22T17:37" });
+    state.db.insert("chat_messages", { message_id: 631, kind: "reminder", task_id: asr.id });
+    state.db.insert("reminders", { task_id: maghrib.id, fire_at: at("2026-11-22T17:27").toISOString(), kind: "extra", attempt: 0 });
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T17:26").toISOString();
+    const { bot } = recorder();
+    vi.setSystemTime(at("2026-11-22T17:27"));
+    await runTick(bot, 42, new Date());
+    expect(row(631)!.delete_after).not.toBeNull();
   });
 });

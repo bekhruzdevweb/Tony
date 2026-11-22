@@ -22,6 +22,7 @@ import {
   minutesFromNow,
   protect,
   retire,
+  runCleanup,
   sendTracked,
   setFate,
   SETTLED_MINUTES,
@@ -677,13 +678,28 @@ export function getBot(): Bot | undefined {
     if (payload.startsWith("sl:")) {
       const [, action, id, value] = payload.split(":");
       const taskId = Number(id);
+      // The button's spinner always stops: with the outcome as a note on the screen when there is one.
+      let answered = false;
+      const answer = async (note?: string) => {
+        if (answered) return;
+        answered = true;
+        await ctx.answerCallbackQuery(note ? { text: note.slice(0, 190) } : undefined).catch(() => undefined);
+      };
       // [✏️ Other time] answers with a small note on the screen, not a message.
-      await ctx.answerCallbackQuery(action === "other" ? { text: "Type the time" } : undefined).catch(() => undefined);
+      if (action === "other") await answer("Type the time");
+      else if (action !== "ok" && action !== "at" && action !== "split") await answer();
       // The question stays in the chat until he answers it (the day he named lives only in its buttons;
       // 21 Nov 20:25: "…23 November" was asked, never answered, and removed with the receipts at 23:26).
-      // Answered, it becomes a receipt and is tidied away like one; a new question in its place stays.
-      // Answered, the outcome shows for a minute and then goes, so the chat stays clean (22 Nov).
+      // Answered, the outcome is a note on the screen and the question goes at once (22 Nov 16:05: "why
+      // still on chat"); a new question in its place stays.
       const showOutcome = async (text: string, keyboard?: InlineKeyboard, fate: "answered" | "waiting" = "answered") => {
+        if (fate === "answered" && !keyboard && chatId !== undefined && tapped) {
+          await answer(plain(markdownToHtml(text)));
+          await deleteNow(bot, chatId, tapped.message_id);
+          await logMessage("tony", text);
+          return;
+        }
+        await answer();
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
         if (!edited && chatId !== undefined) {
           const sent = await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
@@ -693,24 +709,32 @@ export function getBot(): Bot | undefined {
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
-        // An old question's slot never undoes a time he set since (he typed one, or tapped another question).
-        const current = (await requireDb().from("tasks").select("title, due_at, updated_at, status").eq("id", taskId).maybeSingle()).data as Pick<Task, "title" | "due_at" | "updated_at" | "status"> | null;
-        const chosen = new Date(Number(value) * 60_000);
-        if (current?.due_at && tapped && current.status !== "draft" && new Date(current.due_at).getTime() !== chosen.getTime() && new Date(current.updated_at).getTime() > tapped.date * 1000 + 60_000) {
-          const when = new Date(current.due_at);
-          await showOutcome(`**${current.title}** is already set for ${when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: TIMEZONE })}, **${formatTime(when)}**. Tell me if you want it changed.`);
-          return;
+        try {
+          // An old question's slot never undoes a time he set since (he typed one, or tapped another question).
+          const current = (await requireDb().from("tasks").select("title, due_at, updated_at, status").eq("id", taskId).maybeSingle()).data as Pick<Task, "title" | "due_at" | "updated_at" | "status"> | null;
+          const chosen = new Date(Number(value) * 60_000);
+          if (current?.due_at && tapped && current.status !== "draft" && new Date(current.due_at).getTime() !== chosen.getTime() && new Date(current.updated_at).getTime() > tapped.date * 1000 + 60_000) {
+            const when = new Date(current.due_at);
+            await showOutcome(`**${current.title}** is already set for ${when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: TIMEZONE })}, **${formatTime(when)}**. Tell me if you want it changed.`);
+            return;
+          }
+          // A slot he tapped is his choice: placed, and it teaches Tony when he likes this kind of task.
+          const result = await placeTask(taskId, chosen, { learn: true });
+          await showOutcome(result.text);
+        } finally {
+          await answer();
         }
-        // A slot he tapped is his choice: placed, and it teaches Tony when he likes this kind of task.
-        const result = await placeTask(taskId, chosen, { learn: true });
-        await showOutcome(result.text);
         return;
       }
       if (action === "split") {
-        // [✂️ Split …]: the two halves, only on his tap.
-        const [, , , first, second] = payload.split(":");
-        const result = await splitTask(taskId, [new Date(Number(first) * 60_000), new Date(Number(second) * 60_000)]);
-        await showOutcome(result.text);
+        try {
+          // [✂️ Split …]: the two halves, only on his tap.
+          const [, , , first, second] = payload.split(":");
+          const result = await splitTask(taskId, [new Date(Number(first) * 60_000), new Date(Number(second) * 60_000)]);
+          await showOutcome(result.text);
+        } finally {
+          await answer();
+        }
         return;
       }
       if (action === "edit") {
@@ -809,8 +833,8 @@ export function getBot(): Bot | undefined {
       await ctx.answerCallbackQuery({ text: line }).catch(() => undefined);
       if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, `${base}\n${line}`, undefined, isCaption);
       else await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-      // Every task in it is handled: the follow-up goes in a minute (a brief keeps its place).
-      if (tapped && (await trackedKind(tapped.message_id)) === "prompt") await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: minutesFromNow(SETTLED_MINUTES) });
+      // Every task in it is handled: the follow-up goes now; the note on the screen said what happened (a brief keeps its place).
+      if (chatId !== undefined && tapped && (await trackedKind(tapped.message_id)) === "prompt") await deleteNow(bot, chatId, tapped.message_id);
       await logMessage("tony", line);
       return;
     }
@@ -834,7 +858,7 @@ export function getBot(): Bot | undefined {
         } else if (action === "done" || action === "drop" || action === "tom") {
           const outcome = await runAction(action === "tom" ? "tomorrow" : action, taskId, undefined);
           // An undated task's "tomorrow" is a question with its slots: it comes as its own message, kept until he answers it.
-          if (outcome.keyboard && outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard, kind: "confirmation", deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
+          if (outcome.keyboard && outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard, kind: outcome.waiting ? "prompt" : "confirmation", taskId, deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
           else line = outcome.text;
           toast = plain(outcome.text ?? "Done").slice(0, 180);
         } else if (action === "snooze") {
@@ -852,7 +876,7 @@ export function getBot(): Bot | undefined {
           toast = "Type the steps";
         } else if (action === "slot" || action === "sched") {
           const outcome = await askForSlot(task, hisTomorrow(new Date()), new Date());
-          if (outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard ?? undefined, kind: "confirmation", deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
+          if (outcome.text) await say(ctx, outcome.text, { keyboard: outcome.keyboard ?? undefined, kind: outcome.waiting ? "prompt" : "confirmation", taskId, deleteAfter: outcome.waiting ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
           toast = "Pick a time";
         } else if (action === "keep") {
           await requireDb().from("tasks").update({ updated_at: new Date().toISOString() }).eq("id", taskId);
@@ -866,11 +890,11 @@ export function getBot(): Bot | undefined {
       const rows = (tapped?.reply_markup?.inline_keyboard ?? []).map((row) => row.filter((button) => !("callback_data" in button) || !String(button.callback_data).endsWith(`:${taskId}`))).filter((row) => row.length > 0);
       if (chatId !== undefined && tapped && base !== undefined) await editHtml(bot, chatId, tapped.message_id, line ? `${base}\n${line}` : base, rows.length ? InlineKeyboard.from(rows) : undefined, isCaption);
       else await ctx.editMessageReplyMarkup({ reply_markup: rows.length ? InlineKeyboard.from(rows) : undefined }).catch(() => undefined);
-      // No task left to answer in it ("📅 All to tomorrow" alone is not one): the follow-up goes in a minute,
-      // unless it is waiting for steps or a time he will type. A brief keeps its place.
+      // No task left to answer in it ("📅 All to tomorrow" alone is not one): the follow-up goes now (the note
+      // on the screen said what happened), unless it is waiting for steps or a time he will type. A brief stays.
       const left = rows.flat().some((button) => "callback_data" in button && /^fu:(?!all:)/.test(String(button.callback_data)));
-      if (tapped && !left && action !== "steps" && action !== "slot" && action !== "sched" && (await trackedKind(tapped.message_id)) === "prompt") {
-        await setFate(tapped.message_id, { kind: "confirmation", deleteAfter: minutesFromNow(SETTLED_MINUTES) });
+      if (chatId !== undefined && tapped && !left && action !== "steps" && action !== "slot" && action !== "sched" && (await trackedKind(tapped.message_id)) === "prompt") {
+        await deleteNow(bot, chatId, tapped.message_id);
       }
       if (line) await logMessage("tony", plain(line));
       return;
@@ -887,7 +911,11 @@ export function getBot(): Bot | undefined {
         await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${markdownToHtml(result.text)}`, undefined, isCaption);
       }
       // Starting it now: the example he kept with it (a post he forwarded) comes too.
-      if (action === "now" && chatId !== undefined) await sendTaskExample(bot, chatId, Number(id)).catch((error) => console.error("Could not send the task's example:", error));
+      if (action === "now" && chatId !== undefined) {
+        const sent = await sendTaskExample(bot, chatId, Number(id)).catch((error) => (console.error("Could not send the task's example:", error), false as const));
+        // It goes from the chat with the task's other messages once the task is done or moved.
+        if (sent) for (const messageId of sent) await track(messageId, "reminder", { taskId: Number(id) });
+      }
       await logMessage("tony", result.text);
       return;
     }
@@ -985,7 +1013,15 @@ export function getBot(): Bot | undefined {
     }
     // Done, skipped, dropped or moved: nothing more to ask about this task (22 Nov: "after i reschedule the
     // task it should be deleted from chat or after i complete the task cuz otherwise chat is getting worse").
+    // The note on the screen said what happened; the message and the task's other messages go now, not on
+    // the next tick (16:05: "why still on chat").
     const settled = !outcome.waiting && !keyboard && parsed.action !== "start";
+    if (settled && chatId !== undefined && tapped) {
+      await logMessage("tony", plain(outcome.text));
+      await deleteNow(bot, chatId, tapped.message_id);
+      await runCleanup(bot, chatId).catch((error) => console.error("Could not tidy the task's other messages:", error));
+      return;
+    }
 
     const edited = base !== undefined && chatId !== undefined && tapped ? await editHtml(bot, chatId, tapped.message_id, `${base}${OUTCOME_MARK}${outcome.text}`, keyboard, isCaption) : false;
     // A message too old to edit still gets its answer: a question as a new message; a settled outcome was the note on the screen.
@@ -996,7 +1032,7 @@ export function getBot(): Bot | undefined {
       // Settling the task marked all its messages for removal. The one just
       // tapped now carries the answer: after Start it waits for Done and
       // stays; a question about the time still waits for his answer and stays;
-      // a settled task's message shows the outcome for a minute and goes.
+      // a message too old to delete is a confirmation and goes in a few hours.
       await setFate(
         tapped.message_id,
         parsed.action === "start"

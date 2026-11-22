@@ -144,14 +144,15 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
   if (sent >= MAX_NUDGES_A_DAY) return 0;
 
   const stats = await habitStats(now);
-  const due: { habit: HabitStats; kind: string; text: string; firm: boolean }[] = [];
+  // "until": a heads-up "thirty minutes" before something goes from the chat at its time, when its reminder takes over.
+  const due: { habit: HabitStats; kind: string; text: string; firm: boolean; until?: Date }[] = [];
   for (const habit of stats) {
     const started = habit.task.status === "in_progress";
     // Only when it matters: the habit is slipping, or it is a key task (persistent, or priority 1-2).
     const matters = habit.missedRun >= SLIPPING_DAYS || habit.task.persistent || habit.task.priority <= 2;
     if (matters && habit.dueToday && habit.dueAtToday && !habit.doneToday && !started) {
       const minutesLeft = (habit.dueAtToday.getTime() - now.getTime()) / 60_000;
-      if (minutesLeft > 0 && minutesLeft <= NUDGE_LEAD_MINUTES) due.push({ habit, kind: "nudge:before", ...beforeNudge(habit) });
+      if (minutesLeft > 0 && minutesLeft <= NUDGE_LEAD_MINUTES) due.push({ habit, kind: "nudge:before", ...beforeNudge(habit), until: habit.dueAtToday });
     }
     // Slipping: once a day, unless it is due later today (the "before" nudge will speak to it then).
     const dueLater = habit.dueToday && habit.dueAtToday && habit.dueAtToday.getTime() > now.getTime() && !habit.doneToday;
@@ -173,7 +174,7 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
     if (isHabit(task)) continue;
     if (!task.persistent && task.priority > 2) continue;
     const at = formatTime(new Date(task.due_at!));
-    due.push({ habit: { task } as HabitStats, kind: "nudge:task", text: `${task.title} is at ${at}, sir: thirty minutes. Time to get ready.`, firm: false });
+    due.push({ habit: { task } as HabitStats, kind: "nudge:task", text: `${task.title} is at ${at}, sir: thirty minutes. Time to get ready.`, firm: false, until: new Date(task.due_at!) });
   }
 
   let count = 0;
@@ -182,8 +183,9 @@ export async function runCoach(bot: Bot, chatId: number, settings: Settings, now
     if (!(await claim(nudge.kind, nudge.habit.task.id, day))) continue;
     const voiceId = await sayAloud(bot, chatId, nudge.text, nudge.firm ? "coach:firm" : "coach", { now, caption: esc(nudge.text) });
     const messageId = voiceId ?? (await sendHtml(bot, chatId, esc(nudge.text)));
-    // Removed with the task's other reminders once it is done, skipped or moved.
-    await track(messageId, "reminder", { taskId: nudge.habit.task.id });
+    // Removed with the task's other reminders once it is done, skipped or moved; a heads-up also at the
+    // task's time, when the reminder takes over (22 Nov 16:05: the 14:15 "thirty minutes" was still there).
+    await track(messageId, "reminder", { taskId: nudge.habit.task.id, deleteAfter: nudge.until });
     await logMessage("tony", nudge.text);
     count++;
   }

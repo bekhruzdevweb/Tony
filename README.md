@@ -415,9 +415,13 @@ checklist.
 | `/help`, `/inbox`, `/app` replies | when you send the same command again |
 | The previous Today board | when a new one is sent |
 | A reminder's earlier nudges | when the task is done, skipped, snoozed or moved |
-| A reminder you tapped Done, Skip, Snooze or a new time on | a minute after the tap (the outcome also shows as a note on the screen) |
+| A reminder you tapped Done, Skip, Snooze or a new time on, with the task's other reminders | at once (the outcome shows as a note on the screen) |
+| A question about a time, once you tap one | at once (the outcome shows as a note on the screen) |
 | A follow-up ("⏰ Still open…"), a question about a time, or a receipt | once every task in it is done, dropped or moved on, however you did it |
-| A receipt for something done or moved in your own words | after 10 minutes |
+| A "thirty minutes" heads-up before a task | at the task's time, when its reminder takes over |
+| A task's example (the post you kept with it) and its notes | with the task's reminder |
+| A prayer's message | when the next prayer's comes |
+| A receipt for something done or moved in your own words | after 2 minutes |
 | Any other confirmation ("Noted, sir…") | after 3 hours (24 hours if it answered a voice note) |
 | The morning brief | at the evening review |
 | Yesterday's plan, review and polls | when the new one arrives |

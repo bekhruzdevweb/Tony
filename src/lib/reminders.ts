@@ -1,7 +1,7 @@
 import "server-only";
 import { InlineKeyboard, type Bot } from "grammy";
 import { requireDb } from "./db";
-import { retire, sendHtml, track } from "./chat-log";
+import { deleteNow, retire, sendHtml, track } from "./chat-log";
 import { b, esc, i, plain } from "./html";
 import { mediaCaption, mediaForTask, mediaListForTask, sendMedia, sendTaskExample, sendTogether } from "./media";
 import { habitFor, isHabit, streakLine } from "./habits";
@@ -10,7 +10,7 @@ import { sayAloud } from "./speech";
 import { busyAround, getRoutine } from "./routine";
 import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
-import { progress, subtasksFor } from "./subtasks";
+import { allDone, progress, subtasksFor } from "./subtasks";
 import { data, dueReminder, notesBlock, persistentReminder } from "./reminder-messages";
 import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
@@ -243,7 +243,11 @@ export async function runTick(
         // IELTS plan would have stayed behind when their reminders went out together at 13:00 and 20:15).
         for (const reminder of together) {
           const files = await mediaListForTask(reminder.task!.id).catch(() => []);
-          if (files.length) await sendTogether(bot, chatId, files, reminder.task!.title, { silent: true }).catch((error) => console.error("Could not send a task's files with the reminders:", error));
+          if (files.length) {
+            const ids = await sendTogether(bot, chatId, files, reminder.task!.title, { silent: true }).catch((error) => (console.error("Could not send a task's files with the reminders:", error), [] as number[]));
+            // They go from the chat with the task, once it is done, skipped or moved.
+            for (const id of ids) await track(id, "reminder", { taskId: reminder.task!.id });
+          }
         }
       }
     }
@@ -377,16 +381,21 @@ export async function runTick(
       const stats = await habitFor(task.id, now);
       if (stats) message.text = `${message.text}\n${i(streakLine(stats))}`;
     }
-    // A task with parts: "Post stories 1/3" and the parts still to do.
+    // A task with parts: "Post stories 1/3" and the parts still to do. Every part done: it asks to tick the
+    // task itself off, plainly (22 Nov 14:45: "Update fitness app · 3/3 done" with all three ticked still read
+    // as a reminder to do it).
     if (!prayer) {
       const list = (await subtasksFor([task.id])).get(task.id) ?? [];
-      if (list.length) message.text = `${message.text}\n${i(`${progress(list)} done`)}\n${list.map((s) => `${s.done ? "☑" : "☐"} ${esc(s.title)}`).join("\n")}`;
+      if (list.length && allDone(list)) message.text = `${message.text}\n${i(`All ${list.length} parts are done, sir: tap Done to tick it off.`)}`;
+      else if (list.length) message.text = `${message.text}\n${i(`${progress(list)} done`)}\n${list.map((s) => `${s.done ? "☑" : "☐"} ${esc(s.title)}`).join("\n")}`;
     }
     // The first reminder says what the task holds (its notes, folded): what to do now, without opening the app.
     const held = attempt === 0 && !prayer && !checkIn ? notesBlock(task.notes) : undefined;
     // Only the first reminder carries the attachment; later nudges are plain text.
     // A post he kept with the task (its photos and text) goes out first, as he forwarded it; a single file is the reminder itself.
-    const example = attempt === 0 && !prayer ? await sendTaskExample(bot, chatId, task.id).catch((error) => (console.error("Could not send the task's example:", error), false)) : false;
+    const example = attempt === 0 && !prayer ? await sendTaskExample(bot, chatId, task.id).catch((error) => (console.error("Could not send the task's example:", error), false as const)) : false;
+    // The example goes from the chat with the reminder, once the task is done, skipped or moved.
+    if (example) for (const id of example) await track(id, "reminder", { taskId: task.id });
     const attached = attempt === 0 && !example ? await mediaForTask(task.id).catch(() => undefined) : undefined;
     let messageId: number | undefined;
     // Two tries, each with a hard timeout: a stalled connection must never
@@ -407,7 +416,10 @@ export async function runTick(
         messageId = attached
           ? await sendMedia(bot, chatId, attached, withNotes, options)
           : await sendHtml(bot, chatId, held ? `${message.text}\n${held}` : message.text, options);
-        if (attached && held && withNotes === caption) await sendHtml(bot, chatId, held, { silent: true }).catch(() => undefined);
+        if (attached && held && withNotes === caption) {
+          const notes = await sendHtml(bot, chatId, held, { silent: true }).catch(() => undefined);
+          if (notes !== undefined) await track(notes, "reminder", { taskId: task.id });
+        }
       } catch (error) {
         console.error(`Reminder ${reminder.id}: send attempt ${tryNumber} failed:`, error);
       }
@@ -431,8 +443,10 @@ export async function runTick(
     await track(messageId, checkIn ? "stale" : "reminder", { taskId: task.id });
     // A prayer at its time: the "in 10 minutes" heads-up has done its job and goes, one message per prayer.
     if (prayer && reminder.kind !== "extra") {
-      for (const old of await otherReminderMessages(task.id, messageId).catch(() => [] as number[])) await bot.api.deleteMessage(chatId, old).catch(() => undefined);
+      for (const old of await otherReminderMessages(task.id, messageId).catch(() => [] as number[])) await deleteNow(bot, chatId, old);
     }
+    // Any prayer's heads-up: the last prayer's message, answered or not, has had its time (one prayer message at a time).
+    if (prayer) await retireEarlierPrayers(task.id, now);
     // The next check-in, N days on, for as long as the task sits untouched.
     if (checkIn && (reminder.every_days ?? 0) > 0) {
       const next = checkInTime(now, reminder.every_days!, await getRoutine());
@@ -492,6 +506,21 @@ export async function taskForReminderMessage(messageId: number): Promise<Task | 
   const row = (data ?? [])[0] as { task: Task | Task[] | null } | undefined;
   const task = Array.isArray(row?.task) ? row.task[0] : row?.task;
   return task ?? undefined;
+}
+
+/**
+ * A new prayer message: the earlier prayers' messages still in the chat
+ * ("🕌 Asr · 15:51" when Maghrib comes, answered or not) go on the next tick.
+ * One prayer message at a time. Never throws.
+ */
+async function retireEarlierPrayers(taskId: number, now: Date): Promise<void> {
+  try {
+    const db = requireDb();
+    const { data } = await db.from("tasks").select("id").eq("kind", "prayer").neq("id", taskId).lt("due_at", now.toISOString());
+    for (const row of (data ?? []) as { id: number }[]) await retire({ kinds: ["reminder", "confirmation"], taskId: Number(row.id) });
+  } catch (error) {
+    console.error("retireEarlierPrayers:", error);
+  }
 }
 
 /**

@@ -131,8 +131,8 @@ export async function track(
 
 /** A tapped message whose task is settled goes this soon: he sees the outcome, then the chat is clean. */
 export const SETTLED_MINUTES = 1;
-/** A confirmation of something done or moved, in his own words, goes after this long. */
-export const DONE_CONFIRMATION_MINUTES = 10;
+/** A confirmation of something done or moved, in his own words, goes after this long: read, then gone. */
+export const DONE_CONFIRMATION_MINUTES = 2;
 export const minutesFromNow = (minutes: number, now = new Date()) => new Date(now.getTime() + minutes * 60_000);
 
 /** What a tracked message is ("prompt", "brief:morning", ...), if Tony recorded it. */
