@@ -149,6 +149,8 @@ export async function think(
   tools: string[];
   titles: string[];
   planId?: number;
+  /** Every plan this turn made, one per day, earliest day first ("today and tomorrow": both are shown). */
+  planIds?: number[];
   choices?: { question: string; options: string[] };
   mediaIds?: number[];
   /** Tasks offered in conversation, each shown with a [➕ Make this a task] button. */
@@ -180,6 +182,10 @@ export async function think(
   const titles: string[] = [];
   // A plan to show with Apply/Adjust, or a question to show with buttons.
   let planId: number | undefined;
+  // One plan per day, the last one made for that day (22 Nov 19:35: "the entire plan for tomorrow and today"
+  // made a plan for each day, and only tomorrow's was shown).
+  const plansByDay = new Map<string, number>();
+  const planIdsOf = () => [...plansByDay].sort(([x], [y]) => x.localeCompare(y)).map(([, id]) => id);
   let choices: { question: string; options: string[] } | undefined;
   // Saved photos or files he asked to see again.
   let mediaIds: number[] | undefined;
@@ -299,7 +305,12 @@ export async function think(
         for (const match of JSON.stringify(outcome).matchAll(/#(\d+)/g)) taskIds.add(Number(match[1]));
         if (outcome.ok) {
           tools.push(call.function.name);
-          if (call.function.name === "plan") planId = Number((outcome as { plan_id?: unknown }).plan_id);
+          if (call.function.name === "plan") {
+            planId = Number((outcome as { plan_id?: unknown }).plan_id);
+            const planned = String((outcome as { day?: unknown }).day ?? "");
+            plansByDay.delete(planned);
+            plansByDay.set(planned, planId);
+          }
           if (call.function.name === "media" && Array.isArray((outcome as { media_ids?: unknown }).media_ids)) mediaIds = (outcome as unknown as { media_ids: number[] }).media_ids;
           if (call.function.name === "ask") {
             // Only times that are actually free are offered as buttons.
@@ -712,7 +723,7 @@ export async function think(
   const settling = (change: { tool: DoneAction["tool"]; wrote?: Record<string, unknown> }) =>
     change.tool === "complete_task" || (change.tool === "update_task" && Boolean(change.wrote) && Object.keys(change.wrote!).every((key) => ["status", "due_at", "day"].includes(key)));
   const settled = changes.size > 0 && [...changes.values()].every(settling) && saved.length + remembered.length + forgotten.length + routineSet.length + ruleLines.length === 0 && !clash && !slot && !proposal;
-  return { reply, tools, titles, planId, choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices, changed: [...changes.keys()], settled };
+  return { reply, tools, titles, planId, ...(plansByDay.size > 1 ? { planIds: planIdsOf() } : {}), choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices, changed: [...changes.keys()], settled };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */

@@ -1158,4 +1158,14 @@ describe("22 Nov evening: an early reminder says it is early, 'all' means all, b
     expect(state.calls[0].system).toContain("plan with all true (no limit of five a day)");
     expect(state.calls[1].system).toContain("at most 5 new tasks a day");
   });
+
+  it("19:35 'The entire plan for tomorrow and today': a plan for each day, both shown, today first", async () => {
+    evening();
+    const result = await run("The entire plan for tomorrow and today", "2026-11-22T19:35", [tools(["plan", { scope: "day", day: "tomorrow" }], ["plan", { scope: "day", day: "today" }]), "FAIL", "FAIL"]);
+    const plans = state.db.rows("plans") as { id: number; day: string }[];
+    expect(plans.map((plan) => String(plan.day).slice(0, 10))).toEqual(["2026-11-23", "2026-11-22"]);
+    // Only tomorrow's was shown before: the last plan made.
+    expect(result.thought?.planIds).toEqual([plans[1].id, plans[0].id]);
+    expect(result.thought?.planId).toBe(plans[1].id);
+  });
 });

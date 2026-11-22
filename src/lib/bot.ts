@@ -1050,12 +1050,12 @@ export function getBot(): Bot | undefined {
     }
   });
 
-  /** Sends a proposed plan with [Apply] [Adjust]; it replaces any earlier plan in the chat. */
-  const showPlan = async (chatId: number, planId: number) => {
+  /** Sends a proposed plan with [Apply] [Adjust]; it replaces any earlier plan in the chat (not one sent for the same message). */
+  const showPlan = async (chatId: number, planId: number, options: { keepEarlier?: boolean } = {}) => {
     const plan = await loadPlan(planId);
     if (!plan) return;
     const view = await planView(plan);
-    await retire({ kinds: ["plan"] });
+    if (!options.keepEarlier) await retire({ kinds: ["plan"] });
     // A rich message: a heading, the day's times as a list, the reasoning folded away.
     const messageId = await sendRich(bot, chatId, view.html, { keyboard: view.keyboard });
     await track(messageId, "plan");
@@ -1387,7 +1387,9 @@ export function getBot(): Bot | undefined {
         reply = withoutSendClaims(reply) || (found ? "I found it, sir, but it would not send. Ask me again in a moment." : "I couldn't find that one, sir.");
       }
       if (planId !== undefined && ctx.chat) {
-        await showPlan(ctx.chat.id, planId);
+        // Each day he asked for, earliest first ("the entire plan for tomorrow and today": both days, 22 Nov 19:35).
+        const shown = thought.planIds?.length ? thought.planIds : [planId];
+        for (const [index, id] of shown.entries()) await showPlan(ctx.chat.id, id, { keepEarlier: index > 0 });
         return { reply, confirmed: false, completed: false };
       }
       if (choices && ctx.chat) {
