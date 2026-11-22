@@ -1168,4 +1168,17 @@ describe("22 Nov evening: an early reminder says it is early, 'all' means all, b
     expect(result.thought?.planIds).toEqual([plans[1].id, plans[0].id]);
     expect(result.thought?.planId).toBe(plans[1].id);
   });
+
+  it("18:53 'Add them anyway for tomorrow': the proposal says nothing is set until ✓, never 'Here's what I'll do'", async () => {
+    evening();
+    const { loadPlan, planView } = await import("../src/lib/planner");
+    const three = ["Build a new diet plan", "Add my workout days to Tony", "Build channel messaging agent"].map((title) => byTitle(title));
+    const result = await run("Add them anyway for tomorrow. I mean the ones you didn't add.", "2026-11-22T18:53", [tools(...three.map((row): [string, Record<string, unknown>] => ["update_task", { id: row.id, day: "2026-11-23" }])), "FAIL"]);
+    expect(result.replies[0]).toBe("Here is what I propose, sir.");
+    const view = await planView((await loadPlan(Number(result.thought?.planId)))!, at("2026-11-22T18:53"));
+    expect(view.html).not.toContain("Here's what I'll do");
+    expect(view.html).toContain("<i>Nothing is set yet: tap ✓ Looks good and I'll put them in, sir.</i>");
+    // And nothing was set.
+    for (const row of three) expect(local(byTitle(String(row.title)).due_at) ?? "inbox").not.toMatch(/^2026-11-23/);
+  });
 });

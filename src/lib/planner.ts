@@ -429,7 +429,11 @@ export async function planView(plan: Plan, now = new Date(), mode: "view" | "adj
       .join("");
     const left = plan.left_out.length ? `\n\nNo room for ${plan.left_out.map((item) => esc(item.title)).join(", ")} ${spread ? "this week" : "that day"}.` : "";
     const span = spread ? `${shortDay(parseLocalDateTime(`${itemDays[0]}T12:00`)!)} – ${shortDay(parseLocalDateTime(`${itemDays[itemDays.length - 1]}T12:00`)!)}` : shortDay(itemDays.length ? parseLocalDateTime(`${itemDays[0]}T12:00`)! : first);
-    const html = `${plan.lead ? `${esc(plan.lead)}\n\n` : ""}<b>🧭 ${esc(spread ? "The week" : name)} · ${esc(span)}</b>\n<table><tr>${spread ? "<th>Day</th>" : ""}<th>Time</th><th>Task</th><th>Length</th></tr>${rows}</table>${left}`;
+    // Nothing is set until he taps ✓, and the words say so: "Here's what I'll do, sir:" read as done (22 Nov
+    // 12:36, five workouts; 18:53, "Add them anyway for tomorrow"): neither was ever confirmed, so neither was set.
+    const lead = plan.lead && plan.lead !== "Here's what I'll do, sir:" ? `${esc(plan.lead)}\n\n` : "";
+    const confirm = `\n\n${i(`Nothing is set yet: tap ✓ Looks good and I'll put ${plan.items.length === 1 ? "it" : "them"} in, sir.`)}`;
+    const html = `${lead}<b>🧭 ${esc(spread ? "The week" : name)} · ${esc(span)}</b>\n<table><tr>${spread ? "<th>Day</th>" : ""}<th>Time</th><th>Task</th><th>Length</th></tr>${rows}</table>${left}${confirm}`;
     const keyboard = new InlineKeyboard().text("✓ Looks good", `pl:ap:${plan.id}`).text("✏️ Change", `pl:adj:${plan.id}`);
     return { html, keyboard };
   }

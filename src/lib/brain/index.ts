@@ -590,7 +590,8 @@ export async function think(
         now,
         taskIds: [...named.keys()],
         day,
-        lead: "Here's what I'll do, sir:",
+        // No "Here's what I'll do, sir:": nothing is set until he taps ✓, and the plan says so (22 Nov 12:36
+        // and 18:53: two proposals read as done, never confirmed; the workouts and "Add them anyway" stayed unset).
         ...(keepDays ? { instructions: keepDays, daysFor: Object.fromEntries(named) } : {}),
       }).catch(
         (error) => (console.error("Plan for new tasks failed:", error), undefined),
