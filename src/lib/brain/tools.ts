@@ -169,6 +169,7 @@ export const TOOLS: ToolDefinition[] = [
       scope: { type: "string", enum: ["day", "week"] },
       day: { type: "string", description: "today|tomorrow|YYYY-MM-DD (first day)" },
       instructions: { type: "string", description: "His wishes for this plan, if any." },
+      all: { type: "boolean", description: "He wants every waiting task placed (\"schedule all the tasks\", \"add them anyway\", \"the ones you didn't add too\"): no limit per day; only what has no free time is left out." },
     },
     ["scope"],
   ),
@@ -879,7 +880,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       // The day he named is the day planned, never swapped for tomorrow (22 Nov 16:15-16:17: "for today",
       // "Today isn't over", "i asked for today", "i meant 22 november", and four plans for tomorrow).
       const exactDay = (dayText !== "today" && dayText !== "") || namesDay(said !== undefined ? ownWords(said) : "", localDate(now));
-      const result = await buildPlan({ scope, day, now, exactDay, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
+      const result = await buildPlan({ scope, day, now, exactDay, all: args.all === true, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
       if ("nothing" in result) return fail(result.nothing);
       const planned = String(result.plan.day).slice(0, 10);
       return {

@@ -143,16 +143,19 @@ async function modelProposal(input: {
   candidates: Task[];
   memory: string[];
   instructions?: string;
+  all?: boolean;
 }): Promise<{ proposals: Proposal[]; leftOut: Map<number, string>; why: string }> {
-  const { now, days, windows, fixed, candidates, memory, instructions } = input;
+  const { now, days, windows, fixed, candidates, memory, instructions, all } = input;
   const describe = (task: Task) => {
     const state = task.due_at ? `overdue since ${shortDay(new Date(task.due_at))} ${formatTime(new Date(task.due_at))}` : `in the inbox ${Math.floor((now.getTime() - new Date(task.created_at).getTime()) / (24 * 60 * MINUTE))} days`;
     return `#${task.id} ${task.title} | ${state} | P${task.priority}${task.persistent ? " | important" : ""}`;
   };
   const system = [
     "You schedule tasks for Behruzbek, an English teacher and content creator in Tashkent. Choose a day and start time for each task.",
-    `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never within an hour of a fixed event or of another task; at most ${MAX_PER_DAY} new tasks a day.`,
-    "Follow his habits where one applies. Put first, and earliest in the day, tasks that serve one of his goals (lines starting 'Goal'), then urgent (P1, P2) and overdue tasks. If a task does not fit, leave it out and say why.",
+    all
+      ? `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never at the same time as a fixed event or another task. He asked for all of them: place every task, with no limit per day; leave one out only when no free time is left.`
+      : `Rules: only between ${formatTime(windows[0].start)} and ${formatTime(windows[0].end)}; nothing before the current time; never within an hour of a fixed event or of another task; at most ${MAX_PER_DAY} new tasks a day.`,
+    `Follow his habits where one applies. Put first, and earliest in the day, tasks that serve one of his goals (lines starting 'Goal'), then urgent (P1, P2) and overdue tasks.${all ? "" : " If a task does not fit, leave it out and say why."}`,
     "Each reason is short, plain, and addressed to him: 'you work out in the evenings', 'free hour after classes'.",
   ].join(" ");
   const user = [
@@ -208,6 +211,12 @@ type PlanOptions = {
   daysFor?: Record<number, string>;
   /** He named this day ("today", "22 November"): it is planned, never swapped for tomorrow or a later day. */
   exactDay?: boolean;
+  /**
+   * He asked for every waiting task ("schedule all the tasks", "add them anyway"): no limit of five a day,
+   * and a task is left out only when no free time is left (22 Nov 18:52: three left out "Only 5 tasks fit
+   * in a day", and "Add them anyway for tomorrow").
+   */
+  all?: boolean;
 };
 
 /**
@@ -310,7 +319,7 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
     .filter((task) => task.kind !== "prayer")
     .filter((task) => (only ? only.has(task.id) : task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime())))
     .sort((x, y) => x.priority - y.priority || Number(!x.due_at) - Number(!y.due_at) || (x.due_at ?? x.created_at).localeCompare(y.due_at ?? y.created_at))
-    .slice(0, options.scope === "week" ? 14 : 8);
+    .slice(0, options.all ? 30 : options.scope === "week" ? 14 : 8);
   if (candidates.length === 0) return { nothing: "Nothing is waiting for a slot: there are no overdue tasks and the inbox is empty." };
   // Busy: every other open timed task for its length, prayers ±15 minutes.
   const candidateIds = new Set(candidates.map((task) => task.id));
@@ -322,7 +331,7 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   let proposed: Awaited<ReturnType<typeof modelProposal>>;
   let plannedBy: Plan["planned_by"] = "model";
   try {
-    proposed = await modelProposal({ now, days, windows, fixed, candidates, memory, instructions: options.instructions });
+    proposed = await modelProposal({ now, days, windows, fixed, candidates, memory, instructions: options.instructions, all: options.all });
   } catch (error) {
     console.error("Planner: the model was unavailable, using rules instead:", error);
     proposed = rulesProposal(candidates, memory, days);
@@ -340,7 +349,8 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   for (const task of candidates) {
     const proposal = reasons.get(task.id);
     const declined = proposed.leftOut.get(task.id);
-    if (declined !== undefined && !proposal?.at) {
+    // He asked for all of them: a task the model left out still goes wherever there is free time.
+    if (declined !== undefined && !proposal?.at && !options.all) {
       leftOut.push({ task_id: task.id, title: task.title, why: declined || "it did not fit" });
       continue;
     }

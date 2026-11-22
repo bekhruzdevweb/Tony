@@ -1087,6 +1087,27 @@ describe("22 Nov evening: an early reminder says it is early, 'all' means all, b
     return { bot: { api } as never, sent, deleted };
   };
 
+  /** What was open at Sunday 18:52: overdue from the day and from Friday, the inbox, and Monday's fixed times. */
+  const evening = () => {
+    task({ title: "Update fitness app", due_at: "2026-11-22T14:45", priority: 1, duration_minutes: 90 });
+    task({ title: "Build a new diet plan", due_at: "2026-11-22T16:45", duration_minutes: 45 });
+    task({ title: "Add my workout days to Tony", due_at: "2026-11-22T17:45", duration_minutes: 5 });
+    task({ title: "Launch beginner and elementary course", due_at: "2026-11-22T18:00", duration_minutes: 60 });
+    task({ title: "Post stories in this format", due_at: "2026-11-22T18:00", duration_minutes: 30 });
+    task({ title: "Develop the website", due_at: "2026-11-20T18:00", duration_minutes: 60 });
+    task({ title: "Challenge: post 4 images, then a story", due_at: "2026-11-20T08:00", duration_minutes: 30 });
+    task({ title: "Build channel messaging agent", duration_minutes: 120 });
+    task({ title: "Buy a zippered shirt", duration_minutes: 30 });
+    task({ title: "Develop my sleep hygiene", duration_minutes: 20 });
+    task({ title: "Study Thinking Fast and Slow", duration_minutes: 30 });
+    task({ title: "Posting stories on Instagram", due_at: "2026-11-22T20:15", duration_minutes: 15 });
+    task({ title: "Start IELTS exam preparation", due_at: "2026-11-22T20:15", duration_minutes: 60 });
+    task({ title: "Watch podcast and take notes", due_at: "2026-11-23T07:15", duration_minutes: 30 });
+    task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", duration_minutes: 240, repeat_rule: "weekly" });
+    task({ title: "Watch saved video", due_at: "2026-11-23T13:15", duration_minutes: 15 });
+    task({ title: "Watch: AI agents podcast", due_at: "2026-11-23T15:00", duration_minutes: 30 });
+  };
+
   it("15:50 'remind me 10 minutes earlier' for the barber at 16:00: a heads-up that says 16:00, gone when the 16:00 reminder comes", async () => {
     const barber = task({ title: "Call barber", due_at: "2026-11-22T16:00", duration_minutes: 10 });
     state.db.insert("reminders", { task_id: barber.id, fire_at: at("2026-11-22T15:50").toISOString(), kind: "extra", attempt: 0 });
@@ -1108,5 +1129,33 @@ describe("22 Nov evening: an early reminder says it is early, 'all' means all, b
     const { headsUpReminder } = await import("../src/lib/reminder-messages");
     const lesson = task({ title: "Teach the elementary group", due_at: "2026-11-24T10:00" });
     expect(headsUpReminder(lesson as never, at("2026-11-23T20:00")).text).toBe("Sir, a heads-up: <b>Teach the elementary group</b> is tomorrow at <b>10:00</b>.");
+  });
+
+  it("18:52 'Schedule all the tasks for tomorrow.': every waiting task is placed where there is time; never 'Only 5 tasks fit in a day'", async () => {
+    evening();
+    const waiting = tasks().filter((row) => !row.due_at || local(row.due_at)! < "2026-11-22T18:52");
+    const [first, ...rest] = waiting;
+    await run("Schedule all the tasks for tomorrow.", "2026-11-22T18:52", [
+      tools(["plan", { scope: "day", day: "tomorrow", all: true }]),
+      // The planner's model capping it at five, as it did.
+      tools(["propose", { items: [{ id: first.id, date: "2026-11-23", time: "16:00", why: "a clear stretch" }], left_out: rest.map((row) => ({ id: row.id, why: "Only 5 tasks fit in a day, so this one is full." })), why: "Urgent first." }]),
+    ]);
+    expect(state.calls[1].system).toContain("He asked for all of them: place every task, with no limit per day");
+    expect(state.calls[1].system).not.toContain("at most 5 new tasks a day");
+    // All eleven are in front of the planner (it saw eight before), and none is left out for a limit.
+    expect(JSON.stringify(state.calls[1].messages)).toContain("Study Thinking Fast and Slow");
+    const plan = state.db.rows("plans").at(-1)! as { day: string; items: { task_id: number; at: string }[]; left_out: { why: string }[] };
+    expect(String(plan.day).slice(0, 10)).toBe("2026-11-23");
+    expect(plan.items.length + plan.left_out.length).toBe(waiting.length);
+    expect(plan.items.length).toBeGreaterThan(5);
+    expect(plan.left_out.every((item) => item.why === "no free time left that day")).toBe(true);
+    expect(plan.items.every((item) => local(item.at)!.startsWith("2026-11-23"))).toBe(true);
+  });
+
+  it("'plan tomorrow' without 'all' still keeps to five new tasks a day; the brain is told when 'all' applies", async () => {
+    evening();
+    await run("plan tomorrow", "2026-11-22T18:52", [tools(["plan", { scope: "day", day: "tomorrow" }]), "FAIL"]);
+    expect(state.calls[0].system).toContain("plan with all true (no limit of five a day)");
+    expect(state.calls[1].system).toContain("at most 5 new tasks a day");
   });
 });
