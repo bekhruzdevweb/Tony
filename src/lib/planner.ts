@@ -1,6 +1,6 @@
 import { currentGoals, isAlive, normalNote } from "./memory-rules";
 import { LATE_LEAD, allClashes, clashSentence, planDay } from "./brain/checks";
-import { busyIntervals, dayWindow, estimateMinutes, isDeep, placeAll, type ToPlace } from "./schedule";
+import { busyIntervals, dayWindow, estimateMinutes, isDeep, placeAll, type Busy as Booked, type ToPlace } from "./schedule";
 import "server-only";
 import { InlineKeyboard } from "grammy";
 import { chat, type ToolDefinition } from "./brain/model";
@@ -206,11 +206,38 @@ type PlanOptions = {
   lead?: string;
   /** The day he gave each task (YYYY-MM-DD by task id): it is placed on that day only. */
   daysFor?: Record<number, string>;
+  /** He named this day ("today", "22 November"): it is planned, never swapped for tomorrow or a later day. */
+  exactDay?: boolean;
 };
 
 /**
- * Proposes a plan. Asked for today when today is nearly over (after 20:00,
- * or under two free hours left), it plans tomorrow and says so; a day with
+ * The free minutes left in today's waking hours from 15 minutes on, by what
+ * is really booked: each task for its own length, prayers ±15 minutes, and
+ * tasks at the same time counted once. (22 Nov 16:15: every task counted as a
+ * full hour, three at 20:15 as three, so "Today is nearly over, sir" came at
+ * 16:15 with five free hours left.)
+ */
+export function freeMinutesLeft(now: Date, window: { start: Date; end: Date }, tasks: Booked[]): number {
+  const from = Math.max(now.getTime() + 15 * MINUTE, window.start.getTime());
+  const to = window.end.getTime();
+  if (to <= from) return 0;
+  const busy = busyIntervals(tasks)
+    .map((interval) => ({ start: Math.max(interval.start, from), end: Math.min(interval.end, to) }))
+    .filter((interval) => interval.end > interval.start)
+    .sort((x, y) => x.start - y.start);
+  let taken = 0;
+  let reach = from;
+  for (const interval of busy) {
+    const start = Math.max(interval.start, reach);
+    if (interval.end > start) taken += interval.end - start;
+    reach = Math.max(reach, interval.end);
+  }
+  return Math.max(0, (to - from - taken) / MINUTE);
+}
+
+/**
+ * Proposes a plan. Asked for the day without naming it when it is nearly over (from 20:00,
+ * or from 17:00 with under an hour free), it plans tomorrow and says so; a day with
  * no free hour rolls on to the next, so the answer is never just "no free
  * hour left".
  */
@@ -218,12 +245,13 @@ export async function buildPlan(options: PlanOptions): Promise<PlanResult> {
   const now = options.now ?? new Date();
   let day = options.day ?? now;
   let lead: string | undefined = options.lead;
-  if (options.scope === "day" && localDate(day) === localDate(now)) {
+  // Asked for today without naming it, late (after 20:00, or under two free hours left by what is really
+  // booked): tomorrow, and it says so. Today he named is today, whatever the hour.
+  if (options.scope === "day" && localDate(day) === localDate(now) && !options.exactDay) {
     const settings = await getSettings();
     const window = windowOf(now, settings.quiet_start);
-    const from = Math.max(now.getTime() + 15 * MINUTE, window.start.getTime());
-    const { data } = await requireDb().from("tasks").select("id").in("status", OPEN_STATUSES).gte("due_at", new Date(from).toISOString()).lt("due_at", window.end.toISOString());
-    const freeMinutes = Math.max(0, (window.end.getTime() - from) / MINUTE - (data ?? []).length * BLOCK_MINUTES);
+    const { data } = await requireDb().from("tasks").select("due_at, duration_minutes, kind, status, title").in("status", OPEN_STATUSES).gte("due_at", window.start.toISOString()).lt("due_at", window.end.toISOString());
+    const freeMinutes = freeMinutesLeft(now, window, (data ?? []) as Booked[]);
     if (planDay(now, freeMinutes) === "tomorrow") {
       day = dayBounds(addMinutes(now, 24 * 60)).start;
       lead = options.lead ? `${options.lead} ${LATE_LEAD.replace(/^Today is nearly over, sir — /, "today is nearly over, so ")}` : LATE_LEAD;
@@ -231,7 +259,8 @@ export async function buildPlan(options: PlanOptions): Promise<PlanResult> {
   }
   for (let attempt = 0; attempt < (options.scope === "day" ? 7 : 1); attempt++) {
     const result = await planFor({ ...options, day, now }, lead);
-    if ("plan" in result || !result.full) return result;
+    // The day he named and nothing fits: that is the answer, not another day he did not ask for.
+    if ("plan" in result || !result.full || options.exactDay) return result;
     const full = localDate(day) === localDate(now) ? "Today" : weekdayOf(day);
     day = dayBounds(addMinutes(day, 24 * 60 + 12 * 60)).start;
     lead = `${full} is full, sir — here's ${weekdayOf(day)}.`;

@@ -23,6 +23,7 @@ import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../rout
 import { isNight, localDate, minuteOfDay } from "../time";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 import { normalTag, normalTags, prefixTag, tagsFor } from "../tags";
+import { namesDay } from "./checks";
 import { habitFor, isHabit, streakLine } from "../habits";
 
 const TIME = "YYYY-MM-DDTHH:MM";
@@ -875,9 +876,20 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const dayText = typeof args.day === "string" ? args.day.trim().toLowerCase() : "today";
       const day = dayText === "tomorrow" ? addMinutes(now, 24 * 60) : dayText === "today" || !dayText ? now : parseLocalDateTime(dayText);
       if (!day) return fail(`could not read day "${args.day}"`);
-      const result = await buildPlan({ scope, day, now, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
+      // The day he named is the day planned, never swapped for tomorrow (22 Nov 16:15-16:17: "for today",
+      // "Today isn't over", "i asked for today", "i meant 22 november", and four plans for tomorrow).
+      const exactDay = (dayText !== "today" && dayText !== "") || namesDay(said !== undefined ? ownWords(said) : "", localDate(now));
+      const result = await buildPlan({ scope, day, now, exactDay, instructions: typeof args.instructions === "string" ? args.instructions.slice(0, 300) : undefined });
       if ("nothing" in result) return fail(result.nothing);
-      return { ok: true, plan_id: result.plan.id, placed: result.plan.items.length, left_out: result.plan.left_out.length };
+      const planned = String(result.plan.day).slice(0, 10);
+      return {
+        ok: true,
+        plan_id: result.plan.id,
+        day: planned,
+        ...(planned !== localDate(now) && localDate(day) === localDate(now) ? { note: "Today was nearly over, so this plan is for tomorrow: say so, in a few words." } : {}),
+        placed: result.plan.items.length,
+        left_out: result.plan.left_out.length,
+      };
     }
 
     case "media": {

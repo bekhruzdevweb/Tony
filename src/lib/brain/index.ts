@@ -425,8 +425,13 @@ export async function think(
   // and "Here it is, sir" only when something is really being sent.
   if (reply) {
     const plain = withoutInternals(reply);
-    const honest = mediaIds?.length || sendItems.length ? plain : withoutSendClaims(plain);
-    if (honest !== reply) reply = honest || (honest === plain ? undefined : "I couldn't find that one, sir.");
+    // "Here's your plan" is true when a plan, choices or a proposal is shown: only a file or link that never
+    // went out makes "here it is" false (22 Nov 16:15: "Here's your plan for today" became "I couldn't find
+    // that one, sir", four times, spoken).
+    const showing = Boolean(mediaIds?.length || sendItems.length || planId !== undefined || choices || proposal || libraryChoices);
+    const honest = showing ? plain : withoutSendClaims(plain);
+    // Nothing left: "I couldn't find that one" only when he asked for a file or a link; otherwise no words.
+    if (honest !== reply) reply = honest || (honest !== plain && asksForItem(saidNow) ? "I couldn't find that one, sir." : undefined);
   }
 
   // He asked whether a link was kept, and the model asks back instead of keeping it: Tony keeps it.

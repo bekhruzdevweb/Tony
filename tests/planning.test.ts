@@ -4,8 +4,8 @@
  * and buttons offering times that were not free.
  */
 import { describe, expect, it } from "vitest";
-import { freeOptions, givesTime, isFreeAt, isLinkTask, planDay, type TimedTask } from "../src/lib/brain/checks";
-import { nextFree, windowOf } from "../src/lib/planner";
+import { freeOptions, givesTime, isFreeAt, isLinkTask, namesDay, planDay, type TimedTask } from "../src/lib/brain/checks";
+import { freeMinutesLeft, nextFree, windowOf } from "../src/lib/planner";
 
 const at = (local: string) => new Date(`${local}:00+05:00`);
 const task = (id: number, title: string, local: string, extra: Partial<TimedTask> = {}): TimedTask => ({ id, title, due_at: at(local).toISOString(), status: "todo", ...extra });
@@ -15,11 +15,42 @@ describe("/plan when today is nearly over", () => {
     expect(planDay(at("2026-11-20T21:00"), 60)).toBe("tomorrow");
     expect(planDay(at("2026-11-20T20:00"), 300)).toBe("tomorrow");
   });
-  it("plans tomorrow with under two free hours left", () => {
-    expect(planDay(at("2026-11-20T18:30"), 60)).toBe("tomorrow");
+  it("plans tomorrow from 17:00 with under an hour free; earlier, today's few free hours are still today's", () => {
+    expect(planDay(at("2026-11-20T18:30"), 45)).toBe("tomorrow");
+    expect(planDay(at("2026-11-20T16:15"), 45)).toBe("today");
   });
   it("plans today while there is room", () => {
     expect(planDay(at("2026-11-20T15:00"), 240)).toBe("today");
+  });
+
+  // 22 Nov 16:15: every task counted as a whole hour, three at 20:15 as three hours, and the prayers too:
+  // "0 free minutes", so "Today is nearly over, sir — here's tomorrow." With five hours still free.
+  it("counts what is really booked: each task for its length, tasks at the same time once, prayers ±15 minutes", () => {
+    const now = at("2026-11-22T16:15");
+    const booked = [
+      { title: "Build a new diet plan", due_at: at("2026-11-22T16:45").toISOString(), duration_minutes: 45 },
+      { title: "Maghrib", kind: "prayer", due_at: at("2026-11-22T17:37").toISOString() },
+      { title: "Add my workout days to Tony", due_at: at("2026-11-22T17:45").toISOString(), duration_minutes: 15 },
+      { title: "Launch beginner and elementary course", due_at: at("2026-11-22T18:00").toISOString(), duration_minutes: 60 },
+      { title: "Post stories in this format", due_at: at("2026-11-22T18:00").toISOString(), duration_minutes: 30 },
+      { title: "Isha", kind: "prayer", due_at: at("2026-11-22T18:56").toISOString() },
+      { title: "Posting stories on Instagram", due_at: at("2026-11-22T20:15").toISOString() },
+      { title: "Instagram reel (saved link)", due_at: at("2026-11-22T20:15").toISOString() },
+      { title: "Start IELTS exam preparation", due_at: at("2026-11-22T20:15").toISOString(), duration_minutes: 60 },
+    ];
+    const free = freeMinutesLeft(now, windowOf(now, "23:00"), booked);
+    // 16:30–22:00 (Tony plans until an hour before quiet hours) is 330 minutes; booked: 16:45–19:11 (the diet
+    // plan, Maghrib, the workout days, the course launch and the stories, Isha) and 20:15–21:15 (the three at
+    // 20:15, counted once). Left: 15 + 64 + 45 = 124 minutes.
+    expect(free).toBe(124);
+    expect(planDay(now, free)).toBe("today");
+  });
+
+  it("knows when he names the day: 'for today', 'today isn't over', '22 november', '22.11'", () => {
+    for (const words of ["Can you assign me all my tasks for today?", "Today isn't over, girl.", "i asked for today", "i meant 22 november", "plan nov 22", "22.11 please", "the rest of the day"]) {
+      expect(namesDay(words, "2026-11-22")).toBe(true);
+    }
+    for (const words of ["plan my day", "what about 23 november", "plan the week"]) expect(namesDay(words, "2026-11-22")).toBe(false);
   });
 });
 

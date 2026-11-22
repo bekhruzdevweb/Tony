@@ -1023,3 +1023,47 @@ describe("16:05 'why still on chat': what has had its time leaves the chat", () 
     expect(row(631)!.delete_after).not.toBeNull();
   });
 });
+
+// ── 22 Nov 16:15–16:20: "HE IS KEEP SENDING TMR PLAN" ───────────────────
+describe("16:15 'assign me all my tasks for today': today's plan, and Tony's words kept", () => {
+  /** His Sunday afternoon: what was booked after 16:15, and what waited for a slot. */
+  const sunday = () => {
+    task({ title: "Build a new diet plan", due_at: "2026-11-22T16:45", duration_minutes: 45 });
+    task({ title: "Maghrib", kind: "prayer", due_at: "2026-11-22T17:37" });
+    task({ title: "Add my workout days to Tony", due_at: "2026-11-22T17:45", duration_minutes: 15 });
+    task({ title: "Launch beginner and elementary course", due_at: "2026-11-22T18:00", duration_minutes: 60 });
+    task({ title: "Post stories in this format", due_at: "2026-11-22T18:00", duration_minutes: 30 });
+    task({ title: "Isha", kind: "prayer", due_at: "2026-11-22T18:56" });
+    task({ title: "Posting stories on Instagram", due_at: "2026-11-22T20:15" });
+    task({ title: "Start IELTS exam preparation", due_at: "2026-11-22T20:15", duration_minutes: 60 });
+    task({ title: "Develop the website", due_at: "2026-11-20T18:00", duration_minutes: 60 });
+    task({ title: "Buy a zippered shirt" });
+  };
+
+  it("a plan for today, Sun 22 Nov, never 'Today is nearly over, sir — here's tomorrow'; 'Here's your plan' stays", async () => {
+    sunday();
+    const result = await run("Can you assign me all my tasks for today?", "2026-11-22T16:15", [tools(["plan", { day: "today" }]), says("Here's your plan for today, sir.")]);
+    const plan = state.db.rows("plans").at(-1)!;
+    expect(String(plan.day).slice(0, 10)).toBe("2026-11-22");
+    expect(String(plan.lead ?? "")).not.toContain("nearly over");
+    expect(result.replies.join(" ")).not.toContain("I couldn't find that one");
+  });
+
+  it("'i meant 22 november' at 21:00: still today, though the day is nearly over, because he named it", async () => {
+    sunday();
+    await run("i meant 22 november", "2026-11-22T21:00", [tools(["plan", { day: "2026-11-22" }]), says("Today, sir.")]);
+    const plan = state.db.rows("plans").at(-1);
+    // Either today's plan, or the honest answer that today has no room; never tomorrow's.
+    if (plan) expect(String(plan.day).slice(0, 10)).toBe("2026-11-22");
+    const toolResult = JSON.stringify(state.calls.at(-1)!.messages.filter((message) => message.role === "tool"));
+    expect(toolResult).not.toContain("2026-11-23");
+  });
+
+  it("'plan my day' at 21:00, no day named: tomorrow, and it says so", async () => {
+    sunday();
+    await run("plan my day", "2026-11-22T21:00", [tools(["plan", {}]), says("Tomorrow, sir: today is nearly over.")]);
+    const plan = state.db.rows("plans").at(-1)!;
+    expect(String(plan.day).slice(0, 10)).toBe("2026-11-23");
+    expect(String(plan.lead)).toContain("nearly over");
+  });
+});

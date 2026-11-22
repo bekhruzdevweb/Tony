@@ -314,12 +314,35 @@ export function titleFrom(html: string, url: string): string {
   }
 }
 
-/** When /plan is asked for "today": after 20:00, or with under two free hours left, it plans tomorrow. */
+/** When /plan is asked for the day without naming it: from 20:00, or from 17:00 with under an hour free, it plans tomorrow. */
 export const LATE_LEAD = "Today is nearly over, sir — here's tomorrow.";
 export function planDay(now: Date, freeMinutesLeft: number): "today" | "tomorrow" {
   const local = new Date(now.getTime() + 5 * 60 * 60_000);
   const minute = local.getUTCHours() * 60 + local.getUTCMinutes();
-  return minute >= 20 * 60 || freeMinutesLeft < 120 ? "tomorrow" : "today";
+  // From 20:00, or from 17:00 with under an hour free: the day is nearly over. Earlier, a busy afternoon is
+  // still today (22 Nov 16:15: "Today is nearly over" with the evening ahead).
+  return minute >= 20 * 60 || (minute >= 17 * 60 && freeMinutesLeft < 60) ? "tomorrow" : "today";
+}
+
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/**
+ * Whether his words name this day: "today", "tonight", "this evening", "the
+ * rest of the day", or its date ("22 November", "November 22", "22 nov",
+ * "22.11", "22/11"). Then a plan is for that day, whatever the hour.
+ */
+export function namesDay(words: string, day: string): boolean {
+  const text = words.toLowerCase();
+  if (/\b(today|tonight|this (evening|afternoon|morning)|rest of (the|my|this) day)\b/.test(text)) return true;
+  const [, month, date] = day.split("-").map(Number);
+  const name = MONTHS[month - 1];
+  const short = name.slice(0, 3);
+  const patterns = [
+    new RegExp(`\\b${date}(st|nd|rd|th)?\\s*(of\\s+)?(${name}|${short})\\b`),
+    new RegExp(`\\b(${name}|${short})\\.?\\s+${date}(st|nd|rd|th)?\\b`),
+    new RegExp(`\\b0?${date}[./]0?${month}\\b`),
+  ];
+  return patterns.some((pattern) => pattern.test(text));
 }
 
 /** Free at `at`: no open, timed, non-prayer task within 30 minutes (or overlapping by duration). */
