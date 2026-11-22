@@ -1287,4 +1287,22 @@ describe("Phase J: no time for small things, urgent is chased, today is today", 
     const message = dueReminder(room as never);
     expect(message.text).toBe("Sir, still on today's list: <b>Clean my room</b>.");
   });
+
+  it("04:34 'Remind me brush my teeth today' (5 min): today, anytime, no time question", async () => {
+    const result = await run("Remind me brush my teeth today", "2026-11-23T04:34", [tools(["add_task", { title: "Brush my teeth", day: "2026-11-23", duration: 5, reply: "" }])]);
+    expect(result.thought?.slot).toBeUndefined();
+    expect(byTitle("Brush my teeth").anytime).toBe(true);
+    expect(result.replies[0]).toBe("✓ **Brush my teeth** → today, Mon 23 Nov, anytime");
+  });
+
+  it("a receipt that a task was set stays while the task is open; a question about it still goes", async () => {
+    const { retireSettled } = await import("../src/lib/chat-log");
+    const teeth = task({ title: "Post on YouTube", due_at: "2026-11-23T09:00", updated_at: at("2026-11-23T04:51").toISOString() });
+    state.db.insert("chat_messages", { message_id: 707, kind: "confirmation", task_ids: [teeth.id], created_at: at("2026-11-23T04:50").toISOString(), delete_after: at("2026-11-23T07:51").toISOString() });
+    state.db.insert("chat_messages", { message_id: 708, kind: "prompt", task_ids: [teeth.id], created_at: at("2026-11-23T04:50").toISOString(), delete_after: null });
+    await retireSettled(at("2026-11-23T04:52"));
+    const rows = state.db.rows("chat_messages") as { message_id: number; delete_after: string | null }[];
+    expect(rows.find((row) => row.message_id === 707)!.delete_after).toBe(at("2026-11-23T07:51").toISOString());
+    expect(rows.find((row) => row.message_id === 708)!.delete_after).toBe(at("2026-11-23T04:52").toISOString());
+  });
 });

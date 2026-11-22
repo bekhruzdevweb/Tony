@@ -185,10 +185,9 @@ describe("3. When the AI fails", () => {
 
   it("recovers on the retry", async () => {
     const result = await run("add buy notebook", "2026-11-20T12:00", ["FAIL", tools(["add_task", { title: "Buy notebook" }])]);
-    // Phase J: a small thing gets no time: today, anytime, with one quiet check at 20:00.
-    expect(byTitle("Buy notebook").anytime).toBe(true);
-    expect(local(byTitle("Buy notebook").due_at)).toBe("2026-11-20T20:00");
-    expect(result.replies[0]).toBe("✓ **Buy notebook** → today, Fri 20 Nov, anytime");
+    // Phase I: the smart inbox suggests the first day with room; it stays in the inbox until he taps.
+    expect(byTitle("Buy notebook").status).toBe("inbox");
+    expect(result.replies[0]).toMatch(/Buy notebook[\s\S]*When today, Fri 20 Nov\? Best:/);
     expect(state.db.rows("messages").filter((row) => row.role === "user")).toHaveLength(1);
   });
 });

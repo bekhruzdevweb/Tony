@@ -611,11 +611,20 @@ export async function think(
       }
     } else if (named.size === 1) {
       const [[id, day]] = [...named];
-      const task = stored.get(id)!;
-      const decision = await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text), held);
+      let task = stored.get(id)!;
+      // A small thing on a day he named ("remind me brush my teeth today", 23 Nov 04:34, was asked a time):
+      // that day, anytime, with one quiet check in the evening. Habits and repeats keep a real time.
+      const tiny = !task.due_at && !task.habit && !task.repeat_rule && !picks.has(id) && (task.duration_minutes ?? 99) <= TINY_MINUTES ? await placeAnytime(id, day, now).catch(() => undefined) : undefined;
+      if (tiny) {
+        stored.set(id, tiny);
+        task = tiny;
+        named.delete(id);
+      }
+      const decision = tiny ? { decision: "done" as const } : await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text), held);
       const label = dayLabel(day, now, ownWords(text));
       const extra = savedMarks(marks(id));
-      decided.add(id);
+      // A tiny one is already set: its receipt is the ordinary one below ("→ today, Mon 23 Nov, anytime").
+      if (!tiny) decided.add(id);
       // He said the time does not matter for this one ("it doesn't take long so no need to add any time",
       // 21 Nov 20:42): Tony's own pick, never the same question again.
       const pick = decision.decision === "auto" ? decision : decision.decision === "ask" && picks.has(id) && decision.options[0] ? { at: decision.options[0].at, why: decision.options[0].why ?? "the first free time" } : undefined;
@@ -632,7 +641,7 @@ export async function think(
       } else if (decision.decision === "split") {
         slot = { kind: "split", taskId: id, title: task.title, day, parts: decision.parts, minutes: decision.minutes };
         slotLines.push(splitQuestion({ title: task.title, marks: extra, when: label.when, minutes: decision.minutes, total: task.duration_minutes ?? decision.minutes * 2, parts: decision.parts }));
-      } else {
+      } else if (!tiny) {
         slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
       }
     } else if (named.size === 0 && undated.length === 1 && planId === undefined && wantsSuggestion(ownWords(text))) {
@@ -643,7 +652,7 @@ export async function think(
       const task = stored.get(id)!;
       // A small thing (15 minutes or less) gets no time at all (Phase J, 23 Nov: "clean your room … I should
       // not be having any timeline"): today, anytime, with one quiet check at 20:00.
-      const small = task.status === "inbox" && !task.free_time && (task.duration_minutes ?? 99) <= 15;
+      const small = task.status === "inbox" && !task.free_time && (task.duration_minutes ?? 99) <= TINY_MINUTES;
       const anytime = small ? await placeAnytime(id, startDate(now), now).catch((error) => (console.error("Anytime:", error), undefined)) : undefined;
       if (anytime) {
         stored.set(id, anytime);
@@ -891,3 +900,6 @@ async function placeAnytime(id: number, day: string, now: Date): Promise<Task | 
   await scheduleReminder(id, at);
   return data as Task;
 }
+
+/** A thing this short gets no time by itself ("it doesn't even take you 5 minutes", 23 Nov); longer small things only when he or the model says anytime. */
+const TINY_MINUTES = 5;

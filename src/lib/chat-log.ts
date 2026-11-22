@@ -176,16 +176,19 @@ export async function retireSettled(now = new Date()): Promise<number> {
     if (tasks.error) return 0;
     const byId = new Map(((tasks.data ?? []) as { id: number; status: string; due_at: string | null; updated_at: string }[]).map((task) => [Number(task.id), task]));
     const open = new Set(["inbox", "todo", "in_progress"]);
-    const settled = (id: number, sentAt: number) => {
+    const settled = (id: number, sentAt: number, kind: MessageKind) => {
       const task = byId.get(id);
       if (!task || !open.has(task.status)) return true;
+      // A receipt that a task was set for a time is his record of it: it keeps its own hours while the
+      // task is open (23 Nov 04:52: receipts went within seconds, "Why he's deleting his own messages?").
+      if (kind === "confirmation") return false;
       return Boolean(task.due_at && new Date(task.due_at).getTime() > now.getTime() && new Date(task.updated_at).getTime() > sentAt + 1_000);
     };
     let marked = 0;
     const soon = minutesFromNow(DONE_CONFIRMATION_MINUTES, now);
     for (const row of rows) {
       const sentAt = new Date(row.created_at).getTime();
-      if (!(row.task_ids ?? []).map(Number).every((id) => settled(id, sentAt))) continue;
+      if (!(row.task_ids ?? []).map(Number).every((id) => settled(id, sentAt, row.kind))) continue;
       // Waiting for an answer (a follow-up, a question): it goes now. A receipt keeps its own few
       // minutes ("✓ Done" stays ten), but no longer than ten minutes from here.
       const planned = row.delete_after ? new Date(row.delete_after) : undefined;

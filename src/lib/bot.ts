@@ -694,19 +694,15 @@ export function getBot(): Bot | undefined {
       // Answered, the outcome is a note on the screen and the question goes at once (22 Nov 16:05: "why
       // still on chat"); a new question in its place stays.
       const showOutcome = async (text: string, keyboard?: InlineKeyboard, fate: "answered" | "waiting" = "answered") => {
-        if (fate === "answered" && !keyboard && chatId !== undefined && tapped) {
-          await answer(plain(markdownToHtml(text)));
-          await deleteNow(bot, chatId, tapped.message_id);
-          await logMessage("tony", text);
-          return;
-        }
+        // His tap turns the question into its receipt ("✓ Brush my teeth → today, 12:00"), which stays as his
+        // record (23 Nov 04:52: the question vanished on his tap, "Why he's deleting his own messages?").
         await answer();
         const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(boldTimes(text)), keyboard) : false;
         if (!edited && chatId !== undefined) {
           const sent = await sendMarkdown(bot, chatId, boldTimes(text), { keyboard });
-          await track(sent, fate === "waiting" ? "prompt" : "confirmation", { taskId, deleteAfter: fate === "waiting" ? undefined : minutesFromNow(DONE_CONFIRMATION_MINUTES) });
+          await track(sent, fate === "waiting" ? "prompt" : "confirmation", { taskId, deleteAfter: fate === "waiting" ? undefined : hoursFromNow(CONFIRMATION_HOURS) });
         }
-        if (edited && tapped) await setFate(tapped.message_id, { kind: fate === "waiting" ? "prompt" : "confirmation", deleteAfter: fate === "waiting" ? null : minutesFromNow(SETTLED_MINUTES) });
+        if (edited && tapped) await setFate(tapped.message_id, { kind: fate === "waiting" ? "prompt" : "confirmation", deleteAfter: fate === "waiting" ? null : hoursFromNow(CONFIRMATION_HOURS) });
         await logMessage("tony", text);
       };
       if (action === "ok" || action === "at") {
