@@ -181,10 +181,15 @@ export async function retireSettled(now = new Date()): Promise<number> {
       return Boolean(task.due_at && new Date(task.due_at).getTime() > now.getTime() && new Date(task.updated_at).getTime() > sentAt + 1_000);
     };
     let marked = 0;
+    const soon = minutesFromNow(DONE_CONFIRMATION_MINUTES, now);
     for (const row of rows) {
       const sentAt = new Date(row.created_at).getTime();
       if (!(row.task_ids ?? []).map(Number).every((id) => settled(id, sentAt))) continue;
-      await setFate(Number(row.message_id), { deleteAfter: now });
+      // Waiting for an answer (a follow-up, a question): it goes now. A receipt keeps its own few
+      // minutes ("✓ Done" stays ten), but no longer than ten minutes from here.
+      const planned = row.delete_after ? new Date(row.delete_after) : undefined;
+      if (planned && planned.getTime() <= soon.getTime() + 60_000) continue;
+      await setFate(Number(row.message_id), { deleteAfter: planned ? soon : now });
       marked++;
     }
     return marked;

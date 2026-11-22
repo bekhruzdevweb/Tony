@@ -757,12 +757,18 @@ describe("22 Nov 12:37: plans are not habits, the task in focus, a clean chat", 
     vi.setSystemTime(at("2026-11-22T12:00"));
     await track(596, "prompt", { taskIds: [Number(teacher.id)] });
     await track(598, "prompt", { taskIds: [Number(teacher.id), Number(podcast.id)] });
+    // The receipt from when it was added, kept three hours.
+    await track(590, "confirmation", { taskIds: [Number(teacher.id)], deleteAfter: at("2026-11-22T15:00") });
     const fate = (id: number) => state.db.rows("chat_messages").find((row) => Number(row.message_id) === id)!.delete_after;
     vi.setSystemTime(at("2026-11-22T12:22"));
     await runAction("done", Number(teacher.id), undefined, new Date());
+    // "✓ Done" in his words: its own ten minutes.
+    await track(599, "confirmation", { taskIds: [Number(teacher.id)], deleteAfter: at("2026-11-22T12:32") });
     await retireSettled(new Date());
     expect(fate(596)).not.toBeNull();
     expect(fate(598)).toBeNull();
+    expect(local(fate(590))).toBe("2026-11-22T12:32");
+    expect(local(fate(599))).toBe("2026-11-22T12:32");
     // He moves the podcast to tomorrow (its time is ahead now, changed after the follow-up went out).
     const row = state.db.rows("tasks").find((task) => task.id === podcast.id)!;
     row.due_at = at("2026-11-23T07:15").toISOString();
