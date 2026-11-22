@@ -1067,3 +1067,46 @@ describe("16:15 'assign me all my tasks for today': today's plan, and Tony's wor
     expect(String(plan.lead)).toContain("nearly over");
   });
 });
+
+// ── 22 Nov evening (nightly check): the barber's heads-up, "all the tasks", today and tomorrow ──────
+describe("22 Nov evening: an early reminder says it is early, 'all' means all, both days are shown", () => {
+  const recorder = () => {
+    const sent: { name: string; text: string; id: number }[] = [];
+    const deleted: number[] = [];
+    let next = 700;
+    const api = new Proxy(
+      {},
+      {
+        get: (_target, name) => async (_chat: number, text?: unknown) => {
+          if (String(name) === "deleteMessage") deleted.push(Number(text));
+          else if (String(name).startsWith("send")) sent.push({ name: String(name), text: typeof text === "string" ? text : JSON.stringify(text), id: next + 1 });
+          return { message_id: ++next };
+        },
+      },
+    );
+    return { bot: { api } as never, sent, deleted };
+  };
+
+  it("15:50 'remind me 10 minutes earlier' for the barber at 16:00: a heads-up that says 16:00, gone when the 16:00 reminder comes", async () => {
+    const barber = task({ title: "Call barber", due_at: "2026-11-22T16:00", duration_minutes: 10 });
+    state.db.insert("reminders", { task_id: barber.id, fire_at: at("2026-11-22T15:50").toISOString(), kind: "extra", attempt: 0 });
+    state.db.insert("reminders", { task_id: barber.id, fire_at: at("2026-11-22T16:00").toISOString(), kind: "due", attempt: 0 });
+    const { bot, sent, deleted } = recorder();
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T15:49").toISOString();
+    vi.setSystemTime(at("2026-11-22T15:50"));
+    await runTick(bot, 42, new Date());
+    // Not "Sir, a reminder: Call barber." twice, ten minutes apart.
+    expect(sent[0].text).toBe("Sir, a heads-up: <b>Call barber</b> is at <b>16:00</b>, in 10 minutes.");
+    state.db.rows("settings")[0].last_tick_at = at("2026-11-22T15:59").toISOString();
+    vi.setSystemTime(at("2026-11-22T16:00"));
+    await runTick(bot, 42, new Date());
+    expect(sent[1].text).toBe("Sir, a reminder: <b>Call barber</b>.");
+    expect(deleted).toEqual([sent[0].id]);
+  });
+
+  it("a heads-up the day before names the day", async () => {
+    const { headsUpReminder } = await import("../src/lib/reminder-messages");
+    const lesson = task({ title: "Teach the elementary group", due_at: "2026-11-24T10:00" });
+    expect(headsUpReminder(lesson as never, at("2026-11-23T20:00")).text).toBe("Sir, a heads-up: <b>Teach the elementary group</b> is tomorrow at <b>10:00</b>.");
+  });
+});

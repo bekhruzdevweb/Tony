@@ -11,7 +11,7 @@ import { busyAround, getRoutine } from "./routine";
 import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
 import { allDone, progress, subtasksFor } from "./subtasks";
-import { data, dueReminder, notesBlock, persistentReminder } from "./reminder-messages";
+import { data, dueReminder, headsUpReminder, notesBlock, persistentReminder } from "./reminder-messages";
 import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
@@ -366,13 +366,17 @@ export async function runTick(
     const prayer = isPrayer(task);
     // A "Move to" offer is only made for a time that is actually free.
     const isFree = chained && attempt === 2 ? await freeTimes(task) : undefined;
+    // An extra reminder before the task's own time is a heads-up, and says when the task is (22 Nov 15:50).
+    const headsUp = !prayer && reminder.kind === "extra" && Boolean(task.due_at) && new Date(task.due_at!).getTime() - new Date(reminder.fire_at).getTime() >= 60_000;
     const message = prayer
       ? prayerReminder(task, reminder.kind === "extra")
       : checkIn
         ? checkInMessage(task, reminder.every_days ?? Math.max(1, Math.round((now.getTime() - new Date(task.updated_at).getTime()) / (24 * 60 * 60_000))))
         : chained
           ? persistentReminder(task, attempt, now, nextAt, isFree)
-          : dueReminder(task);
+          : headsUp
+            ? headsUpReminder(task, new Date(reminder.fire_at), now)
+            : dueReminder(task);
     // A task with a link (a reel to watch): the link itself as a button, so he never has to ask for it.
     const open = prayer ? undefined : openButton(task.notes);
     if (open) message.keyboard = (message.keyboard ?? new InlineKeyboard()).row().url(open.text, open.url);
@@ -447,6 +451,10 @@ export async function runTick(
     }
     // Any prayer's heads-up: the last prayer's message, answered or not, has had its time (one prayer message at a time).
     if (prayer) await retireEarlierPrayers(task.id, now);
+    // Any task's own reminder at its time: the heads-up he asked for before it has done its job and goes.
+    if (!prayer && reminder.kind === "due" && attempt === 0) {
+      for (const old of await headsUpMessages(task.id, messageId).catch(() => [] as number[])) await deleteNow(bot, chatId, old);
+    }
     // The next check-in, N days on, for as long as the task sits untouched.
     if (checkIn && (reminder.every_days ?? 0) > 0) {
       const next = checkInTime(now, reminder.every_days!, await getRoutine());
@@ -538,6 +546,23 @@ export async function taskForTrackedMessage(messageId: number): Promise<Task | u
 }
 
 /** Recent reminder messages for a task, other than the one just tapped. */
+/** The heads-ups (extra reminders) already sent for a task, for when its own reminder takes over. */
+async function headsUpMessages(taskId: number, except?: number): Promise<number[]> {
+  const { data, error } = await requireDb()
+    .from("reminders")
+    .select("telegram_message_id")
+    .eq("task_id", taskId)
+    .eq("kind", "extra")
+    .in("state", ["sent", "acknowledged"])
+    .order("id", { ascending: false })
+    .limit(4);
+  fail("headsUpMessages", error);
+  return ((data ?? []) as { telegram_message_id: number | null }[])
+    .filter((row) => row.telegram_message_id !== null)
+    .map((row) => Number(row.telegram_message_id))
+    .filter((id) => id !== except);
+}
+
 export async function otherReminderMessages(taskId: number, except?: number): Promise<number[]> {
   const { data, error } = await requireDb()
     .from("reminders")

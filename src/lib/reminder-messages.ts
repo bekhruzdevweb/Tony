@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { b, esc, expandable } from "./html";
 import type { Task } from "./tasks";
-import { formatTime, laterThisEvening } from "./time";
+import { formatDue, formatTime, laterThisEvening, localDate } from "./time";
 
 /**
  * Button payloads are "action:taskId[:argument]". Taps are handled by code,
@@ -50,6 +50,22 @@ export function dueReminder(task: Task): { text: string; keyboard: InlineKeyboar
       .text("Done", data("done", task.id))
       .text("Snooze 15 min", data("snooze", task.id, 15))
       .text("Reschedule", data("resched", task.id)),
+  };
+}
+
+/**
+ * An extra reminder he asked for before the task's own time ("remind me ten minutes earlier"): a heads-up
+ * that says when the task is, so it never reads as the reminder itself (22 Nov: "Sir, a reminder: Call
+ * barber." at 15:50, and the same words again at 16:00). The task's own reminder still comes at its time.
+ */
+export function headsUpReminder(task: Task, firedAt: Date, now = firedAt): { text: string; keyboard: InlineKeyboard } {
+  const due = new Date(task.due_at!);
+  const minutes = Math.max(1, Math.round((due.getTime() - firedAt.getTime()) / 60_000));
+  const ahead = minutes < 90 ? `in ${minutes} ${minutes === 1 ? "minute" : "minutes"}` : minutes < 12 * 60 ? `in ${Math.round(minutes / 60)} hours` : "";
+  const when = localDate(due) === localDate(now) ? `at ${b(formatTime(due))}` : `${esc(formatDue(due, now).replace(/ \d{2}:\d{2}$/, ""))} at ${b(formatTime(due))}`;
+  return {
+    text: `Sir, a heads-up: ${b(task.title)} is ${when}${ahead ? `, ${ahead}` : ""}.`,
+    keyboard: new InlineKeyboard().text("Done", data("done", task.id)).text("Reschedule", data("resched", task.id)),
   };
 }
 
