@@ -281,8 +281,8 @@ export function getBot(): Bot | undefined {
     else if (wanted) return oops(ctx, "Use /voice on, /voice off or /voice auto, sir.");
     const state = await voiceState();
     const what = {
-      auto: `I speak for the morning brief, nudges that matter and a reminder's final call, at most ${DAILY_VOICE_LIMIT} a day (${Math.min(state.count, DAILY_VOICE_LIMIT)} used today), and whenever you ask. Replies to your voice notes are text.`,
-      on: "I speak for the morning brief, nudges, final calls and replies to your voice notes, with no daily limit.",
+      auto: `I speak for the morning brief, nudges that matter and a reminder left twice without an answer, at most ${DAILY_VOICE_LIMIT} a day (${Math.min(state.count, DAILY_VOICE_LIMIT)} used today), and whenever you ask. Replies to your voice notes are text.`,
+      on: "I speak for the morning brief, nudges, reminders left twice without an answer and replies to your voice notes, with no daily limit.",
       off: "I speak only when you ask (\"say it\", \"tell me\").",
     }[state.mode];
     await retire({ kinds: ["cmd:voice"] });

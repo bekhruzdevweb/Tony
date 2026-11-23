@@ -77,6 +77,15 @@ export function headsUpReminder(task: Task, firedAt: Date, now = firedAt): { tex
 }
 
 /**
+ * The words said aloud when two nudges of a persistent reminder went unanswered. Never "final": the chase
+ * goes on after it (23 Nov 12:00: "Final call, sir: Discuss going to Tashkent", then four more nudges
+ * at 13:00, 14:00, 15:00 and 16:00).
+ */
+export function aloudNudge(title: string, dueAt?: string): string {
+  return `Sir, ${title} is still waiting.${dueAt ? ` It was due at ${dueAt}.` : ""} A tap on the reminder settles it.`;
+}
+
+/**
  * One step of a persistent reminder. `attempt` counts from 0; `nextAt` is
  * when Tony will ask again, or undefined on the closing message.
  */

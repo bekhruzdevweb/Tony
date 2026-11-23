@@ -11,7 +11,7 @@ import { busyAround, getRoutine } from "./routine";
 import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
 import { allDone, progress, subtasksFor } from "./subtasks";
-import { data, dueReminder, headsUpReminder, notesBlock, persistentReminder } from "./reminder-messages";
+import { aloudNudge, data, dueReminder, headsUpReminder, notesBlock, persistentReminder } from "./reminder-messages";
 import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
@@ -486,11 +486,10 @@ export async function runTick(
       const queued = await db.from("reminders").insert({ task_id: task.id, fire_at: next.toISOString(), kind: "stale", attempt: 0, every_days: reminder.every_days });
       fail("runTick: next check-in", queued.error);
     }
-    // The final call: two nudges of a persistent reminder went unanswered, so the third is also said aloud
-    // (within the day's voice limit, and only while this tick has time to spare).
+    // Two nudges of a persistent reminder went unanswered, so the third is also said aloud (within the
+    // day's voice limit, and only while this tick has time to spare). It is not called final: more follow.
     if (chained && attempt === 2 && Date.now() - started < TICK_BUDGET_MS / 2) {
-      const due = task.due_at ? ` It was due at ${formatTime(new Date(task.due_at))}.` : "";
-      const voiceId = await sayAloud(bot, chatId, `Final call, sir: ${task.title}.${due} A tap on the reminder settles it.`, "final", { now });
+      const voiceId = await sayAloud(bot, chatId, aloudNudge(task.title, task.due_at ? formatTime(new Date(task.due_at)) : undefined), "final", { now });
       if (voiceId !== undefined) await track(voiceId, "reminder", { taskId: task.id });
     }
     sentThisHour++;
