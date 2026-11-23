@@ -878,3 +878,31 @@ async function joinProposals(list: { offerId: number; say: string }[]): Promise<
   if (error || !data) return list[list.length - 1];
   return { offerId: (data as { id: number }).id, say };
 }
+
+/**
+ * What Tony's model would do with one of his past messages, with the history it had then: its words and
+ * the tools it would call. Nothing is carried out (see /api/replay).
+ */
+export async function dryRun(messageId: number): Promise<{ said: string; reply: string | null; calls: { name: string; args: unknown }[]; model: string }> {
+  const db = requireDb();
+  const found = await db.from("messages").select("id, text, created_at").eq("id", messageId).maybeSingle();
+  const message = found.data as { id: number; text: string; created_at: string } | null;
+  if (!message) throw new Error("no such message");
+  const before = await db.from("messages").select("role, text").lt("id", messageId).order("id", { ascending: false }).limit(HISTORY);
+  const history = ((before.data ?? []) as { role: string; text: string }[]).reverse();
+  const now = new Date(message.created_at);
+  const context = await loadContext({ message: message.text, now });
+  const system = buildSystemPrompt({ now, ...context, message: message.text });
+  const messages: ChatMessage[] = [
+    ...history.map((m): ChatMessage => (m.role === "user" ? { role: "user", content: clip(m.text) } : { role: "assistant", content: clip(m.text) })),
+    { role: "user", content: latestMessage(message.text, undefined) },
+  ];
+  const model = needsDeepModel(message.text) ? env.anthropicDeepModel : undefined;
+  const answer = await chat({ system, messages, tools: TOOLS, web: false, model });
+  return {
+    said: message.text.slice(0, 600),
+    reply: answer.content ? answer.content.slice(0, 900) : null,
+    calls: (answer.tool_calls ?? []).map((call) => ({ name: call.function.name, args: JSON.parse(call.function.arguments || "{}") })),
+    model: model ?? env.anthropicModel,
+  };
+}

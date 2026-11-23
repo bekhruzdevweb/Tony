@@ -40,7 +40,8 @@ export const env = {
   },
   /** The larger model, for multi-step turns (several requests, moving or planning things). */
   get anthropicDeepModel() {
-    return read("ANTHROPIC_DEEP_MODEL") ?? "claude-sonnet-5-5";
+    // Never weaker than the main model (23 Nov: the main one became Opus; "deep" turns must not drop to Sonnet).
+    return read("ANTHROPIC_DEEP_MODEL") ?? (/opus/.test(this.anthropicModel) ? this.anthropicModel : "claude-sonnet-5-5");
   },
   /** How hard Claude thinks before answering: low, medium, high, xhigh or max. */
   get anthropicEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
