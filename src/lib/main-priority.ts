@@ -25,7 +25,8 @@ export async function chasedToday(now: Date): Promise<{ task: Task; due: Date; t
     if (!task.due_at) return [{ task, due: fromTen, timed: false }];
     const at = new Date(task.due_at);
     if (at.getTime() >= end.getTime()) return [];
-    if (at.getTime() < start.getTime()) return [{ task, due: fromTen, timed: false }];
+    // On today with no time: chased from 10:00, like one with no day (its 20:00 is only the day's last reminder).
+    if (at.getTime() < start.getTime() || task.anytime) return [{ task, due: fromTen, timed: false }];
     return [{ task, due: at, timed: true }];
   });
   return today.sort((a, b) => a.due.getTime() - b.due.getTime())[0];
