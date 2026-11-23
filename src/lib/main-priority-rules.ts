@@ -38,6 +38,25 @@ export type ChaseInput = {
 
 export type ChaseStep = { kind: "nudge" | "check" | "last"; n: number };
 
+/**
+ * The reminder about it still to come that the chase waits for ("in 1 hour", or moved), if any.
+ * A main priority with no time keeps one quiet check at 20:00 of its day: that is not a reminder to
+ * wait for, or it is never chased before 20:00 (23 Nov: "Make my own IELTS plan" and "Build homework
+ * checker AI", his two main tasks of the day, had their first nudge at 20:16).
+ */
+export function waitedReminder(
+  reminders: { kind: string; state: string; fire_at: string }[],
+  task: { due_at: string | null; anytime?: boolean | null },
+  timed: boolean,
+): Date | undefined {
+  const ownCheck = !timed && task.anytime && task.due_at ? new Date(task.due_at).getTime() : undefined;
+  const isOwnCheck = (row: { kind: string; fire_at: string }) => row.kind === "due" && ownCheck !== undefined && Math.abs(new Date(row.fire_at).getTime() - ownCheck) < MINUTE;
+  const coming = reminders
+    .filter((row) => row.state === "scheduled" && (row.kind === "due" || row.kind === "nudge") && !isOwnCheck(row))
+    .map((row) => new Date(row.fire_at).getTime());
+  return coming.length ? new Date(Math.min(...coming)) : undefined;
+}
+
 export function chaseStep(input: ChaseInput): ChaseStep | undefined {
   const { now } = input;
   if (!["todo", "inbox", "in_progress"].includes(input.status)) return undefined;

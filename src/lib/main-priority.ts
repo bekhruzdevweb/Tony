@@ -1,7 +1,7 @@
 import "server-only";
 import { requireDb } from "./db";
 import type { Row } from "./followups";
-import { chaseStep, chaseText, UNTIMED_HOUR, type ChaseStep } from "./main-priority-rules";
+import { chaseStep, chaseText, UNTIMED_HOUR, waitedReminder, type ChaseStep } from "./main-priority-rules";
 import { data } from "./reminder-messages";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
@@ -56,7 +56,6 @@ export async function mainPriorityNudge(now: Date): Promise<{ text: string; rows
   const tapped = ((taps.data ?? []) as Logged[]).filter((row) => Number(row.detail?.task_id) === task.id).map((row) => new Date(row.created_at).getTime());
   const touched = Math.max(new Date(task.updated_at).getTime(), ...tapped);
   const sent = (reminders.data ?? []) as { kind: string; state: string; fire_at: string; sent_at: string | null }[];
-  const coming = sent.filter((row) => row.state === "scheduled" && (row.kind === "due" || row.kind === "nudge")).map((row) => new Date(row.fire_at).getTime());
   const last = Math.max(0, ...sent.map((row) => (row.sent_at ? new Date(row.sent_at).getTime() : 0)), ...mine.map((row) => new Date(row.created_at).getTime()));
   const step = chaseStep({
     now,
@@ -64,7 +63,7 @@ export async function mainPriorityNudge(now: Date): Promise<{ text: string; rows
     status: task.status,
     startedAt: task.status === "in_progress" ? new Date(task.updated_at) : undefined,
     minutes: task.duration_minutes,
-    nextReminderAt: coming.length ? new Date(Math.min(...coming)) : undefined,
+    nextReminderAt: waitedReminder(sent, task, timed),
     lastSentAt: last ? new Date(last) : undefined,
     nudgesToday: today.length,
     unanswered: mine.filter((row) => new Date(row.created_at).getTime() > touched).length,

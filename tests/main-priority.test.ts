@@ -5,7 +5,7 @@
  * length, then "Done?"; a reminder still to come is waited for.
  */
 import { describe, expect, it } from "vitest";
-import { chaseStep, chaseText, NUDGE_CAP, type ChaseInput } from "../src/lib/main-priority-rules";
+import { chaseStep, chaseText, NUDGE_CAP, waitedReminder, type ChaseInput } from "../src/lib/main-priority-rules";
 
 const at = (local: string) => new Date(`${local}:00+05:00`);
 const due = at("2026-11-23T09:00");
@@ -40,6 +40,31 @@ describe("when Tony chases it", () => {
   it("a reminder still to come ('in 1 hour', or moved) is waited for; a finished task is left alone", () => {
     expect(chaseStep(base("2026-11-23T10:00", { nextReminderAt: at("2026-11-23T10:30") }))).toBeUndefined();
     expect(chaseStep(base("2026-11-23T10:00", { status: "done" }))).toBeUndefined();
+  });
+});
+
+describe("which reminder the chase waits for", () => {
+  // 23 Nov 04:30: "yes keep it as the main task of the day" on "Make my own IELTS plan", a task with no
+  // time (its one quiet check at 20:00). The chase waited for that check: the first nudge came at 20:16.
+  const plan = { due_at: at("2026-11-23T20:00").toISOString(), anytime: true };
+  const check = { kind: "due", state: "scheduled", fire_at: at("2026-11-23T20:00").toISOString() };
+
+  it("a main priority with no time is chased from 10:30; its own 20:00 check is not waited for", () => {
+    expect(waitedReminder([check], plan, false)).toBeUndefined();
+    const fromTen = at("2026-11-23T10:00");
+    expect(chaseStep({ now: at("2026-11-23T10:30"), due: fromTen, status: "todo", nudgesToday: 0, unanswered: 0, nextReminderAt: waitedReminder([check], plan, false) })).toEqual({ kind: "nudge", n: 1 });
+  });
+
+  it("'in 1 hour' on it is still waited for", () => {
+    const snoozed = { kind: "due", state: "scheduled", fire_at: at("2026-11-23T11:30").toISOString() };
+    expect(waitedReminder([check, snoozed], plan, false)).toEqual(at("2026-11-23T11:30"));
+  });
+
+  it("a main priority with a time of its own waits for its reminder as before", () => {
+    const timed = { due_at: at("2026-11-23T15:00").toISOString(), anytime: false };
+    const own = { kind: "due", state: "scheduled", fire_at: at("2026-11-23T15:00").toISOString() };
+    expect(waitedReminder([own], timed, true)).toEqual(at("2026-11-23T15:00"));
+    expect(waitedReminder([{ ...own, state: "sent" }], timed, true)).toBeUndefined();
   });
 });
 

@@ -654,6 +654,21 @@ describe("Main priority: chased until it is done", () => {
     expect(brief).not.toContain('"Main priority"},": IELTS: Reading');
   });
 
+  it("23 Nov 04:30 'keep it as the main task of the day' on a task with no time: chased from 10:30, not first at 20:16 after its 20:00 check", async () => {
+    vi.setSystemTime(at("2026-11-23T05:00"));
+    const plan = task({ title: "Make my own IELTS plan", due_at: "2026-11-23T20:00", anytime: true, main_priority: true, duration_minutes: 60 });
+    // Its one quiet check of the day, still to come.
+    state.db.insert("reminders", { task_id: plan.id, fire_at: at("2026-11-23T20:00").toISOString(), kind: "due", attempt: 0, state: "scheduled" });
+    const { bot, sent } = recorder();
+    await tick(bot, "2026-11-23T10:29");
+    expect(nudges(sent)).toHaveLength(0);
+    await tick(bot, "2026-11-23T10:30");
+    expect(nudges(sent)).toHaveLength(1);
+    expect(sent[0].text).toContain("Make my own IELTS plan</b> is still waiting, sir: your main priority for today.");
+    await tick(bot, "2026-11-23T11:00");
+    expect(nudges(sent)).toHaveLength(2);
+  });
+
   it("⏰ In 1 hour waits for that reminder; never at night; 'Not today' on a weekly session skips to its next week", async () => {
     const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true });
     const { bot, sent } = recorder();
