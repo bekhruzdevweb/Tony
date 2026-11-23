@@ -26,6 +26,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 | F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |
+| K | Free Time finds its day: each morning, Free Time items go onto light days of the coming week (fewer than 4 tasks), one a day, three at most, with [↩ Back to list]; a day he named that is full is asked about ([No time] [Other time] [Later day] [Inbox]), never sent to the inbox; one question per task | Live, awaiting your check |
 | J | Calm and clear: every line on its own line, 3+ receipts as one short list; after midnight the day just begun is "today"; small things get no time ("anytime", one quiet check at 20:00); three priorities (urgent is chased 15 min after its time, then hourly, until he answers or it is done; important; normal); no clash for two things he put together | Live, awaiting your check |
 | I | Smart inbox: a new thing with no day gets the first day that is not full (7 tasks) at its best free time, one tap to set ([📅 Later day] [✏️ Other time] [📥 Inbox]); the evening poll keeps its day after midnight and sends overflow to the next free day; a yes to Tony's question runs it, several proposals are one ✓; videos are read (cover frame and speech); kept files named in reminders; "forget this file" works | Live, awaiting your check |
 | H | Habits and organizing: habits you choose with streaks (/habits, reminders, the board, Sunday's week), plans' progress, tags (#content), the Plan board (Today · This week · Someday); a short call inside a long block is not a clash | Live, awaiting your check |
@@ -664,6 +665,12 @@ Your idea: the one thing Tony does not let you leave unfinished.
   on its next day), ⏰ In 1 hour, Not today (a weekly session is skipped to its
   next week; anything else moves to tomorrow). Every tap counts as an answer.
 - **The morning brief** names it under the greeting: "⭐ Main priority: … · 09:00".
+
+## Free Time finds its day (K, 23 Nov)
+
+- **Light days.** At 09:30 Tony looks at the next seven days from tomorrow. A day with fewer than 4 tasks (prayers not counted) is light. The Free Time items waiting longest go there, one a day, three at most in one go, each at the best free time. He is told once, with [↩ Back to list] for each; one sent back is left alone for two weeks.
+- **His day is his.** A task he names a day for is never put in the inbox because the day is full. Tony says the day has no free slot and offers [No time] (one reminder at 20:00), [✏️ Other time], [📅 Later day] and [📥 Inbox].
+- **One question per task.** A new question about a task replaces the older one.
 
 ## Calm and clear (J, 23 Nov)
 

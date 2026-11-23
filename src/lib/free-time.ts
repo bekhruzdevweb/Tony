@@ -5,8 +5,11 @@ import { getRoutine } from "./routine";
 import { kindOf, parseClockText } from "./routine-rules";
 import { budgetLeft, notify } from "./safety";
 import { band, freeTimeText, pickFreeItem, type FreeItem, type FreeStats } from "./smart-rules";
+import { choicesFor } from "./routine";
+import { scheduleReminder, settleReminders } from "./reminders";
+import { dayLoads } from "./smart-inbox";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, minuteOfDay, TIMEZONE } from "./time";
+import { addMinutes, dayBounds, formatDay, formatTime, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
  * The 🌙 Free Time list and its suggestions (phase c, 21 Nov). "In my free
@@ -154,4 +157,81 @@ export async function freeTimeList(now = new Date()): Promise<{ text: string; ro
     rows[rows.length - 1].push({ text: `▶️ ${index + 1}`, data: `ft:now:${task.id}` });
   });
   return { text: ["🌙 **Free Time**", ...lines].join("\n"), rows };
+}
+
+// ── Free Time items onto light days (Phase K, 23 Nov) ────────────────────
+
+/** A day with fewer tasks than this is light: one Free Time item may go there. */
+export const LIGHT_DAY_TASKS = 4;
+/** How far ahead Tony looks for light days, from tomorrow. */
+const LIGHT_DAYS_AHEAD = 7;
+/** At most this many are placed in one go, one per day. */
+const PLACED_PER_RUN = 3;
+
+export type Placed = { id: number; title: string; at: Date };
+
+/** The light days from tomorrow on, lightest-first order kept by date: pure, for the tests. */
+export function lightDays(from: string, loads: Map<string, number>, days = LIGHT_DAYS_AHEAD, limit = LIGHT_DAY_TASKS): string[] {
+  const out: string[] = [];
+  let date = from;
+  for (let n = 0; n < days; n++) {
+    if ((loads.get(date) ?? 0) < limit) out.push(date);
+    date = localDate(addMinutes(parseLocalDateTime(`${date}T12:00`)!, 24 * 60));
+  }
+  return out;
+}
+
+/**
+ * "The videos I need to watch in my free time: if I don't have more tasks on some day, schedule it to that
+ * day, but not all of them to the same day … I don't want them kept and never seen again" (23 Nov 05:37).
+ * Once a day: each Free Time item waiting longest goes to a light day in the coming week, one item a day,
+ * at the best free time there, three at most. One he sends back is left alone for two weeks.
+ */
+export async function placeFreeTime(now = new Date()): Promise<Placed[]> {
+  const items = await freeTimeTasks();
+  const waiting = items.filter((task) => !task.due_at);
+  if (waiting.length === 0) return [];
+  const db = requireDb();
+  const sentBack = await db.from("events").select("detail").eq("kind", "freetime_back").gte("created_at", new Date(now.getTime() - 14 * DAY_MS).toISOString()).limit(200);
+  const skip = new Set(((sentBack.data ?? []) as { detail: { task_id?: number } }[]).map((row) => Number(row.detail?.task_id)));
+  const tomorrow = localDate(addMinutes(now, 24 * 60));
+  const loads = await dayLoads(tomorrow, LIGHT_DAYS_AHEAD);
+  const days = lightDays(tomorrow, loads);
+  const placed: Placed[] = [];
+  const queue = waiting.filter((task) => !skip.has(task.id));
+  for (const day of days) {
+    if (placed.length >= PLACED_PER_RUN || queue.length === 0) break;
+    const task = queue[0];
+    const options = await choicesFor(task, parseLocalDateTime(`${day}T12:00`)!, now);
+    const best = options.find((option) => option.at.getTime() > now.getTime());
+    if (!best) continue;
+    const { error } = await db.from("tasks").update({ due_at: best.at.toISOString(), status: "todo", free_time: false }).eq("id", task.id);
+    if (error) continue;
+    await scheduleReminder(task.id, best.at);
+    await logEvent("freetime_placed", { task_id: task.id, day });
+    placed.push({ id: task.id, title: task.title, at: best.at });
+    queue.shift();
+  }
+  return placed;
+}
+
+/** What Tony says about it, with [↩ Back to list] for each. */
+export function placedMessage(placed: Placed[], now: Date): { text: string; rows: { text: string; data: string }[][] } {
+  const lines = placed.map((item) => `- **${item.title}** → ${formatDay(item.at, now)}, **${formatTime(item.at)}**`);
+  return {
+    text: [`🌙 ${placed.length === 1 ? "A lighter day is coming, so I put one thing from your Free Time list on it" : "Lighter days are coming, so I spread these from your Free Time list, one a day"}:`, ...lines].join("\n"),
+    rows: placed.map((item) => [{ text: `↩ Back to list: ${item.title.slice(0, 30)}`, data: `ft:back:${item.id}` }]),
+  };
+}
+
+/** [↩ Back to list]: the item returns to the Free Time list with no date, and is not placed again for two weeks. */
+export async function backToFreeTime(taskId: number): Promise<string> {
+  const db = requireDb();
+  const task = (await db.from("tasks").select().eq("id", taskId).maybeSingle()).data as Task | null;
+  if (!task || !OPEN_STATUSES.includes(task.status)) return "That one is already settled, sir.";
+  const { error } = await db.from("tasks").update({ due_at: null, status: "inbox", free_time: true }).eq("id", taskId);
+  if (error) return "⚠️ That did not save, sir.";
+  await settleReminders(taskId);
+  await logEvent("freetime_back", { task_id: taskId });
+  return `↩ **${task.title}** is back on your 🌙 Free Time list.`;
 }

@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import { sendHtml, track } from "./chat-log";
 import { env } from "./env";
 import { logEvent } from "./events";
-import { countFreeTime, shouldSuggestFreeTime, suggestFreeTime } from "./free-time";
+import { countFreeTime, shouldSuggestFreeTime, suggestFreeTime, placedMessage, placeFreeTime } from "./free-time";
 import { noteFollowUp, sameDayFollowUp, weeklyInboxReview, type Row } from "./followups";
 import { esc, plain } from "./html";
 import type { LibraryItem } from "./library-rules";
@@ -155,6 +155,15 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
     if (quiet || !(await dueToday("budget", "09:00", now))) return;
     const warnings = await budgetWarnings(now);
     if (warnings.length) await send(bot, chatId, ["⚠️ **Budget**", ...warnings].join("\n"));
+  });
+  // Free Time items go onto light days in the coming week, one a day (Phase K): once a day, in the morning.
+  await job("freetime-plan", async () => {
+    if (quiet || !(await dueToday("freetime_plan", "09:30", now))) return;
+    const placed = await placeFreeTime(now);
+    if (placed.length === 0) return;
+    const message = placedMessage(placed, now);
+    await send(bot, chatId, message.text, message.rows, { silent: true });
+    sent++;
   });
   // A document kept before Tony could read it whole (the IELTS plan, 22 Nov) is read again from its copy: one a minute, each once.
   await job("reread", async () => {

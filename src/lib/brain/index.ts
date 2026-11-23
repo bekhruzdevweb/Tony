@@ -634,7 +634,10 @@ export async function think(
         slot = { kind: "split", taskId: id, title: task.title, day, parts: decision.parts, minutes: decision.minutes };
         slotLines.push(splitQuestion({ title: task.title, marks: extra, when: label.when, minutes: decision.minutes, total: task.duration_minutes ?? decision.minutes * 2, parts: decision.parts }));
       } else if (!tiny) {
-        slotLines.push(`✓ **${task.title}** in the inbox${extra}: ${label.plain} is full, sir.`);
+        // The day he named has no free slot (23 Nov 05:10, 05:15, 05:34: three things he asked for "today" went to
+        // the inbox with "Today is full, sir", and no reminder came). It is his day: he chooses, with one tap.
+        slot = { kind: "ask", taskId: id, title: task.title, day, options: [], inbox: true, minutes: taskMinutes(task) };
+        slotLines.push(`**${task.title}**${extra}\n${label.plain.replace(/,$/, "")} has no free slot left. Keep it on that day with no time (one reminder at **20:00**), type a time, or move it to a later day?`);
       }
     } else if (named.size === 0 && undated.length === 1 && planId === undefined && wantsSuggestion(ownWords(text))) {
       // The smart inbox (Phase I, 23 Nov: "suggest me a specific time. Then I just click and it saves until that

@@ -2,7 +2,7 @@ import "server-only";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Message, MessageOrigin, Update } from "grammy/types";
 import { askForSlot, keyboardOf, runAction } from "./actions";
-import { answerFreeTime, freeTimeList } from "./free-time";
+import { answerFreeTime, freeTimeList, backToFreeTime } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
 import { libraryView, loadItem, saveToLibrary } from "./library";
@@ -925,7 +925,7 @@ export function getBot(): Bot | undefined {
     if (payload.startsWith("ft:")) {
       const [, action, id] = payload.split(":");
       await ctx.answerCallbackQuery().catch(() => undefined);
-      const result = action === "list" ? await freeTimeList() : await answerFreeTime(action, Number(id));
+      const result = action === "list" ? await freeTimeList() : action === "back" ? { text: await backToFreeTime(Number(id)) } : await answerFreeTime(action, Number(id));
       if (action === "list") {
         if (chatId !== undefined) await sendMarkdown(bot, chatId, result.text, { keyboard: result.rows?.length ? keyboardOf(result.rows) : undefined });
       } else if (chatId !== undefined && tapped && base !== undefined) {
@@ -1455,6 +1455,9 @@ export function getBot(): Bot | undefined {
       // native box is never reported to Tony, 22 Nov: "why i can't tick the tasks to complete??").
       const shown = boldTimes(named);
       const ticks = hasTaskList(shown) ? withTicks(shown, await openTaskTitles()) : undefined;
+      // One question per task: an older one about the same task goes when a new one is asked (23 Nov 05:02:
+      // "leave it for tmr" got the same question a second time, and both stayed).
+      if (slot && awaitsAnswer(slot)) await retire({ kinds: ["prompt"], taskId: slot.taskId }).catch(() => undefined);
       const sent = await sendMarkdown(bot, ctx.chat!.id, ticks?.markdown ?? shown, { keyboard, ...(ticks?.ticked.length ? { fallback: withoutTicks(ticks.markdown) } : {}) });
       if (ticks?.ticked.length) await logEvent("list_reply", { message_id: sent, markdown: ticks.markdown });
       // Which message this reply became, so a 👎 on it finds its words (phase e).

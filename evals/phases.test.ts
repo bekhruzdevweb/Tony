@@ -1310,3 +1310,33 @@ describe("Phase J: no time for small things, urgent is chased, today is today", 
     expect(rows.find((row) => row.message_id === 708)!.delete_after).toBe(at("2026-11-23T04:52").toISOString());
   });
 });
+
+// ── Phase K (23 Nov 05:37): Free Time onto light days; a full day he named is asked, never the inbox ──
+describe("Phase K: Free Time items find light days; his day is his", () => {
+  it("three Free Time videos, two busy days ahead: one a day on the light days after them, none on the busy ones", async () => {
+    const { placeFreeTime, placedMessage, backToFreeTime } = await import("../src/lib/free-time");
+    for (const date of ["2026-11-24", "2026-11-25"]) for (let n = 0; n < 5; n++) task({ title: `Busy ${date} ${n}`, due_at: `${date}T${String(9 + n).padStart(2, "0")}:00`, duration_minutes: 30 });
+    const videos = ["Watch: Claude Code", "Watch: Storytelling", "Build presentations"].map((title, n) => task({ title, free_time: true, duration_minutes: 30, created_at: at(`2026-11-2${n}T10:00`).toISOString() }));
+    const placed = await placeFreeTime(at("2026-11-23T09:30"));
+    expect(placed.map((item) => local(item.at.toISOString())!.slice(0, 10))).toEqual(["2026-11-26", "2026-11-27", "2026-11-28"]);
+    expect(placed.map((item) => item.title)).toEqual(videos.map((row) => row.title));
+    expect(byTitle("Watch: Claude Code").free_time).toBe(false);
+    expect(placedMessage(placed, at("2026-11-23T09:30")).text).toContain("- **Watch: Claude Code** → Thu 26 Nov");
+    // Sent back: on the list again, and left alone the next morning.
+    await backToFreeTime(Number(videos[0].id));
+    expect(byTitle("Watch: Claude Code").due_at).toBeNull();
+    expect(byTitle("Watch: Claude Code").free_time).toBe(true);
+    vi.setSystemTime(at("2026-11-24T09:30"));
+    expect(await placeFreeTime(at("2026-11-24T09:30"))).toEqual([]);
+  });
+
+  it("05:34 'at the end of today remind me to shoot videos today' on a full day: asked with [No time], never 'in the inbox: today is full'", async () => {
+    for (let h = 6; h < 23; h++) task({ title: `Block ${h}`, due_at: `2026-11-23T${String(h).padStart(2, "0")}:00`, duration_minutes: 60 });
+    const result = await run("at the end of today remind me to shoot videos today", "2026-11-23T05:34", [tools(["add_task", { title: "Shoot videos V1–V10", day: "2026-11-23", duration: 120, reply: "" }])]);
+    expect(result.replies[0]).not.toMatch(/in the inbox/);
+    expect(result.replies[0]).toContain("has no free slot left");
+    const { slotButtons } = await import("../src/lib/slot-text");
+    expect(slotButtons(result.thought!.slot as never).map((row) => row.map((button) => button.text))).toEqual([["No time", "✏️ Other time"], ["📅 Later day", "📥 Inbox"]]);
+  });
+});
+
