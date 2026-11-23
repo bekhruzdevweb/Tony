@@ -218,7 +218,12 @@ export const TOOLS: ToolDefinition[] = [
   tool(
     "main_priority",
     "His main priority (⭐ in the list): the one thing he must finish. Tony chases it in code until it is done: a nudge every 30 minutes from half an hour after its time, hourly when he does not answer, never at night, at most 8 a day. set: the task's id, or the ids of one plan's sessions (then one is chased each day); setting one replaces the last. clear: he no longer wants it chased.",
-    { action: { type: "string", enum: ["set", "clear"] }, task_ids: { type: "array", items: { type: "integer" } }, reply },
+    {
+      action: { type: "string", enum: ["set", "clear"] },
+      task_ids: { type: "array", items: { type: "integer" } },
+      add: { type: "boolean", description: "He wants this one as well as the main priority he already has (\"also\", \"both\"): the others stay." },
+      reply,
+    },
     ["action"],
   ),
   tool(
@@ -853,9 +858,11 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       check("main_priority", found.error);
       const open = ((found.data ?? []) as { id: number; title: string; status: string; due_at: string | null }[]).filter((row) => OPEN_STATUSES.includes(row.status as Task["status"]));
       if (open.length === 0) return fail("none of those tasks is open");
-      // One main priority: the last one is cleared.
+      // One main priority, the last one cleared, unless he wants this one as well ("it is also the main task",
+      // "both of them main", 23 Nov 05:47): then they are chased one after the other, earliest first.
       const keep = open.map((row) => row.id);
-      const cleared = await db.from("tasks").update({ main_priority: false }).eq("main_priority", true).not("id", "in", `(${keep.join(",")})`).select("title");
+      const also = args.add === true || /\b(also|too|both|as well|another|second)\b/i.test(said ?? "");
+      const cleared = also ? { data: [], error: null } : await db.from("tasks").update({ main_priority: false }).eq("main_priority", true).not("id", "in", `(${keep.join(",")})`).select("title");
       check("main_priority", cleared.error);
       const set = await db.from("tasks").update({ main_priority: true }).in("id", keep).select("id, title, due_at");
       check("main_priority", set.error);

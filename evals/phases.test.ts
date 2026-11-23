@@ -1338,5 +1338,11 @@ describe("Phase K: Free Time items find light days; his day is his", () => {
     const { slotButtons } = await import("../src/lib/slot-text");
     expect(slotButtons(result.thought!.slot as never).map((row) => row.map((button) => button.text))).toEqual([["No time", "✏️ Other time"], ["📅 Later day", "📥 Inbox"]]);
   });
-});
 
+  it("05:15 'it is also main task of the day': a second main priority, the first one stays", async () => {
+    const ielts = task({ title: "Make my own IELTS plan", main_priority: true });
+    const checker = task({ title: "Build homework checker AI" });
+    await run("it is also main task of the day", "2026-11-23T05:47", [tools(["main_priority", { action: "set", task_ids: [checker.id] }])]);
+    expect(tasks().filter((row) => row.main_priority).map((row) => row.id)).toEqual([ielts.id, checker.id]);
+  });
+});
