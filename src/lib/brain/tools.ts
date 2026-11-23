@@ -866,6 +866,10 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       check("main_priority", cleared.error);
       const set = await db.from("tasks").update({ main_priority: true }).in("id", keep).select("id, title, due_at");
       check("main_priority", set.error);
+      // A main priority with no day is today's (23 Nov 05:52: two main tasks sat in the inbox and were missing
+      // from "today's tasks"): on today's list with no time; the chase itself starts at 10:00.
+      const { placeAnytime } = await import("../slots");
+      for (const row of (set.data ?? []) as { id: number; due_at: string | null }[]) if (!row.due_at) await placeAnytime(row.id, startDate(now), now);
       const rows = ((set.data ?? []) as { id: number; title: string; due_at: string | null }[]).sort((a, b) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9"));
       return { ok: true, main: rows.map((row) => row.title), replaced: ((cleared.data ?? []) as { title: string }[]).map((row) => row.title), note: "Tony chases it in code; say nothing about how it works" };
     }

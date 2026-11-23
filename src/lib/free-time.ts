@@ -8,8 +8,8 @@ import { band, freeTimeText, pickFreeItem, type FreeItem, type FreeStats } from 
 import { choicesFor } from "./routine";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { dayLoads } from "./smart-inbox";
-import { OPEN_STATUSES, type Task } from "./tasks";
-import { addMinutes, dayBounds, formatDay, formatTime, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE } from "./time";
+import { ANYTIME_HOUR, OPEN_STATUSES, type Task } from "./tasks";
+import { addMinutes, dayBounds, formatDay, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE } from "./time";
 
 /**
  * The 🌙 Free Time list and its suggestions (phase c, 21 Nov). "In my free
@@ -205,11 +205,13 @@ export async function placeFreeTime(now = new Date()): Promise<Placed[]> {
     const options = await choicesFor(task, parseLocalDateTime(`${day}T12:00`)!, now);
     const best = options.find((option) => option.at.getTime() > now.getTime());
     if (!best) continue;
-    const { error } = await db.from("tasks").update({ due_at: best.at.toISOString(), status: "todo", free_time: false }).eq("id", task.id);
+    // The day only: he gave these no time, so Tony gives none (one reminder at 20:00 that day).
+    const at = parseLocalDateTime(`${day}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
+    const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo", free_time: false, anytime: true }).eq("id", task.id);
     if (error) continue;
-    await scheduleReminder(task.id, best.at);
+    await scheduleReminder(task.id, at);
     await logEvent("freetime_placed", { task_id: task.id, day });
-    placed.push({ id: task.id, title: task.title, at: best.at });
+    placed.push({ id: task.id, title: task.title, at });
     queue.shift();
   }
   return placed;
@@ -217,7 +219,7 @@ export async function placeFreeTime(now = new Date()): Promise<Placed[]> {
 
 /** What Tony says about it, with [↩ Back to list] for each. */
 export function placedMessage(placed: Placed[], now: Date): { text: string; rows: { text: string; data: string }[][] } {
-  const lines = placed.map((item) => `- **${item.title}** → ${formatDay(item.at, now)}, **${formatTime(item.at)}**`);
+  const lines = placed.map((item) => `- **${item.title}** → ${formatDay(item.at, now)}, no time`);
   return {
     text: [`🌙 ${placed.length === 1 ? "A lighter day is coming, so I put one thing from your Free Time list on it" : "Lighter days are coming, so I spread these from your Free Time list, one a day"}:`, ...lines].join("\n"),
     rows: placed.map((item) => [{ text: `↩ Back to list: ${item.title.slice(0, 30)}`, data: `ft:back:${item.id}` }]),
@@ -229,7 +231,7 @@ export async function backToFreeTime(taskId: number): Promise<string> {
   const db = requireDb();
   const task = (await db.from("tasks").select().eq("id", taskId).maybeSingle()).data as Task | null;
   if (!task || !OPEN_STATUSES.includes(task.status)) return "That one is already settled, sir.";
-  const { error } = await db.from("tasks").update({ due_at: null, status: "inbox", free_time: true }).eq("id", taskId);
+  const { error } = await db.from("tasks").update({ due_at: null, status: "inbox", free_time: true, anytime: false }).eq("id", taskId);
   if (error) return "⚠️ That did not save, sir.";
   await settleReminders(taskId);
   await logEvent("freetime_back", { task_id: taskId });
