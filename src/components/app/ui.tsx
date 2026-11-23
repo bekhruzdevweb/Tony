@@ -454,7 +454,7 @@ export function Empty({ children, art }: { children: ReactNode; art?: string }) 
     <div className="mt-12 flex flex-col items-center px-6 text-center">
       {art && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={`/brand/art/${art}.png`} alt="" width={220} height={220} className="mb-4 size-[220px] object-contain" onError={(event) => (event.currentTarget.style.display = "none")} />
+        <img src={`/brand/art/${art}.png`} alt="" width={220} height={220} className="art-in mb-4 size-[220px] object-contain" onError={(event) => (event.currentTarget.style.display = "none")} />
       )}
       <p className="text-sub text-secondary">{children}</p>
     </div>

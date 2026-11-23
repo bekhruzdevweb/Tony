@@ -187,19 +187,52 @@ textarea {
   animation: tony-check-draw 220ms 60ms ease-out forwards;
 }
 
+/* Motion: one calm curve everywhere (the iOS sheet curve), short and never bouncy. */
+:root {
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.overflow-y-auto {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Every button answers the finger at once: it dips slightly and springs back. */
+button {
+  transition:
+    scale 180ms var(--ease-apple),
+    opacity 180ms var(--ease-apple),
+    background-color 180ms var(--ease-apple),
+    color 180ms var(--ease-apple);
+}
+
+button:active:not(:disabled):not(.cursor-default) {
+  scale: 0.96;
+  opacity: 0.7;
+  transition-duration: 60ms;
+}
+
+button.w-full:active:not(:disabled):not(.cursor-default) {
+  scale: 0.985;
+}
+
+/* Sheets rise from the bottom edge. */
 @keyframes tony-sheet-up {
   from {
-    transform: translateY(24px);
-    opacity: 0;
+    transform: translateY(100%);
   }
   to {
     transform: translateY(0);
-    opacity: 1;
   }
 }
 
 .sheet-up {
-  animation: tony-sheet-up 200ms ease-out;
+  animation: tony-sheet-up 420ms var(--ease-apple);
+  will-change: transform;
 }
 
 @keyframes tony-fade {
@@ -212,15 +245,109 @@ textarea {
 }
 
 .fade-in {
-  animation: tony-fade 160ms ease-out;
+  animation: tony-fade 240ms ease-out;
+}
+
+/* Changing screens: the new one settles in. */
+@keyframes tony-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.view-in {
+  animation: tony-view-in 320ms var(--ease-apple);
+}
+
+/* The menu slides in from the side; its sub-pages push in from the right. */
+@keyframes tony-menu-in {
+  from {
+    transform: translateX(-24%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.menu-in {
+  animation: tony-menu-in 380ms var(--ease-apple);
+}
+
+@keyframes tony-push-in {
+  from {
+    transform: translateX(28px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.push-in {
+  animation: tony-push-in 320ms var(--ease-apple);
+}
+
+/* Toasts drop from the top. */
+@keyframes tony-toast-in {
+  from {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.toast-in {
+  animation: tony-toast-in 360ms var(--ease-apple);
+}
+
+/* Pictures on empty screens float in gently. */
+@keyframes tony-art-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.art-in {
+  animation: tony-art-in 520ms 60ms var(--ease-apple) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .check-pop,
   .check-draw,
   .sheet-up,
-  .fade-in {
+  .fade-in,
+  .view-in,
+  .menu-in,
+  .push-in,
+  .toast-in,
+  .art-in {
     animation: none;
     stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+
+  button:active {
+    scale: 1 !important;
   }
 }

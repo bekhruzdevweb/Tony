@@ -231,6 +231,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
         </button>
       </div>
 
+      <div key={tab} className="view-in flex min-h-0 flex-1 flex-col">
       {tab === "today" && <TodayScreen {...screen} onQuickAdd={tell} onReschedule={reschedule} />}
       {tab === "inbox" && <InboxScreen {...screen} onFreeTime={() => setTab("freetime")} />}
       {tab === "freetime" && <FreeTimeScreen {...screen} />}
@@ -241,6 +242,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
       {tab === "board" && <BoardScreen {...screen} onLane={lane} />}
       {projectId !== undefined && <ProjectScreen {...screen} projectId={projectId} />}
       {tab === "chat" && <ChatScreen state={state} onSend={tell} onVoice={voice} />}
+      </div>
 
       <nav aria-label="Main" className="safe-bottom shrink-0 border-t border-hairline bg-background md:hidden">
         <div className="relative grid h-14 grid-cols-5">
@@ -315,7 +317,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
       )}
 
       {toast && (
-        <div role="status" className="fade-in pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-[calc(env(safe-area-inset-top)+12px)]">
+        <div role="status" className="toast-in pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-[calc(env(safe-area-inset-top)+12px)]">
           <p className={`max-w-sm rounded-2xl px-4 py-3 text-sub shadow-xl ${toast.tone === "error" ? "bg-overdue text-white" : "bg-ink text-background"}`}>{toast.text}</p>
         </div>
       )}

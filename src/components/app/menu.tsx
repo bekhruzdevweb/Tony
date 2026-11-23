@@ -58,7 +58,7 @@ export function Menu(props: {
 
   return (
     <div className="fade-in fixed inset-0 z-30 flex justify-center bg-black/40" onClick={onClose}>
-      <div className="safe-top safe-bottom flex h-full w-full max-w-md flex-col bg-background" onClick={(event) => event.stopPropagation()}>
+      <div className="menu-in safe-top safe-bottom flex h-full w-full max-w-md flex-col bg-background" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between px-2 pt-2">
           {view.name === "menu" ? (
             <span className="w-11" />
@@ -73,7 +73,7 @@ export function Menu(props: {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 pb-8">
+        <div key={view.name === "project" ? `project:${view.id}` : view.name} className={`flex-1 overflow-y-auto px-4 pb-8 ${view.name === "menu" ? "" : "push-in"}`}>
           {view.name === "menu" && (
             <>
               <Section title="Projects">
