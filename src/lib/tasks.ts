@@ -38,11 +38,20 @@ export type Task = {
 
 export const OPEN_STATUSES: TaskStatus[] = ["inbox", "todo", "in_progress"];
 
+/** Tasks he does together on purpose carry this tag: they are never reported as a clash with each other. */
+export const TOGETHER_TAG = "together";
+
+/** A day's tasks in reading order: timed ones by time, then the ones with no time, his main priorities first. */
+export function inDayOrder<T extends { due_at: string | null; anytime?: boolean | null; main_priority?: boolean | null }>(tasks: T[]): T[] {
+  const rank = (task: T) => (task.anytime ? (task.main_priority ? 1 : 2) : 0);
+  return [...tasks].sort((a, b) => rank(a) - rank(b) || (a.due_at ?? "").localeCompare(b.due_at ?? ""));
+}
+
 /** An anytime task's check comes at this hour of its day (Phase J). */
 export const ANYTIME_HOUR = 20;
 
 /** A task's time as he reads it: "09:00", or "anytime" for a task with no time (Phase J). */
-export const clockOf = (task: { due_at: string | null; anytime?: boolean | null }): string => (task.anytime ? "anytime" : task.due_at ? formatTime(new Date(task.due_at)) : "");
+export const clockOf = (task: { due_at: string | null; anytime?: boolean | null }): string => (task.anytime ? "no time" : task.due_at ? formatTime(new Date(task.due_at)) : "");
 
 /**
  * Priorities as he named them (23 Nov): urgent (1) is chased the same day: 15 minutes after its time if

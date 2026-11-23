@@ -2,7 +2,7 @@ import "server-only";
 import { InlineKeyboard } from "grammy";
 import { requireDb } from "./db";
 import { b, code, esc, expandable, i } from "./html";
-import { clockOf, isPrayer, OPEN_STATUSES, type Task } from "./tasks";
+import { clockOf, inDayOrder, isPrayer, OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, localDate, TIMEZONE } from "./time";
 
 /**
@@ -66,7 +66,10 @@ export async function dayView(day: Date, now = new Date(), options: { title?: st
   // Overdue means past its time and not started; for a future day, anything from before that day.
   const cutoff = isToday ? now.getTime() : start.getTime();
   const overdue = isToday || day.getTime() < now.getTime() ? dated.filter((t) => due(t) < cutoff && t.status !== "in_progress") : [];
-  const open = dated.filter((t) => !overdue.includes(t) && due(t) >= start.getTime());
+  // A task with no time is never overdue during its day, and is listed after the timed ones.
+  const stillToday = (t: Task) => Boolean(t.anytime) && due(t) >= start.getTime();
+  for (let n = overdue.length - 1; n >= 0; n--) if (stillToday(overdue[n])) overdue.splice(n, 1);
+  const open = inDayOrder(dated.filter((t) => !overdue.includes(t) && due(t) >= start.getTime()));
   const done = doneRows.data as Task[];
 
   const name = options.title ?? (isToday ? "Today" : localDate(day) === localDate(addMinutes(now, 24 * 60)) ? "Tomorrow" : weekday(day));

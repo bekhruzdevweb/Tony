@@ -213,7 +213,7 @@ export function taskLine(
   noteChars = 160,
 ): string {
   const parts = [`#${task.id} ${task.title}`];
-  parts.push(task.due_at ? (task.anytime ? `${formatWhen(new Date(task.due_at), now).replace(/, \d{2}:\d{2}$/, "")}, anytime (no time)` : formatWhen(new Date(task.due_at), now)) : task.free_time ? "🌙 Free Time list, no date" : "inbox, no date");
+  parts.push(task.due_at ? (task.anytime ? `${formatWhen(new Date(task.due_at), now).replace(/, \d{2}:\d{2}$/, "")}, no time` : formatWhen(new Date(task.due_at), now)) : task.free_time ? "🌙 Free Time list, no date" : "inbox, no date");
   if (task.status === "in_progress") parts.push("started");
   if (task.due_at && new Date(task.due_at).getTime() < now.getTime() && task.status !== "in_progress") parts.push("overdue");
   if (task.persistent) parts.push("persistent");

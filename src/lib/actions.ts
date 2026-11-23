@@ -207,7 +207,7 @@ export async function runAction(action: Action, taskId: number, arg: number | un
         const at = parseLocalDateTime(`${localDate(hisTomorrow(now))}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
         await updateTask(task.id, { due_at: at.toISOString(), status: "todo" });
         await scheduleReminder(task.id, at);
-        return { text: `✓ ${b(task.title)} → ${b(`${formatWhen(at, now).replace(/, \d{2}:\d{2}$/, "")}, anytime`)}`, keyboard: null };
+        return { text: `✓ ${b(task.title)} → ${b(`${formatWhen(at, now).replace(/, \d{2}:\d{2}$/, "")}, no time`)}`, keyboard: null };
       }
       const slot = await timeOnDay(task, hisTomorrow(now), now);
       if (!slot) return { text: `Tomorrow is full, sir; ${b(task.title)} stays where it is.`, keyboard: null };

@@ -1264,7 +1264,7 @@ describe("Phase J: no time for small things, urgent is chased, today is today", 
     expect(room.anytime).toBe(true);
     expect(local(room.due_at)).toBe("2026-11-23T20:00");
     expect(result.thought?.slot).toBeUndefined();
-    expect(result.replies[0]).toBe("✓ **Clean my room** → today, Mon 23 Nov, anytime");
+    expect(result.replies[0]).toBe("✓ **Clean my room** → today, Mon 23 Nov, no time");
   });
 
   it("'today remind me to make an IELTS plan' at 04:27: 'today, Mon 23 Nov', never 'tomorrow'", async () => {
@@ -1345,4 +1345,20 @@ describe("Phase K: Free Time items find light days; his day is his", () => {
     await run("it is also main task of the day", "2026-11-23T05:47", [tools(["main_priority", { action: "set", task_ids: [checker.id] }])]);
     expect(tasks().filter((row) => row.main_priority).map((row) => row.id)).toEqual([ielts.id, checker.id]);
   });
+
+  it("08:00 brief: the list is not repeated above the pinned board, and things he does together are no clash", async () => {
+    const { clashLinesFor } = await import("../src/lib/brain/checks");
+    const workout = task({ title: "Workout: Upper A", due_at: "2026-11-23T18:00", duration_minutes: 40, tags: ["workout", "together"] });
+    const stretch = task({ title: "Daily stretching", due_at: "2026-11-23T18:00", duration_minutes: 22, tags: ["together"] });
+    expect(clashLinesFor([workout, stretch] as never)).toEqual([]);
+    const { inDayOrder } = await import("../src/lib/tasks");
+    const rows = [
+      { title: "No time", due_at: "2026-11-23T15:00:00Z", anytime: true },
+      { title: "Evening", due_at: "2026-11-23T16:00:00Z" },
+      { title: "Main, no time", due_at: "2026-11-23T15:00:00Z", anytime: true, main_priority: true },
+      { title: "Morning", due_at: "2026-11-23T04:00:00Z" },
+    ];
+    expect(inDayOrder(rows).map((row) => row.title)).toEqual(["Morning", "Evening", "Main, no time", "No time"]);
+  });
 });
+

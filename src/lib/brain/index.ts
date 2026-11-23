@@ -14,7 +14,7 @@ import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
 import { logEvent } from "../events";
 import { logMessage, recentMessages, type Channel } from "../messages";
-import { OPEN_STATUSES, type Task } from "../tasks";
+import { OPEN_STATUSES, TOGETHER_TAG, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
@@ -690,6 +690,8 @@ export async function think(
     // Only a time set in this turn can make a clash worth saying (adding a video to a task makes none).
     // Two things he put together on purpose ("I'm gonna do both at the same time", 23 Nov 04:23) are no clash.
     const together = /\b(same time|together|at once|both)\b/i.test(ownWords(text));
+    // …and stay together: both get the "together" tag, so no later brief or reply calls them a clash.
+    if (together) await tagTogether([...stored.values()].filter((task) => changes.get(task.id)?.wrote?.due_at !== undefined && task.due_at)).catch((error) => console.error("Together:", error));
     clash = together ? undefined : await findClash([...stored.values()].filter((task) => !decided.has(task.id) && changes.get(task.id)?.wrote?.due_at !== undefined), now);
     if (askComplete && stored.get(askComplete.taskId)?.status === "done") askComplete = undefined;
     if (askComplete) reply = `${reply}\n\nEvery part of **${askComplete.title}** is done, sir. Mark the task itself done?`;
@@ -905,4 +907,18 @@ export async function dryRun(messageId: number): Promise<{ said: string; reply: 
     calls: (answer.tool_calls ?? []).map((call) => ({ name: call.function.name, args: JSON.parse(call.function.arguments || "{}") })),
     model: model ?? env.anthropicModel,
   };
+}
+
+/** Tasks he put at the same time on purpose, and the ones already at that time, get the "together" tag. */
+async function tagTogether(tasks: Task[]): Promise<void> {
+  const db = requireDb();
+  for (const task of tasks) {
+    const same = await db.from("tasks").select("id, tags").in("status", OPEN_STATUSES).eq("due_at", task.due_at!);
+    const rows = (same.data ?? []) as { id: number; tags: string[] | null }[];
+    if (rows.length < 2) continue;
+    for (const row of rows) {
+      if (row.tags?.includes(TOGETHER_TAG)) continue;
+      await db.from("tasks").update({ tags: [...(row.tags ?? []), TOGETHER_TAG] }).eq("id", row.id);
+    }
+  }
 }

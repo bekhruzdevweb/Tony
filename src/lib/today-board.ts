@@ -10,7 +10,7 @@ import { progress, subtasksFor } from "./subtasks";
 import { finishTask } from "./recurrence";
 import { scheduleReminder } from "./reminders";
 import { getSettings, updateSettings } from "./settings";
-import { clockOf, OPEN_STATUSES, type Task } from "./tasks";
+import { clockOf, inDayOrder, OPEN_STATUSES, type Task } from "./tasks";
 import { habitStats, isHabit } from "./habits";
 import { dayBounds, formatTime, localDate, parseLocalDateTime, TIMEZONE } from "./time";
 
@@ -120,7 +120,9 @@ export async function boardView(day: Date): Promise<Board> {
   if (openRows.error || finishedRows.error) throw new Error(`boardView: ${(openRows.error ?? finishedRows.error)!.message}`);
 
   // The same split the app's Today view uses, so the counts always agree.
-  const { carried, timed, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
+  const { carried, timed: byTime, done, total } = splitToday([...(openRows.data as Task[]), ...(finishedRows.data as Task[])], day);
+  // Timed ones by time, then the ones with no time, his main priorities first.
+  const timed = inDayOrder(byTime);
 
   const bell = (task: Task) => (task.persistent ? " 🔔" : "");
   // A habit's run on its line ("Reading 🔥4"), from the log; nothing for a plan's sessions.

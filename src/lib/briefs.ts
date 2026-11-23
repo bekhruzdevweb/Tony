@@ -17,7 +17,7 @@ import { clashLinesFor } from "./brain/checks";
 import { weekLine } from "./habit-view";
 import { sayAloud } from "./speech";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
-import { dayBounds, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
+import { dayBounds, formatDay, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
 import { chasedToday } from "./main-priority";
 import { dayView, loadProjects, taskLine } from "./views";
 
@@ -150,8 +150,17 @@ async function morningBrief(bot: Bot, chatId: number, settings: Settings, now: D
   const focus = goals.length ? `🎯 ${b("Focus")}: ${goals.map((goal) => esc(goal.fact)).join(" · ")}` : undefined;
   // His main priority today (22 Nov): the one thing Tony chases until it is done.
   const chased = await chasedToday(now).catch(() => undefined);
-  const main = chased ? `⭐ ${b("Main priority")}: ${esc(chased.task.title)}${chased.timed ? ` · ${b(formatTime(chased.due))}` : ""}` : undefined;
-  const html = ["Good morning, sir.", focus, main, open ? markdownToHtml(open.text) : undefined, view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
+  // Every main priority is named (23 Nov 08:00: he has two, the brief named one).
+  const dayEnd = dayBounds(now, settings.timezone).end.getTime();
+  const mains = tasks.filter((task) => task.main_priority && (!task.due_at || new Date(task.due_at).getTime() < dayEnd));
+  const main = mains.length > 1 ? `⭐ ${b("Main priorities")}: ${mains.map((task) => esc(task.title)).join(" · ")}` : chased ? `⭐ ${b("Main priority")}: ${esc(chased.task.title)}${chased.timed ? ` · ${b(formatTime(chased.due))}` : ""}` : undefined;
+  // The day's list is on the pinned Today message right under the brief: the brief only counts it
+  // (23 Nov 08:00: the same 20 lines came twice, one above the other).
+  const boardThere = "today_message_id" in settings;
+  const timedOpen = view.open.filter((task) => !task.anytime);
+  const untimed = view.open.length - timedOpen.length;
+  const summary = `📅 ${b(`Today · ${formatDay(now, now)}`)}\n${view.open.length === 0 ? "Nothing is planned." : [timedOpen.length ? `${timedOpen.length} with a time${timedOpen[0]?.due_at ? `, first at ${b(formatTime(new Date(timedOpen[0].due_at)))}` : ""}` : "", untimed ? `${untimed} with no time` : ""].filter(Boolean).join(" · ")}${view.open.length ? ". The list is pinned below." : ""}`;
+  const html = ["Good morning, sir.", focus, main, open ? markdownToHtml(open.text) : undefined, boardThere ? summary : view.html, clashLines.length ? clashLines.join("\n") : undefined, coach.line ? `💬 ${i(esc(coach.line))}` : undefined, coach.section, inboxCount > 0 ? `📥 ${i(`${inboxCount} in the inbox`)}` : undefined]
     .filter(Boolean)
     .join("\n\n");
 

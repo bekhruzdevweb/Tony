@@ -115,7 +115,7 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
     if (action.anytime) {
       const day = new Date(action.due_at);
       const relative = relativeDay(day, now);
-      return `✓ ${title} → ${relative ? `${relative}, ` : ""}${formatDay(day, now)}, anytime`;
+      return `✓ ${title} → ${relative ? `${relative}, ` : ""}${formatDay(day, now)}, no time`;
     }
     const until = action.repeat_until ? parseLocalDateTime(`${action.repeat_until}T12:00`) : undefined;
     const repeats = action.repeat ? ` · 🔁 ${action.repeat}${until ? ` until ${formatDay(until, now)}` : ""}` : "";
@@ -133,7 +133,7 @@ export function confirmationFor(actions: DoneAction[], now: Date, said?: string)
   return [`✓ ${lines.length} ${lines.every((text) => text.includes(" → ")) ? "set" : "updated"}:`, ...items, ...(shared ? [`${shared.replace(/^ · /, "")} for all ${lines.length}`] : [])].join("\n");
 }
 
-export type TimedTask = { id: number; title: string; due_at: string | null; duration_minutes?: number | null; kind?: string | null; status: string; anytime?: boolean | null };
+export type TimedTask = { id: number; title: string; due_at: string | null; duration_minutes?: number | null; kind?: string | null; status: string; anytime?: boolean | null; tags?: string[] | null };
 
 const OPEN = new Set(["inbox", "todo", "in_progress"]);
 const CLASH_MINUTES = 30;
@@ -164,6 +164,8 @@ export function clashesWith(task: TimedTask, others: TimedTask[]): TimedTask[] {
   return others.filter((other) => {
     if (other.id === task.id || !other.due_at || other.kind === "prayer" || other.anytime || !OPEN.has(other.status)) return false;
     if (breakInside(task, other) || breakInside(other, task)) return false;
+    // Two things he does together on purpose (23 Nov: workout and stretching at 18:00, flagged again in the 08:00 brief).
+    if (task.tags?.includes("together") && other.tags?.includes("together")) return false;
     const otherStart = new Date(other.due_at).getTime();
     const otherEnd = otherStart + (other.duration_minutes ?? 0) * 60_000;
     const near = Math.abs(otherStart - start) < CLASH_MINUTES * 60_000;
