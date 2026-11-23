@@ -317,6 +317,8 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   const only = options.taskIds ? new Set(options.taskIds) : undefined;
   const candidates = tasks
     .filter((task) => task.kind !== "prayer")
+    // A task he chose "no time" for is never given one by a plan (his choice wins; the evening poll moves it on).
+    .filter((task) => !task.anytime)
     .filter((task) => (only ? only.has(task.id) : task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime())))
     .sort((x, y) => x.priority - y.priority || Number(!x.due_at) - Number(!y.due_at) || (x.due_at ?? x.created_at).localeCompare(y.due_at ?? y.created_at))
     .slice(0, options.all ? 30 : options.scope === "week" ? 14 : 8);
@@ -349,6 +351,16 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   for (const task of candidates) {
     const proposal = reasons.get(task.id);
     const declined = proposed.leftOut.get(task.id);
+    // A task with a time of its own keeps that time of day on the first planned day where it is still ahead
+    // (23 Nov 21:28: a plan moved Daily stretching from his 18:00 to 19:00, away from the workout it goes with).
+    // His time wins over a free slot; only a task with no time of its own is given one.
+    const own = task.due_at ? days.map((day) => parseLocalDateTime(`${localDate(day)}T${formatTime(new Date(task.due_at!))}`)).find((at) => at && at.getTime() >= earliest.getTime()) : undefined;
+    if (own) {
+      const minutesOwn = task.duration_minutes || estimateMinutes(task.title);
+      items.push({ task_id: task.id, title: task.title, at: own.toISOString(), why: "its own time, as you set it" });
+      busyTime.push({ start: own.getTime(), end: own.getTime() + minutesOwn * MINUTE, title: task.title });
+      continue;
+    }
     // He asked for all of them: a task the model left out still goes wherever there is free time.
     if (declined !== undefined && !proposal?.at && !options.all) {
       leftOut.push({ task_id: task.id, title: task.title, why: declined || "it did not fit" });

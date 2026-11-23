@@ -1373,3 +1373,54 @@ describe("Phase K: Free Time items find light days; his day is his", () => {
   });
 });
 
+// ── His choice wins (23 Nov 22:37): for every rule where Tony acts by itself, the case where he chose otherwise ──
+describe("His choice wins over every automatic rule", () => {
+  it("planner: a task with a time of its own keeps that time of day; a 'no time' task is never given one", async () => {
+    const stretch = task({ title: "Daily stretching", due_at: "2026-11-23T18:00", duration_minutes: 22, repeat_rule: "daily", tags: ["together"] });
+    task({ title: "Workout: Legs A", due_at: "2026-11-24T18:00", duration_minutes: 45, tags: ["together"] });
+    const noTime = task({ title: "Make my own IELTS plan", due_at: "2026-11-23T20:00", anytime: true });
+    const inbox = task({ title: "Buy a zippered shirt", duration_minutes: 30 });
+    await run("plan tomorrow", "2026-11-23T21:28", [
+      tools(["plan", { scope: "day", day: "tomorrow", all: true }]),
+      // The planner's model moving the stretching to "a free slot later in the day", as it did.
+      tools(["propose", { items: [{ id: stretch.id, date: "2026-11-24", time: "19:00", why: "a free slot later in the day" }, { id: inbox.id, date: "2026-11-24", time: "15:45", why: "a gap" }], left_out: [], why: "Fitted around your events." }]),
+    ]);
+    const plan = state.db.rows("plans").at(-1)! as { items: { task_id: number; at: string; why: string }[]; left_out: { task_id: number }[] };
+    const item = (id: unknown) => plan.items.find((row) => row.task_id === id);
+    expect(local(item(stretch.id)!.at)).toBe("2026-11-24T18:00");
+    expect(item(stretch.id)!.why).toBe("its own time, as you set it");
+    expect(item(noTime.id)).toBeUndefined();
+    expect(plan.left_out.some((row) => row.task_id === noTime.id)).toBe(false);
+    expect(local(item(inbox.id)!.at)).toBe("2026-11-24T15:45");
+  });
+
+  it("[Tomorrow] keeps his time of day even when something else is already there", async () => {
+    task({ title: "Workout: Legs A", due_at: "2026-11-24T18:00", duration_minutes: 45 });
+    const stretch = task({ title: "Daily stretching", due_at: "2026-11-23T18:00", duration_minutes: 22 });
+    vi.setSystemTime(at("2026-11-23T21:00"));
+    await runAction("tomorrow", Number(stretch.id), undefined, at("2026-11-23T21:00"));
+    expect(local(byTitle("Daily stretching").due_at)).toBe("2026-11-24T18:00");
+  });
+
+  it("smart inbox: a day he names is used even when it is over the daily limit, and a time he gives is never replaced", async () => {
+    for (let n = 0; n < 9; n++) task({ title: `Busy ${n}`, due_at: `2026-11-24T${String(8 + n).padStart(2, "0")}:00`, duration_minutes: 20 });
+    const named = await run("remind me to call the bank tomorrow", "2026-11-23T10:00", [tools(["add_task", { title: "Call the bank", day: "2026-11-24", duration: 15, reply: "" }])]);
+    expect(named.thought?.slot?.day).toBe("2026-11-24");
+    await run("call the tailor tomorrow at 9:30", "2026-11-23T10:05", [tools(["add_task", { title: "Call the tailor", due_at: "2026-11-24T09:30", reply: "" }])]);
+    expect(local(byTitle("Call the tailor").due_at)).toBe("2026-11-24T09:30");
+  });
+
+  it("Free Time: an item he gave a day to is left alone, and one he sent back is not placed again", async () => {
+    const { placeFreeTime, backToFreeTime } = await import("../src/lib/free-time");
+    const dated = task({ title: "Watch: dated", free_time: true, due_at: "2026-11-30T12:00" });
+    const back = task({ title: "Watch: sent back", free_time: true });
+    vi.setSystemTime(at("2026-11-23T09:30"));
+    await backToFreeTime(Number(back.id));
+    const placed = await placeFreeTime(at("2026-11-23T09:30"));
+    expect(placed).toEqual([]);
+    expect(local(byTitle("Watch: dated").due_at)).toBe("2026-11-30T12:00");
+    expect(byTitle("Watch: sent back").due_at).toBeNull();
+    void dated;
+  });
+});
+

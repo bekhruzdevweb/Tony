@@ -186,6 +186,8 @@ export async function timeOnDay(task: Placeable & { due_at?: string | null }, da
   if (!task.due_at) return undefined;
   const minute = minuteOfDay(new Date(task.due_at));
   const same = new Date(localMidnight(day) + minute * 60_000);
+  // His own time of day wins while it is still ahead; a clash there is said, never quietly avoided.
+  if (same.getTime() > now.getTime()) return { at: same };
   const free = await nearestFreeFor(task, same, now);
   return free ? { at: free } : undefined;
 }
