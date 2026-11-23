@@ -1,7 +1,7 @@
 import "server-only";
 import { dayFromText } from "../schedule";
 import { progress, subtasksFor } from "../subtasks";
-import { clashSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction, type Touch } from "./checks";
+import { clashGroupSentence, clashesWith, confirmationFor, freeOptions, latestMessage, needsDeepModel, recentReminderNote, savedMarks, type DoneAction, type Touch } from "./checks";
 import { env } from "../env";
 import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
@@ -837,11 +837,13 @@ async function findClash(changed: Task[], now: Date): Promise<Clash | undefined>
   for (const task of timed) {
     const clashing = clashesWith(task, others).filter((other) => !toldKeys.has(clashKey(task, other)));
     if (clashing.length === 0) continue;
-    await logEvent("clash_told", { key: clashKey(task, clashing[0]) });
+    for (const other of clashing) await logEvent("clash_told", { key: clashKey(task, other) });
     // The nearest time that is really free for its whole length, in his waking hours and out of his teaching hours.
     const free = await nearestFreeFor(task, new Date(task.due_at!), now).catch(() => undefined);
     const suggestAt = free && free.getTime() !== new Date(task.due_at!).getTime() ? free : undefined;
-    return { taskId: task.id, title: task.title, sentence: clashSentence(clashing[0], task), suggestAt };
+    // Every task it clashes with is named, not only the first (23 Nov 15:45: the call with Olga at 18:00 was
+    // said to clash with Daily stretching; the 40-minute workout at 18:00 went unnamed).
+    return { taskId: task.id, title: task.title, sentence: clashGroupSentence([...clashing, task]), suggestAt };
   }
   return undefined;
 }

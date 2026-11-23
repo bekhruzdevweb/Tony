@@ -1345,3 +1345,16 @@ describe("21 Nov 22:09 · four requests in one voice note: 'And I already shoot 
     for (const [i, a] of spans.entries()) for (const b of spans.slice(i + 1)) expect(a.end <= b.start || b.end <= a.start).toBe(true);
   });
 });
+
+describe("23 Nov 15:45 · the call with Olga at 18:00, when the workout and stretching are at 18:00 too", () => {
+  it("the clash names both, not only the stretching", async () => {
+    task({ title: "Workout: Upper A (push + crutch muscles)", due_at: "2026-11-23T18:00", duration_minutes: 40, persistent: true, tags: ["workout", "together"] });
+    task({ title: "Daily stretching", due_at: "2026-11-23T18:00", duration_minutes: 22, repeat_rule: "daily", tags: ["together"] });
+    const result = await run("I have a call with Olga today at 18:00", "2026-11-23T15:45", [tools(["add_task", { title: "Call with Ольга", due_at: "2026-11-23T18:00", duration: 30, reply: "" }])]);
+    expect(hhmm(byTitle("Call with Ольга").due_at)).toBe("18:00");
+    expect(result.replies[0]).toContain("⚠️ Workout: Upper A (push + crutch muscles), Daily stretching and Call with Ольга are all at 18:00.");
+    // Told once: the same three are not flagged again.
+    const again = await run("the call with Olga is at 18:00, she is in Astana", "2026-11-23T15:50", [tools(["update_task", { id: byTitle("Call with Ольга").id, due_at: "2026-11-23T18:00", notes: "She is in Astana", reply: "" }])]);
+    expect(again.replies[0]).not.toContain("⚠️");
+  });
+});
