@@ -16,7 +16,7 @@ import { coachForBrief } from "./coach";
 import { clashLinesFor } from "./brain/checks";
 import { weekLine } from "./habit-view";
 import { sayAloud } from "./speech";
-import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
+import { isPrayer, OPEN_STATUSES, type Task, inDayOrder } from "./tasks";
 import { dayBounds, formatDay, formatTime, minuteOfDay, parseClock, TIMEZONE } from "./time";
 import { chasedToday } from "./main-priority";
 import { dayView, loadProjects, taskLine } from "./views";
@@ -231,8 +231,11 @@ async function eveningReview(bot: Bot, chatId: number, settings: Settings, now: 
 
   const parts = [`<b>🌙 Evening review · ${esc(shortDay(now, timeZone))}</b>`];
   if (left.length > 0) {
-    const lines = left.map((task) => {
+    // Timed ones by time, then the ones with no time, which are never "late" (23 Nov 21:00: six of them
+    // stood there as "⚠️ 20:00").
+    const lines = inDayOrder(left).map((task) => {
       const at = new Date(task.due_at!);
+      if (task.anytime) return taskLine(task, projects, "no time");
       const late = at.getTime() < now.getTime() && task.status !== "in_progress";
       const sameDay = at.getTime() >= dayBounds(now, timeZone).start.getTime();
       return `${late ? "⚠️ " : ""}${taskLine(task, projects, sameDay ? formatTime(at, timeZone) : `${weekdayOf(at, timeZone)} ${formatTime(at, timeZone)}`)}`;

@@ -176,6 +176,25 @@ export async function runTick(
   });
   if (copies.length) await db.from("reminders").update({ state: "cancelled" }).in("id", copies).eq("state", "scheduled");
 
+  // Tasks with no time do not ring one by one (23 Nov 20:00: "7 reminders together" with 21 buttons): one calm
+  // line names them; they are ticked on the pinned Today message, and the evening review asks about them.
+  const untimed = reminders.filter((reminder) => reminder.kind === "due" && reminder.task?.anytime && OPEN_STATUSES.includes(reminder.task.status));
+  if (untimed.length) {
+    const ids = untimed.map((reminder) => reminder.id);
+    const claimed = await db.from("reminders").update({ state: "sent", sent_at: now.toISOString() }).in("id", ids).eq("state", "scheduled").select("id");
+    reminders = reminders.filter((reminder) => !ids.includes(reminder.id));
+    if (!claimed.error && (claimed.data ?? []).length && !inWindow(now, settings.quiet_start, settings.quiet_end, settings.timezone)) {
+      const titles = untimed.map((reminder) => reminder.task!.title);
+      const html = `Sir, still on today's list with no time:\n${titles.map((title) => `• ${esc(title)}`).join("\n")}`;
+      const sentId = await sendHtml(bot, chatId, html, { silent: true }).catch((error) => (console.error("No-time reminder:", error), undefined));
+      if (sentId !== undefined) {
+        await track(sentId, "reminder", { taskIds: untimed.map((reminder) => reminder.task!.id) });
+        await logMessage("tony", plain(html));
+      }
+    }
+    if (reminders.length === 0) return finish();
+  }
+
   // After downtime (phase e): what came due while Tony was away goes out as ONE catch-up message, not a flood.
   const away = downtime(settings.last_tick_at, now);
   if (away && !inWindow(now, settings.quiet_start, settings.quiet_end, settings.timezone)) {

@@ -600,6 +600,9 @@ describe("Main priority: chased until it is done", () => {
   });
 
   it("Monday: nothing before 09:30; then a nudge with its buttons every 30 minutes, hourly once two go unanswered; no 'still open' about it", async () => {
+    // The task is made before the day begins (on 23 Nov itself the real clock was later than the test's, so the
+    // task looked "touched after the nudge" and the count of unanswered nudges never grew).
+    vi.setSystemTime(at("2026-11-23T08:00"));
     const monday = task({ title: "IELTS: Writing Task 2 (learn) + Speaking Part 3", due_at: "2026-11-23T09:00", repeat_rule: "weekly", main_priority: true, duration_minutes: 240 });
     state.db.insert("reminders", { task_id: monday.id, fire_at: at("2026-11-23T09:00").toISOString(), kind: "due", attempt: 0, state: "sent", sent_at: at("2026-11-23T09:00").toISOString() });
     const { bot, sent } = recorder();
@@ -1216,21 +1219,29 @@ describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes
     expect(rows.slice(1).map((row) => row.map((button) => button.text))).toEqual([["No time", "✏️ Other time"], ["📅 Later day", "📥 Inbox"]]);
   });
 
-  it("04:12 vote on Sunday's 'Which ones tomorrow?': Monday, only what moved is counted, a full Monday sends the rest on", async () => {
-    fill("2026-11-23");
-    const picks = [task({ title: "Write posts", due_at: "2026-11-22T12:14" }), task({ title: "Buy a zippered shirt" })];
-    state.db.insert("polls", { poll_id: "p1", message_id: 5, kind: "plan", task_id: null, options: [...picks.map((row) => ({ task: row.id })), { none: true }], created_at: at("2026-11-22T21:00").toISOString() });
+  it("21:28 vote on 'Which ones tomorrow?': everything he ticks goes on that day at its own time, however full the day is", async () => {
+    fill("2026-11-24");
+    const picks = [task({ title: "Develop the website", due_at: "2026-11-23T13:45" }), task({ title: "Daily stretching", due_at: "2026-11-23T18:00", repeat_rule: "daily" }), task({ title: "Make my own IELTS plan", due_at: "2026-11-23T20:00", anytime: true }), task({ title: "Buy a zippered shirt" })];
+    state.db.insert("polls", { poll_id: "p1", message_id: 5, kind: "plan", task_id: null, options: [...picks.map((row) => ({ task: row.id })), { none: true }], created_at: at("2026-11-23T21:00").toISOString() });
     const { handlePollAnswer } = await import("../src/lib/polls");
     const { bot, sent } = recorder();
+    vi.setSystemTime(at("2026-11-23T21:28"));
+    await handlePollAnswer(bot, 42, "p1", [0, 1, 2, 3], new Date());
+    expect(local(byTitle("Develop the website").due_at)).toBe("2026-11-24T13:45");
+    expect(local(byTitle("Daily stretching").due_at)).toBe("2026-11-24T18:00");
+    expect(local(byTitle("Make my own IELTS plan").due_at)).toBe("2026-11-24T20:00");
+    expect(byTitle("Make my own IELTS plan").anytime).toBe(true);
+    expect(byTitle("Buy a zippered shirt").anytime).toBe(true);
+    expect(sent.at(-1)!.text).toContain("✓ 4 tasks moved to Tue 24 Nov, 2 at their own time, 2 with no time.");
+  });
+
+  it("a vote after midnight still plans the day the poll asked about", async () => {
+    const pick = task({ title: "Write posts", due_at: "2026-11-22T12:15" });
+    state.db.insert("polls", { poll_id: "p2", message_id: 6, kind: "plan", task_id: null, options: [{ task: pick.id }, { none: true }], created_at: at("2026-11-22T21:00").toISOString() });
+    const { handlePollAnswer } = await import("../src/lib/polls");
     vi.setSystemTime(at("2026-11-23T04:12"));
-    await handlePollAnswer(bot, 42, "p1", [0, 1], new Date());
-    // Monday has seven already: both go to Tuesday, said so, and the view is Monday's (the day asked about).
-    expect(local(byTitle("Write posts").due_at)).toMatch(/^2026-11-24/);
-    expect(local(byTitle("Buy a zippered shirt").due_at)).toMatch(/^2026-11-24/);
-    const view = sent.find((message) => message.text.includes("next free day"))!.text;
-    expect(view).toContain("Very good, sir. Mon 23 Nov is full, so they go to the next free day:");
-    expect(view).toContain("• Write posts → Tue 24 Nov 12:15");
-    expect(view).not.toContain("Tue 24 Nov</b>\n\nTo do");
+    await handlePollAnswer(recorder().bot, 42, "p2", [0], new Date());
+    expect(local(byTitle("Write posts").due_at)).toBe("2026-11-23T12:15");
   });
 
   it("04:18 'Yes, remove them all' after 'Remove all 13 sessions…?': every removal runs, none waits for a ✓", async () => {

@@ -1,16 +1,13 @@
 import "server-only";
 import type { Bot } from "grammy";
-import { CONFIRMATION_HOURS, hoursFromNow, retire, sendTracked, track } from "./chat-log";
+import { CONFIRMATION_HOURS, hoursFromNow, sendTracked, track } from "./chat-log";
 import { requireDb } from "./db";
 import { b, esc, plain } from "./html";
 import { logMessage } from "./messages";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { placeAnytime } from "./slots";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { decideFor, timeOnDay } from "./routine";
-import { DAY_TASK_LIMIT, dayLoads, soonestSlot } from "./smart-inbox";
 import { addMinutes, dayBounds, formatDay, formatDue, formatTime, hisDate, hisTomorrow, localDate, minuteOfDay, parseLocalDateTime, TIMEZONE, toWholeMinute } from "./time";
-import { dayView } from "./views";
 
 /**
  * Telegram polls as a way to decide things with a tap or two. Each poll is
@@ -147,49 +144,34 @@ export async function handlePollAnswer(bot: Bot, chatId: number, pollId: string,
     // the vote put the tasks on Monday and then showed Tuesday, "11 tasks set" when three had moved).
     const asked = poll.created_at ? new Date(poll.created_at) : now;
     const target = [localDate(hisTomorrow(asked)), hisDate(now)].sort().at(-1)!;
-    const placed: { title: string; at: Date; later: boolean; untimed?: boolean }[] = [];
-    const unplaced: string[] = [];
+    // What he ticks goes on that day: at its own time of day, or with no time if it had none. Nothing is sent
+    // to another day because the day "looks full" (23 Nov 21:28: he ticked eleven for tomorrow, and all eleven
+    // were scattered over Wed, Thu and Fri).
+    let timedCount = 0;
+    let untimedCount = 0;
+    const day = parseLocalDateTime(`${target}T12:00`)!;
     for (const id of ids) {
       const { data } = await db.from("tasks").select().eq("id", id).maybeSingle();
       const task = data as Task | null;
       if (!task || !OPEN_STATUSES.includes(task.status)) continue;
-      const at = await placeOn(task, target, now);
-      if (!at) {
-        unplaced.push(task.title);
+      const own = task.due_at && !task.anytime ? sameClockOn(task.due_at, target) : undefined;
+      if (!own || own.getTime() <= now.getTime()) {
+        if (await placeAnytime(task.id, target, now)) untimedCount++;
         continue;
       }
-      // A task he never gave a time keeps none (23 Nov 05:52: "everything has a time, even the ones I did not
-      // add"): it goes on the day as "no time", with one reminder at 20:00.
-      const untimed = !task.due_at || task.anytime === true;
-      if (untimed) {
-        const set = await placeAnytime(task.id, localDate(at), now);
-        if (set?.due_at) placed.push({ title: task.title, at: new Date(set.due_at), later: localDate(at) !== target, untimed: true });
-        continue;
-      }
-      const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo", free_time: false }).eq("id", task.id);
+      const { error } = await db.from("tasks").update({ due_at: own.toISOString(), status: "todo", free_time: false }).eq("id", task.id);
       if (error) throw new Error(`handlePollAnswer: ${error.message}`);
-      await scheduleReminder(task.id, at);
-      placed.push({ title: task.title, at, later: localDate(at) !== target });
+      await scheduleReminder(task.id, own);
+      timedCount++;
     }
     await close();
-    if (placed.length === 0 && unplaced.length === 0) {
+    const moved = timedCount + untimedCount;
+    if (moved === 0) {
       await confirm("Very good, sir. Nothing moved.");
       return;
     }
-    // Only what really moved is counted; what went to a later day (the day was full) says where.
-    const day = parseLocalDateTime(`${target}T12:00`)!;
-    const onDay = placed.filter((item) => !item.later).length;
-    const later = placed.filter((item) => item.later);
-    const lead = [
-      ...(onDay ? [`Very good, sir. ${onDay === 1 ? "One task" : `${onDay} tasks`} set for ${formatDay(day, now)}.`] : []),
-      ...(later.length ? [`${onDay ? "" : "Very good, sir. "}${formatDay(day, now)} is full, so ${later.length === 1 ? "one goes" : onDay ? `${later.length} go` : "they go"} to the next free day:`, ...later.map((item) => `• ${item.title} → ${formatDay(item.at, now)}${item.untimed ? ", no time" : ` ${formatTime(item.at)}`}`)] : []),
-      ...(unplaced.length ? [`No free time in the next two weeks for: ${unplaced.join(", ")}. They stay in the inbox.`] : []),
-    ].join("\n");
-    const view = await dayView(day, now, { lead });
-    // One plan at a time: the new one replaces the old.
-    await retire({ kinds: ["plan"] }, now);
-    await sendTracked(bot, chatId, view.html, { keyboard: view.keyboard, kind: "plan" });
-    await logMessage("tony", plain(view.html));
+    const detail = untimedCount === 0 ? "each at its own time" : timedCount === 0 ? "with no time" : `${timedCount} at ${timedCount === 1 ? "its" : "their"} own time, ${untimedCount} with no time`;
+    await confirm(`✓ ${moved === 1 ? "One task" : `${moved} tasks`} moved to ${esc(formatDay(day, now))}, ${detail}.`);
     return;
   }
 
@@ -235,23 +217,7 @@ export async function handlePollAnswer(bot: Bot, chatId: number, pollId: string,
   }
 }
 
-/**
- * Where a task he ticked for a day goes: that day at its own time (or the best free time, if it has
- * none) while the day has room; otherwise the first later day with room (the smart inbox, Phase I).
- */
-async function placeOn(task: Task, date: string, now: Date): Promise<Date | undefined> {
-  const loads = await dayLoads(date, 1, task.id);
-  const day = parseLocalDateTime(`${date}T12:00`)!;
-  if ((loads.get(date) ?? 0) < DAY_TASK_LIMIT) {
-    const own = task.due_at ? (await timeOnDay(task, day, now))?.at : undefined;
-    if (own && own.getTime() > now.getTime()) return own;
-    const decision = await decideFor(task, day, now);
-    const best = decision.decision === "ask" || decision.decision === "auto" ? decision.options.find((option) => option.at.getTime() > now.getTime()) : undefined;
-    if (best) return best.at;
-  }
-  const later = await soonestSlot(task, now, { after: date });
-  if (!later) return undefined;
-  // A task with its own time keeps that time of day on the later day, when it is free there.
-  const own = task.due_at ? (await timeOnDay(task, parseLocalDateTime(`${later.day}T12:00`)!, now))?.at : undefined;
-  return own && localDate(own) === later.day ? own : later.options[0]?.at;
+/** The same time of day on another date ("20:15 on Sunday" → 20:15 on that date). */
+export function sameClockOn(dueAt: string, date: string): Date | undefined {
+  return parseLocalDateTime(`${date}T${formatTime(new Date(dueAt))}`) ?? undefined;
 }

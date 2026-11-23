@@ -683,7 +683,8 @@ Your idea: the one thing Tony does not let you leave unfinished.
 ## Smart inbox (I, 23 Nov)
 
 - **A suggested day.** Something with no day ("I want to shoot videos like this" + a link) is saved, and Tony asks once: "When on Wed 25 Nov? Best: **15:00** … Mon 23 and Tue 24 Nov are full." A day is full at 7 tasks (prayers not counted). The search starts today, or tomorrow after 20:00, and goes up to two weeks ahead. One tap sets it, the question leaves the chat, and the reminder comes on that day with the link and files. [📅 Later day] looks at the next day with room. [📥 Inbox] keeps it unplanned. "Put it in the inbox", "someday" and "just save it" skip the question.
-- **The evening poll** ("Which ones tomorrow?") plans the day it asked about, even when he votes after midnight. Only what moved is counted. When that day is full, the rest go to the next free day, each with its date and time.
+- **The evening poll** ("Which ones tomorrow?") is how undone tasks move on: Tony asks, and what he ticks goes on that day, each at its own time of day, or with no time if it had none. Nothing is sent to another day because the day looks full (23 Nov 21:28). A vote after midnight still plans the day the poll asked about. What he does not tick stays where it is and is asked about again in the morning brief.
+- **Tasks with no time** do not ring one by one: one calm line names them in the evening, and the evening review lists them as "no time", never as late.
 - **A yes is a yes.** "Yes, remove them all" to Tony's own question runs every change. Several proposals in one reply are one question with one ✓.
 - **Videos are read** by their cover frame and what is said in them. Videos kept before this are heard in the background. A reminder names each kept file ("📎 file: an 8-week IELTS Academic study plan (below)"). "Forget this pdf" deletes the file.
 
