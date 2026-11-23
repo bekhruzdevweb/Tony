@@ -15,12 +15,13 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0f172a" },
+    { media: "(prefers-color-scheme: dark)", color: "#ffffff" },
   ],
 };
 
 // Runs before first paint, so a theme pinned in Settings never flashes the other one.
-const themeScript = `try{var t=localStorage.getItem("tony-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+// Light is the default (24 Nov: "the bright theme"); dark or "system" only when he picks it.
+const themeScript = `try{var t=localStorage.getItem("tony-theme");if(t!=="system")document.documentElement.dataset.theme=t==="dark"?"dark":"light"}catch(e){document.documentElement.dataset.theme="light"}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -42,35 +42,40 @@ export function tonyFetch(input: string, init: RequestInit = {}): Promise<Respon
   return fetch(input, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "X-Telegram-Init-Data": initData } });
 }
 
-/** Paints the app in the user's Telegram theme; Tony's blue and violet stay as they are. */
+/**
+ * Tony's own look inside Telegram: bright by default, dark only when he picks it in Settings (24 Nov: the app
+ * wore Telegram's dark colours, "boring"). Telegram's header and bars are painted to match.
+ */
 export function applyTelegramTheme(): () => void {
   const app = webApp();
   if (!app) return () => undefined;
   const root = document.documentElement;
   const paint = () => {
-    const theme = app.themeParams;
-    root.dataset.theme = app.colorScheme;
-    const set = (name: string, value?: string) => (value ? root.style.setProperty(name, value) : root.style.removeProperty(name));
-    set("--background", theme.bg_color);
-    set("--surface", theme.secondary_bg_color);
-    set("--ink", theme.text_color);
-    set("--secondary", theme.hint_color);
-    // The sidebar sits on Telegram's secondary background, the list on its main one.
-    set("--sidebar", theme.secondary_bg_color);
-    set("--hairline", theme.section_separator_color);
-    if (theme.bg_color) {
-      app.setHeaderColor?.(theme.bg_color);
-      app.setBackgroundColor?.(theme.bg_color);
-      app.setBottomBarColor?.(theme.bg_color);
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("tony-theme");
+    } catch {
+      saved = null;
     }
+    const scheme = saved === "dark" ? "dark" : saved === "system" ? app.colorScheme : "light";
+    root.dataset.theme = scheme;
+    for (const name of ["--background", "--surface", "--ink", "--secondary", "--sidebar", "--hairline"]) root.style.removeProperty(name);
+    const ground = scheme === "dark" ? "#1c1c1e" : "#ffffff";
+    app.setHeaderColor?.(ground);
+    app.setBackgroundColor?.(ground);
+    app.setBottomBarColor?.(ground);
   };
+  window.addEventListener("tony-theme", paint);
   paint();
   app.ready();
   app.expand();
   // Dragging a task or scrolling a list must not swipe the app closed.
   app.disableVerticalSwipes?.();
   app.onEvent("themeChanged", paint);
-  return () => app.offEvent("themeChanged", paint);
+  return () => {
+    window.removeEventListener("tony-theme", paint);
+    app.offEvent("themeChanged", paint);
+  };
 }
 
 export function haptic(kind: "tap" | "success" | "error" | "select") {

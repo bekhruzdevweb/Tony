@@ -170,7 +170,7 @@ function NewProject({ onAdd }: { onAdd: (name: string, color: string) => Promise
 function ProjectTasks(props: { state: AppState; projectId: number; now: Date; onOpen: (task: Task) => void; onToggle: (task: Task) => void }) {
   const { state, projectId, now, onOpen, onToggle } = props;
   const tasks = state.tasks.filter((t) => t.project_id === projectId && isOpen(t));
-  if (tasks.length === 0) return <Empty>Nothing open in this project, sir.</Empty>;
+  if (tasks.length === 0) return <Empty art="project-empty">Nothing open in this project, sir.</Empty>;
   return (
     <Section title={`${tasks.length} open`}>
       {tasks.map((task) => (
@@ -234,7 +234,7 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
         </li>
       </Section>
 
-      {!inTelegram && (
+      {(
         <Section title="Appearance">
           <li className="p-1">
             <div className="grid grid-cols-3 gap-1">
@@ -331,7 +331,7 @@ function Plans({ tony, now }: { tony: Tony; now: Date }) {
           Plan my week
         </button>
       </div>
-      {state.plans.length === 0 && <Empty>No plans yet, sir. Ask for one above, or tell me to plan your day.</Empty>}
+      {state.plans.length === 0 && <Empty art="plans">No plans yet, sir. Ask for one above, or tell me to plan your day.</Empty>}
       {state.plans.map((plan) => (
         <section key={plan.id} className="mt-6">
           <div className="mb-1.5 flex items-center justify-between px-1">

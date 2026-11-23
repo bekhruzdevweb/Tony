@@ -445,6 +445,18 @@ export function AddTaskRow({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="mt-16 px-6 text-center text-sub text-secondary">{children}</p>;
+/**
+ * An empty screen: a small picture (public/brand/art/<art>.png, left out quietly until the file exists)
+ * over one calm line.
+ */
+export function Empty({ children, art }: { children: ReactNode; art?: string }) {
+  return (
+    <div className="mt-12 flex flex-col items-center px-6 text-center">
+      {art && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`/brand/art/${art}.png`} alt="" width={220} height={220} className="mb-4 size-[220px] object-contain" onError={(event) => (event.currentTarget.style.display = "none")} />
+      )}
+      <p className="text-sub text-secondary">{children}</p>
+    </div>
+  );
 }

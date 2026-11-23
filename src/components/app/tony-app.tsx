@@ -31,7 +31,7 @@ const subscribeTheme = (listen: () => void) => {
 };
 const readTheme = (): Theme => {
   const saved = localStorage.getItem("tony-theme");
-  return saved === "light" || saved === "dark" ? saved : "system";
+  return saved === "dark" || saved === "system" ? saved : "light";
 };
 
 export function TonyApp({ initial }: { initial: AppState }) {
@@ -40,11 +40,11 @@ export function TonyApp({ initial }: { initial: AppState }) {
   const [tab, setTab] = useState<Tab>("today");
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [menu, setMenu] = useState(false);
-  const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "system");
+  const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "light");
   const now = new Date(state.now);
 
   useEffect(() => {
-    // Inside Telegram the app wears Telegram's colours; elsewhere it can be installed.
+    // Inside Telegram the app keeps its own bright look (his theme choice still applies); elsewhere it can be installed.
     if (webApp()) return applyTelegramTheme();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
@@ -59,7 +59,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
 
   const changeTheme = (next: Theme) => {
     if (next === "system") {
-      localStorage.removeItem("tony-theme");
+      localStorage.setItem("tony-theme", "system");
       delete document.documentElement.dataset.theme;
     } else {
       localStorage.setItem("tony-theme", next);

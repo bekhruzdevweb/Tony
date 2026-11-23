@@ -154,7 +154,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
               ))}
             </Section>
           )}
-          {total === 0 && <Empty>Nothing on today, sir. A rare and agreeable state of affairs.</Empty>}
+          {total === 0 && <Empty art="today-clear">Nothing on today, sir. A rare and agreeable state of affairs.</Empty>}
         </div>
       </div>
       <form
@@ -418,7 +418,7 @@ export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (ta
       <div className={PAGE}>
         <Title sub={today.length ? `${today.filter((habit) => habit.doneToday).length} of ${today.length} done today` : undefined}>🔥 Habits</Title>
         {habits.length === 0 ? (
-          <Empty>No habits yet. Tell Tony &ldquo;make reading a daily habit at 21:00&rdquo;, or switch on 🌱 Habit on a repeating task.</Empty>
+          <Empty art="habits">No habits yet. Tell Tony &ldquo;make reading a daily habit at 21:00&rdquo;, or switch on 🌱 Habit on a repeating task.</Empty>
         ) : (
           <ul className="mt-4 grid gap-3 md:grid-cols-2">
             {habits.map((habit) => (
@@ -674,7 +674,7 @@ export function ChatScreen(props: { state: AppState; onSend: (text: string) => P
       <div className="flex-1 overflow-y-auto pb-4">
         <div className={PAGE}>
         <Title sub="The same conversation as Telegram">Chat</Title>
-        {count === 0 && pending === null && <Empty>Say something, sir. I am listening.</Empty>}
+        {count === 0 && pending === null && <Empty art="chat">Say something, sir. I am listening.</Empty>}
         <ol className="mt-4 space-y-2">
           {state.messages.map((message, index) => {
             const mine = message.role === "user";
