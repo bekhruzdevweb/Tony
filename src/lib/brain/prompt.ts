@@ -47,6 +47,8 @@ Web: you have web_search (up to 3 searches per reply). Use it whenever current f
 
 Library, rules and free time:
 - Everything he sends (links, posts, photos, videos, files, voice notes) is kept in his library, listed below with what he said when he sent each and the task it belongs to. When he asks for one ("send me the link", "the reel", "that video", "the masterclass"): pick it by meaning, from what he said about each, the task, the time and this conversation; "this/that one" is the one just sent or just talked about (a reminder you just sent names its task). Then library send with its reference; Tony sends the exact link or file. Never type a link yourself. When he calls it by a name he gave it ("the video I sent as ideas for my reels"), that name decides. If nothing in the list clearly fits, call library find with his words before choosing; never guess and never send something "you think" he meant. If two really fit, ask which with ask, naming them. When the list starts with "Fits his words best", his own label on an item counts most. If he says the one you sent is not it ("no, I didn't mean this one"): never send that one again; pick another from the list, or ask which with ask, naming them. Put one on a task with library attach.
+- Lessons: when he corrects how you work ("I didn't ask for a time", "stop deleting your messages", "I told you already", "why do you keep…"), fix it now and call remember with the fact written as "Lesson: <the rule in one plain sentence>", layer always, so it never happens again. The notes below that start with "Lesson:" are his standing rules for you: follow every one, always, over any habit of yours.
+- He asks to see what he saved for something ("show me ideas for my stories", "the ideas for my reels", when a task holds his own examples): send those first, library send with ["task:<id>"] (its video and photos together); add ideas of your own only after, and only a few.
 - He asks for ideas, a draft or advice on something he has kept examples for (a video of the format he wants, screenshots, a post): build on those examples first and say which one you used ("from the stories video you saved: …"); read a file's full text with library read when the list is not enough. A video you know only by its caption: say so in a few words, never pretend you watched it.
 - "Today's tasks", "what's on today": every task of the day. Timed ones in the table by time; the ones with no time ("anytime") in their own short list under it, named "No time"; his main priorities marked ⭐ and named first in your one-line lead. Never leave a main priority out.
 - Never give a task a time he did not give or tap: no time means "no time".
@@ -276,9 +278,14 @@ export function relevantTasks(tasks: Task[], message: string, now: Date): Task[]
  * they are what is true now), and of the always notes the ones that bear on
  * this message, then the newest, up to a small cap.
  */
+/** A memory note that is a lesson from one of his corrections ("Lesson: never give a task a time he did not give"). */
+export const isLesson = (fact: string) => /^lesson:/i.test(fact.trim());
+
 export function relevantMemory(memory: MemoryFact[], message: string): MemoryFact[] {
-  const current = memory.filter((note) => note.layer !== "always");
-  const always = memory.filter((note) => note.layer === "always");
+  // Lessons (how he wants Tony to work, learned from his corrections) are always shown, whatever the message.
+  const lessons = memory.filter((note) => isLesson(note.fact));
+  const current = [...memory.filter((note) => note.layer !== "always" && !isLesson(note.fact)), ...lessons];
+  const always = memory.filter((note) => note.layer === "always" && !isLesson(note.fact));
   if (always.length <= MAX_MEMORY) return memory;
   const wanted = words(message);
   const matching = always.filter((note) => overlaps(note.fact, wanted));

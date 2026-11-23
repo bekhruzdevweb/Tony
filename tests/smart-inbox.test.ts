@@ -77,3 +77,14 @@ describe("Tony's model sees the task he asks about (23 Nov 05:52)", async () => 
     expect(shown).toHaveLength(52);
   });
 });
+
+describe("lessons from his corrections are always shown", async () => {
+  const { relevantMemory } = await import("../src/lib/brain/prompt");
+  it("keeps every 'Lesson:' note among many others, whatever the message is about", () => {
+    const note = (id: number, fact: string) => ({ id, fact, layer: "always", goal: false, mentions: 1, confirmed_at: null, created_at: "2026-11-20T00:00:00Z" });
+    const many = Array.from({ length: 30 }, (_, n) => note(n + 1, `Fact number ${n + 1} about something else`));
+    const lesson = note(99, "Lesson: never give a task a time he did not give or tap.");
+    const shown = relevantMemory([lesson, ...many] as never, "what is the weather like");
+    expect(shown.map((item) => item.id)).toContain(99);
+  });
+});
