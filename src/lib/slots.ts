@@ -6,7 +6,7 @@ import { requireDb } from "./db";
 import { scheduleReminder } from "./reminders";
 import { getRoutine, kindFor, recordSample } from "./routine";
 import { typedTime } from "./routine-rules";
-import { OPEN_STATUSES, type Task } from "./tasks";
+import { ANYTIME_HOUR, OPEN_STATUSES, type Task } from "./tasks";
 import { addSubtasks, progress, subtasksFor } from "./subtasks";
 import { parseLocalDateTime } from "./time";
 
@@ -162,4 +162,14 @@ export function joinedSay(says: string[]): string {
     return `${verb} these ${things.length}: ${things.slice(0, -1).join(", ")} and ${things.at(-1)}.`;
   }
   return says.join("\n");
+}
+
+/** A small thing put on a day with no time (Phase J), on his [No time] tap: 20:00 of that day for its one check, shown as "anytime". */
+export async function placeAnytime(id: number, day: string, now: Date): Promise<Task | undefined> {
+  let at = parseLocalDateTime(`${day}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
+  if (at.getTime() <= now.getTime()) at = new Date(Math.ceil((now.getTime() + 30 * 60_000) / 60_000) * 60_000);
+  const { data, error } = await requireDb().from("tasks").update({ due_at: at.toISOString(), status: "todo", anytime: true }).eq("id", id).select().maybeSingle();
+  if (error || !data) return undefined;
+  await scheduleReminder(id, at);
+  return data as Task;
 }

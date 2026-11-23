@@ -80,11 +80,12 @@ describe("The question: one message, best first with its reason, plus Other", ()
   it("a single free time is said as such", () => {
     expect(slotQuestion({ title: "Call the bank", marks: "", when: "tomorrow, Sat 21 Nov", options: [options[0]] })).toBe("**Call the bank**\nWhen tomorrow, Sat 21 Nov? Only **20:30** is free, you usually watch videos around 20:30.");
   });
-  it("buttons: the best first with ⭐, then the others, then [✏️ Other time]", () => {
+  it("buttons: the best first with ⭐, then the others, then [No time] [✏️ Other time]", () => {
     const rows = slotButtons({ kind: "ask", taskId: 37, day: "2026-11-23", options });
-    expect(rows.map((row) => row.map((button) => button.text))).toEqual([["⭐ 20:30", "14:15", "07:00"], ["✏️ Other time"]]);
+    expect(rows.map((row) => row.map((button) => button.text))).toEqual([["⭐ 20:30", "14:15", "07:00"], ["No time", "✏️ Other time"]]);
     expect(rows[0][0].data).toBe(`sl:at:37:${Math.round(options[0].at.getTime() / 60_000)}`);
-    expect(rows[1][0].data).toBe("sl:other:37:2026-11-23");
+    expect(rows[1][0].data).toBe("sl:none:37:2026-11-23");
+    expect(rows[1][1].data).toBe("sl:other:37:2026-11-23");
     for (const button of rows.flat()) expect(button.data.length).toBeLessThanOrEqual(64);
   });
   it("Tony's own pick (only when he said 'decide yourself') says so, with [✏️ Change]", () => {

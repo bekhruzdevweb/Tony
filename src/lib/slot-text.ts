@@ -79,6 +79,8 @@ export function slotButtons(
   }
   const times = slot.options.map((option, index) => ({ text: `${index === 0 ? "⭐ " : ""}${clock(option.at)}`, data: `sl:at:${slot.taskId}:${minuteId(option.at)}` }));
   // The smart inbox (Phase I): Tony's day for something with no day, or a later one, or the inbox after all.
-  if (slot.inbox) return [times, [{ text: "📅 Later day", data: `sl:later:${slot.taskId}:${slot.day}` }, other, { text: "📥 Inbox", data: `sl:keep:${slot.taskId}:${slot.day}` }]];
-  return [times, [other]];
+  // [No time]: on that day with no time at all (23 Nov 04:58: "he still needs to ask to add time or not").
+  const none = { text: "No time", data: `sl:none:${slot.taskId}:${slot.day}` };
+  if (slot.inbox) return [times, [none, other], [{ text: "📅 Later day", data: `sl:later:${slot.taskId}:${slot.day}` }, { text: "📥 Inbox", data: `sl:keep:${slot.taskId}:${slot.day}` }]];
+  return [times, [none, other]];
 }

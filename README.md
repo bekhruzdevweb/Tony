@@ -669,7 +669,7 @@ Your idea: the one thing Tony does not let you leave unfinished.
 
 - **One line, one thing.** Markdown joins single lines into a paragraph, so Tony's replies are sent with each line kept apart. Three or more receipts are one short list, and a repeat they share is said once under it.
 - **"Today" after midnight.** At 04:27 Monday is "today, Mon 23 Nov" in everything Tony writes. If he says "tmr" at night, the same day is still named "tomorrow", his way.
-- **Anytime.** A small thing ("clean my room", a quick chore of about 5 minutes, or "no need for a time") goes on its day with no time. It is shown as "anytime", takes no time from the day, and gets one quiet check at 20:00 ([Done] [Tomorrow] [Skip]).
+- **No time.** Tony always asks when a task has no time, and every such question has a [No time] button next to the times. Tapped (or when he says "no need for a time"), the task goes on that day with no time: shown as "anytime", it takes no time from the day and gets one quiet check at 20:00 ([Done] [Tomorrow] [Skip]). A tap turns the question into its receipt, kept 3 hours.
 - **Three priorities.** Urgent (1) means it must be done that day: a reminder at its time, again 15 minutes later if he does not answer, then every hour until he answers or it is done. Quiet hours end it. "Busy, in an hour" moves it, and the chase starts again from there. Important (2). Normal (4, the default). The app shows Urgent, Important and Normal.
 
 ## Smart inbox (I, 23 Nov)

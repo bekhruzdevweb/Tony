@@ -52,7 +52,7 @@ import { claimsSent, givesTime } from "./brain/checks";
 import { CLEANED, handleMessage, type Thought } from "./brain/handle";
 import { choicesFor, getRoutine } from "./routine";
 import { routineLines } from "./routine-rules";
-import { placeTask, runProposal, splitTask } from "./slots";
+import { placeTask, runProposal, splitTask, placeAnytime } from "./slots";
 import { awaitsAnswer, dayLabel, slotButtons, slotQuestion } from "./slot-text";
 import { fullNote, soonestSlot } from "./smart-inbox";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
@@ -688,7 +688,7 @@ export function getBot(): Bot | undefined {
       };
       // [✏️ Other time] answers with a small note on the screen, not a message.
       if (action === "other") await answer("Type the time");
-      else if (action !== "ok" && action !== "at" && action !== "split") await answer();
+      else if (action !== "ok" && action !== "at" && action !== "split" && action !== "none") await answer();
       // The question stays in the chat until he answers it (the day he named lives only in its buttons;
       // 21 Nov 20:25: "…23 November" was asked, never answered, and removed with the receipts at 23:26).
       // Answered, the outcome is a note on the screen and the question goes at once (22 Nov 16:05: "why
@@ -733,6 +733,13 @@ export function getBot(): Bot | undefined {
           await answer();
         }
         return;
+      }
+      if (action === "none") {
+        // [No time]: that day, with no time; one quiet check in the evening if it is still open.
+        const placed = await placeAnytime(taskId, value, new Date());
+        if (!placed) return showOutcome("That task no longer exists, sir.");
+        const day = dayLabel(value, new Date());
+        return showOutcome(`✓ **${placed.title}** → ${day.when.replace(/^on /, "").replace(/,$/, "")}, no time. I'll check in at **20:00** if it's still open.`);
       }
       if (action === "keep") {
         // [📥 Inbox] under the smart inbox's suggestion: it stays unplanned, and the question goes.

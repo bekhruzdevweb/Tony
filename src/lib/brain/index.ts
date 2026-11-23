@@ -7,15 +7,14 @@ import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
 import { joinedSay, placeTask } from "../slots";
 import { fullNote, soonestSlot } from "../smart-inbox";
-import { startDate, wantsSuggestion } from "../smart-inbox-rules";
+import { wantsSuggestion } from "../smart-inbox-rules";
 import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
 import { requireDb } from "../db";
 import { logEvent } from "../events";
 import { logMessage, recentMessages, type Channel } from "../messages";
-import { ANYTIME_HOUR, OPEN_STATUSES, type Task } from "../tasks";
-import { scheduleReminder } from "../reminders";
+import { OPEN_STATUSES, type Task } from "../tasks";
 import { chat, type ChatMessage } from "./model";
 import { buildSystemPrompt, type MemoryFact, type ProjectRef, type ReminderFact } from "./prompt";
 import { tidyReply } from "./tidy";
@@ -611,15 +610,8 @@ export async function think(
       }
     } else if (named.size === 1) {
       const [[id, day]] = [...named];
-      let task = stored.get(id)!;
-      // A small thing on a day he named ("remind me brush my teeth today", 23 Nov 04:34, was asked a time):
-      // that day, anytime, with one quiet check in the evening. Habits and repeats keep a real time.
-      const tiny = !task.due_at && !task.habit && !task.repeat_rule && !picks.has(id) && (task.duration_minutes ?? 99) <= TINY_MINUTES ? await placeAnytime(id, day, now).catch(() => undefined) : undefined;
-      if (tiny) {
-        stored.set(id, tiny);
-        task = tiny;
-        named.delete(id);
-      }
+      const task = stored.get(id)!;
+      const tiny = undefined as Task | undefined;
       const decision = tiny ? { decision: "done" as const } : await decideFor(task, parseLocalDateTime(`${day}T12:00`)!, now, partsOfDay(part?.full ?? text), held);
       const label = dayLabel(day, now, ownWords(text));
       const extra = savedMarks(marks(id));
@@ -650,14 +642,7 @@ export async function think(
       // set until he taps; [📅 Later day] looks further on, [📥 Inbox] leaves it unplanned.
       const id = undated[0];
       const task = stored.get(id)!;
-      // A small thing (15 minutes or less) gets no time at all (Phase J, 23 Nov: "clean your room … I should
-      // not be having any timeline"): today, anytime, with one quiet check at 20:00.
-      const small = task.status === "inbox" && !task.free_time && (task.duration_minutes ?? 99) <= TINY_MINUTES;
-      const anytime = small ? await placeAnytime(id, startDate(now), now).catch((error) => (console.error("Anytime:", error), undefined)) : undefined;
-      if (anytime) {
-        stored.set(id, anytime);
-      }
-      const suggestion = !anytime && task.status === "inbox" && !task.free_time ? await soonestSlot(task, now).catch((error) => (console.error("Smart inbox:", error), undefined)) : undefined;
+      const suggestion = task.status === "inbox" && !task.free_time ? await soonestSlot(task, now).catch((error) => (console.error("Smart inbox:", error), undefined)) : undefined;
       if (suggestion) {
         decided.add(id);
         slot = { kind: "ask", taskId: id, title: task.title, day: suggestion.day, options: suggestion.options, inbox: true, minutes: taskMinutes(task) };
@@ -890,16 +875,3 @@ async function joinProposals(list: { offerId: number; say: string }[]): Promise<
   if (error || !data) return list[list.length - 1];
   return { offerId: (data as { id: number }).id, say };
 }
-
-/** A small thing put on a day with no time (Phase J): 20:00 of that day for its one check, shown as "anytime". */
-async function placeAnytime(id: number, day: string, now: Date): Promise<Task | undefined> {
-  let at = parseLocalDateTime(`${day}T${String(ANYTIME_HOUR).padStart(2, "0")}:00`)!;
-  if (at.getTime() <= now.getTime()) at = new Date(Math.ceil((now.getTime() + 30 * 60_000) / 60_000) * 60_000);
-  const { data, error } = await requireDb().from("tasks").update({ due_at: at.toISOString(), status: "todo", anytime: true }).eq("id", id).select().maybeSingle();
-  if (error || !data) return undefined;
-  await scheduleReminder(id, at);
-  return data as Task;
-}
-
-/** A thing this short gets no time by itself ("it doesn't even take you 5 minutes", 23 Nov); longer small things only when he or the model says anytime. */
-const TINY_MINUTES = 5;

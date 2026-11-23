@@ -1213,7 +1213,7 @@ describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes
     expect(byTitle("Shoot videos like this reel").due_at).toBeNull();
     const { slotButtons } = await import("../src/lib/slot-text");
     const rows = slotButtons(slot as never);
-    expect(rows[1].map((button) => button.text)).toEqual(["📅 Later day", "✏️ Other time", "📥 Inbox"]);
+    expect(rows.slice(1).map((row) => row.map((button) => button.text))).toEqual([["No time", "✏️ Other time"], ["📅 Later day", "📥 Inbox"]]);
   });
 
   it("04:12 vote on Sunday's 'Which ones tomorrow?': Monday, only what moved is counted, a full Monday sends the rest on", async () => {
@@ -1288,11 +1288,15 @@ describe("Phase J: no time for small things, urgent is chased, today is today", 
     expect(message.text).toBe("Sir, still on today's list: <b>Clean my room</b>.");
   });
 
-  it("04:34 'Remind me brush my teeth today' (5 min): today, anytime, no time question", async () => {
+  it("04:34 'Remind me brush my teeth today': Tony asks, and [No time] puts it on today with no time (04:58: 'he still needs to ask')", async () => {
     const result = await run("Remind me brush my teeth today", "2026-11-23T04:34", [tools(["add_task", { title: "Brush my teeth", day: "2026-11-23", duration: 5, reply: "" }])]);
-    expect(result.thought?.slot).toBeUndefined();
+    expect(result.thought?.slot?.kind).toBe("ask");
+    const { slotButtons } = await import("../src/lib/slot-text");
+    expect(slotButtons(result.thought!.slot as never)[1][0]).toEqual({ text: "No time", data: `sl:none:${byTitle("Brush my teeth").id}:2026-11-23` });
+    const { placeAnytime } = await import("../src/lib/slots");
+    await placeAnytime(Number(byTitle("Brush my teeth").id), "2026-11-23", at("2026-11-23T04:35"));
     expect(byTitle("Brush my teeth").anytime).toBe(true);
-    expect(result.replies[0]).toBe("✓ **Brush my teeth** → today, Mon 23 Nov, anytime");
+    expect(local(byTitle("Brush my teeth").due_at)).toBe("2026-11-23T20:00");
   });
 
   it("a receipt that a task was set stays while the task is open; a question about it still goes", async () => {
