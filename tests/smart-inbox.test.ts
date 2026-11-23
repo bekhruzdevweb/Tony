@@ -63,3 +63,17 @@ describe("each line on its own line (23 Nov 04:21)", async () => {
     expect(keepLines("| a | b |\n|---|---|\n| 1 | 2 |")).toBe("| a | b |\n|---|---|\n| 1 | 2 |");
   });
 });
+
+describe("Tony's model sees the task he asks about (23 Nov 05:52)", async () => {
+  const { relevantTasks } = await import("../src/lib/brain/prompt");
+  it("finds 'the mini app for my students' by its notes among 50 open tasks, and always shows a main priority", () => {
+    const base = { notes: null, project_id: null, priority: 4, status: "inbox", due_at: null, repeat_rule: null, persistent: false, persistent_schedule: null, updated_at: "", completed_at: null };
+    const many = Array.from({ length: 50 }, (_, n) => ({ ...base, id: n + 1, title: `Task ${n + 1}`, status: "todo", due_at: `2026-11-2${3 + (n % 5)}T0${n % 9}:00:00Z`, created_at: "2026-11-20T00:00:00Z" }));
+    const checker = { ...base, id: 97, title: "Build homework checker AI", notes: "AI homework checker for my students, in mini app style.", created_at: "2026-11-23T00:15:00Z" };
+    const main = { ...base, id: 88, title: "Make my own IELTS plan", main_priority: true, created_at: "2026-11-22T23:18:00Z" };
+    const shown = relevantTasks([...many, checker, main] as never, "Where is the task when I told you to make a mini app for my students?", new Date("2026-11-23T00:52:00Z"));
+    expect(shown.map((task) => task.id)).toContain(97);
+    expect(shown.map((task) => task.id)).toContain(88);
+    expect(shown).toHaveLength(52);
+  });
+});

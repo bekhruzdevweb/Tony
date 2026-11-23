@@ -234,7 +234,12 @@ export function taskLine(
 }
 
 const DAY_MS = 24 * 60 * 60_000;
-const MAX_TASKS = 25;
+/**
+ * How many of his open tasks Tony's model is shown. It was 25: with 44 open, the newest inbox tasks were cut,
+ * so "where is the mini app for my students?" got "I can't find a task" for one added 37 minutes before
+ * (23 Nov 05:52), and "today's tasks" missed his two main priorities.
+ */
+const MAX_TASKS = 80;
 const MAX_MEMORY = 12;
 
 /** Words worth matching on: four letters or more, lower case. */
@@ -250,7 +255,8 @@ export function relevantTasks(tasks: Task[], message: string, now: Date): Task[]
   const wanted = words(message);
   const soon = now.getTime() + 7 * DAY_MS;
   const score = (task: Task) => {
-    if (overlaps(task.title, wanted)) return 0;
+    // His words are matched against the title, the notes and the tags; a main priority is always shown.
+    if (task.main_priority || overlaps(`${task.title} ${task.notes ?? ""} ${(task.tags ?? []).join(" ")}`, wanted)) return 0;
     if (task.status === "in_progress") return 1;
     if (task.due_at && new Date(task.due_at).getTime() < now.getTime()) return 2;
     if (task.due_at && new Date(task.due_at).getTime() < soon) return 3;
