@@ -109,7 +109,10 @@ const SPOKEN_LIMIT = 300;
  * it fits in about 300 characters.
  */
 export function spokenBrief(open: Task[], carriedOver: number, coachLine: string | undefined, timeZone: string): string {
-  const named = (task: Task) => `${shortLabel(task.title, 28)} at ${formatTime(new Date(task.due_at!), timeZone)}`;
+  // A one-word series name before a colon is part of the name when said aloud (23 Nov 08:00: "then Watch at
+  // 10:00" for "Watch: Instagram Masterclass (Brock Johnson)"). A task with no time is named with no time.
+  const spoken = (title: string) => shortLabel(title.replace(/^([^\s:]+):\s+/, "$1 "), 28);
+  const named = (task: Task) => (task.anytime || !task.due_at ? spoken(task.title) : `${spoken(task.title)} at ${formatTime(new Date(task.due_at), timeZone)}`);
   const count = open.length === 1 ? "One task" : `${open.length} tasks`;
   const taskSentences = [
     open.length === 0 ? "Nothing is scheduled for today." : open.length === 1 ? `One task today: ${named(open[0])}.` : `${count} today, starting with ${named(open[0])}, then ${named(open[1])}.`,
