@@ -42,6 +42,26 @@ export async function recentChanges(limit = 10, now = new Date()): Promise<Chang
     .map((entry) => ({ id: entry.id, taskId: entry.task_id, at: entry.created_at, text: describeChange(entry, now) }));
 }
 
+/** The words of /undo's list and its ↩ buttons ("un:<change>"), five to a row; one place for both, so they always match. */
+export async function undoList(lead?: string, limit = 10): Promise<{ text: string; rows: { text: string; data: string }[][] }> {
+  let changes: Change[];
+  try {
+    changes = await recentChanges(limit);
+  } catch (error) {
+    // Before the history table exists (migration 0022), /undo says so instead of failing.
+    if (error instanceof HistoryOff) return { text: "Undo starts once the database update is in, sir: changes are recorded from then on.", rows: [] };
+    throw error;
+  }
+  if (changes.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}Nothing left to undo, sir.`, rows: [] };
+  const rows: { text: string; data: string }[][] = [];
+  changes.forEach((change, index) => {
+    if (index % 5 === 0) rows.push([]);
+    rows[rows.length - 1].push({ text: `↩ ${index + 1}`, data: `un:${change.id}` });
+  });
+  const lines = changes.map((change, index) => `${index + 1}. ${formatTime(new Date(change.at))} · ${change.text}`);
+  return { text: [...(lead ? [lead, ""] : []), "**Last changes**, newest first. Tap a number to undo it:", ...lines].join("\n"), rows };
+}
+
 /**
  * Puts back exactly what one change changed (later changes stay), moves the
  * task's reminder with it, and confirms only what reads back.

@@ -226,6 +226,13 @@ export const TOOLS: ToolDefinition[] = [
     },
     ["action"],
   ),
+  // 24 Nov 19:50 "Sorry, I misclicked some tasks, like, to be done": he was told to type /undo twice instead.
+  tool(
+    "undo",
+    "He wants something he just did taken back: a tap or a change made by mistake (\"I misclicked\", \"I ticked those by accident\", \"wrong button\", \"bring it back, I didn't finish it\"), in any language. Tony shows his last changes, newest first, each with ↩: one tap puts that one back. Your reply: a few words, e.g. \"No problem, sir. Tap ↩ on each one to bring it back.\" Never tell him to type a command, and never reopen a finished task yourself.",
+    { reply },
+    [],
+  ),
   tool(
     "ask",
     "Ask him a question with tappable answers.",
@@ -847,6 +854,10 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (action === "list") return { ok: true, show_rules: true };
       return fail("rule action must be add, delete or list");
     }
+
+    // His last changes, each with ↩, shown by Tony under the reply; nothing changes until he taps.
+    case "undo":
+      return { ok: true, show_undo: true };
 
     case "main_priority": {
       const ids = Array.isArray(args.task_ids) ? args.task_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0) : [];

@@ -56,7 +56,7 @@ import { placeTask, runProposal, splitTask, placeAnytime } from "./slots";
 import { awaitsAnswer, dayLabel, slotButtons, slotQuestion } from "./slot-text";
 import { fullNote, soonestSlot } from "./smart-inbox";
 import { isCapture as wantsSomething, withoutSendClaims } from "./brain/reliability";
-import { HistoryOff, recentChanges, undoChange } from "./history";
+import { undoChange, undoList } from "./history";
 import { forgetFact, memoryList } from "./memory";
 import { keepDropped } from "./memory-review";
 import { memoryPage } from "./memory-rules";
@@ -1249,22 +1249,8 @@ export function getBot(): Bot | undefined {
 
   /** /undo: the last ten changes to his tasks, each with ↩ to put it back. Plain code. */
   const undoView = async (lead?: string): Promise<{ text: string; keyboard?: InlineKeyboard }> => {
-    let changes;
-    try {
-      changes = await recentChanges(10);
-    } catch (error) {
-      // Before the history table exists (migration 0022), /undo says so instead of failing.
-      if (error instanceof HistoryOff) return { text: "Undo starts once the database update is in, sir: changes are recorded from then on." };
-      throw error;
-    }
-    if (changes.length === 0) return { text: `${lead ? `${lead}\n\n` : ""}Nothing left to undo, sir.` };
-    const keyboard = new InlineKeyboard();
-    changes.forEach((change, index) => {
-      keyboard.text(`↩ ${index + 1}`, `un:${change.id}`);
-      if (index % 5 === 4) keyboard.row();
-    });
-    const lines = changes.map((change, index) => `${index + 1}. ${formatTime(new Date(change.at))} · ${change.text}`);
-    return { text: [...(lead ? [lead, ""] : []), "**Last changes**, newest first. Tap a number to undo it:", ...lines].join("\n"), keyboard };
+    const list = await undoList(lead);
+    return { text: list.text, ...(list.rows.length ? { keyboard: keyboardOf(list.rows) } : {}) };
   };
   /**
    * One library item sent back: the original file, or the link with its title (phase b).
@@ -1421,6 +1407,15 @@ export function getBot(): Bot | undefined {
         await updateSettings({ pending_choices: choices });
         await sendMarkdown(bot, ctx.chat.id, boldTimes(choices.question), { keyboard });
         return { reply, confirmed: false, completed: false };
+      }
+      // "I misclicked", "I ticked those by mistake": his last changes, each with ↩, under Tony's few words, in
+      // one message; his tap puts one back in plain code (24 Nov 19:50: he was told to type /undo twice instead).
+      if (thought.showUndo && ctx.chat) {
+        await retire({ kinds: ["cmd:undo"] });
+        const view = await undoView(reply || undefined);
+        const sent = await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.keyboard });
+        await track(sent, "cmd:undo", { deleteAfter: hoursFromNow(CONFIRMATION_HOURS) });
+        return { reply: view.text, confirmed: false, completed: false };
       }
       const confirmed = tools.some((tool) => MUTATING.includes(tool));
       // Offers under the reply, acted on in plain code when tapped: a task suggested in conversation,

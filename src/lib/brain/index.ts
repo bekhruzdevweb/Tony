@@ -171,6 +171,8 @@ export async function think(
   sendItems?: string[];
   /** His rules were shown: their 🗑 buttons go under the reply. */
   showRules?: boolean;
+  /** He wants something taken back: his last changes, each with ↩, go under the reply. */
+  showUndo?: boolean;
   /** He asked for a file or link and nothing went out: the closest few, one button each ("lib:send:…"). */
   libraryChoices?: { text: string; data: string }[];
   /** The tasks this turn changed. */
@@ -263,6 +265,7 @@ export async function think(
   const sendItems: string[] = [];
   const ruleLines: string[] = [];
   let showRules = false;
+  let showUndo = false;
   let fellBack: string | undefined;
   // What Tony says as himself alongside the tools (their "reply"): kept above the receipt, never replaced by it (Phase 2).
   const spoken: string[] = [];
@@ -335,6 +338,7 @@ export async function think(
             if ((outcome as { rule_deleted?: unknown }).rule_deleted) ruleLines.push("🗑 Rule removed.");
             if ((outcome as { show_rules?: unknown }).show_rules) showRules = true;
           }
+          if (name === "undo" && (outcome as { show_undo?: unknown }).show_undo) showUndo = true;
           // His main priority, read back from what was stored (shown like a rule, under Tony's words).
           if (name === "main_priority") {
             const main = (outcome as { main?: unknown }).main;
@@ -381,7 +385,7 @@ export async function think(
           if (typeof args.reply === "string" && args.reply.trim() && writes && name !== "remember" && !spoken.includes(args.reply.trim())) spoken.push(args.reply.trim());
           if (typeof args.reply === "string" && args.reply.trim() && !writes) prepared = args.reply;
           else if (name === "remember" && typeof args.reply === "string") prepared = withoutClaims(args.reply) || prepared;
-          else if (!writes && !showRules) allSucceeded = false; // a lookup: the model must speak next
+          else if (!writes && !showRules && !showUndo) allSucceeded = false; // a lookup: the model must speak next
         } else {
           allSucceeded = false;
         }
@@ -411,7 +415,7 @@ export async function think(
       break;
     }
     // Done in one model call: the confirmation is built below from the database.
-    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || showRules || prepared)) {
+    if (allSucceeded && (changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || showRules || showUndo || prepared)) {
       if (changes.size === 0 && saved.length === 0 && prepared) reply = tidyReply(prepared, [...taskIds]);
       break;
     }
@@ -734,8 +738,10 @@ export async function think(
   // A rule saved or removed (phase b), read back by the tool; his rules shown with their 🗑 buttons.
   if (ruleLines.length > 0) reply = reply ? `${withoutClaims(reply) || ""}\n${ruleLines.join("\n")}`.trim() : ruleLines.join("\n");
   if (showRules) reply = [reply && !claimsAction(reply) ? reply : undefined, (await rulesView(now)).text].filter(Boolean).join("\n\n");
+  // The list with its ↩ buttons goes under these words (the bot adds it); nothing is undone until he taps.
+  if (showUndo) reply = (reply && !claimsAction(reply) ? reply : undefined) || "No problem, sir. Tap ↩ on each one to put it back.";
   // Nothing was written, yet the words say it was: those words go.
-  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || sendItems.length > 0 || showRules || proposal !== undefined || tools.includes("media") || tools.includes("offer_task");
+  const wroteSomething = changes.size > 0 || saved.length > 0 || remembered.length > 0 || forgotten.length > 0 || routineSet.length > 0 || ruleLines.length > 0 || sendItems.length > 0 || showRules || showUndo || proposal !== undefined || tools.includes("media") || tools.includes("offer_task");
   if (!wroteSomething && reply && claimsAction(reply)) reply = withoutClaims(reply) || "Nothing has been changed yet, sir. Could you say that once more?";
   // One question at most.
   if (reply) reply = oneQuestion(reply);
@@ -752,7 +758,7 @@ export async function think(
   const settling = (change: { tool: DoneAction["tool"]; wrote?: Record<string, unknown> }) =>
     change.tool === "complete_task" || (change.tool === "update_task" && Boolean(change.wrote) && Object.keys(change.wrote!).every((key) => ["status", "due_at", "day"].includes(key)));
   const settled = changes.size > 0 && [...changes.values()].every(settling) && saved.length + remembered.length + forgotten.length + routineSet.length + ruleLines.length === 0 && !clash && !slot && !proposal;
-  return { reply, tools, titles, planId, ...(plansByDay.size > 1 ? { planIds: planIdsOf() } : {}), choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, libraryChoices, changed: [...changes.keys()], settled };
+  return { reply, tools, titles, planId, ...(plansByDay.size > 1 ? { planIds: planIdsOf() } : {}), choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, showUndo, libraryChoices, changed: [...changes.keys()], settled };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */

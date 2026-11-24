@@ -39,6 +39,8 @@ const { placeTask, runProposal } = await import("../src/lib/slots");
 const { runTick } = await import("../src/lib/reminders");
 const { libraryForPrompt } = await import("../src/lib/library");
 const { shouldSuggestFreeTime, suggestFreeTime } = await import("../src/lib/free-time");
+const { runAction } = await import("../src/lib/actions");
+const { undoList } = await import("../src/lib/history");
 
 // ── helpers ──────────────────────────────────────────────────────────────
 let callId = 0;
@@ -1390,5 +1392,38 @@ describe("24 Nov 03:20–10:15 · 'You're free until 12:00. Want to finally get 
     // Still under way at 10:50 (until 11:45): still no offer.
     vi.setSystemTime(at("2026-11-24T10:50"));
     expect(await shouldSuggestFreeTime(new Date())).toBe(false);
+  });
+});
+
+describe("24 Nov 19:49–19:50 · 'Sorry, I misclicked some tasks, like, to be done.'", () => {
+  it("he gets his last changes with ↩ under a few words, never 'send /undo'; nothing changes until his tap, and each tap puts one back", async () => {
+    vi.setSystemTime(at("2026-11-24T05:06"));
+    const research = task({ title: "Research: Can AI help us learn English?", due_at: "2026-11-24T15:00", duration_minutes: 60, persistent: true, priority: 2 });
+    const saved = task({ title: "Watch saved video", due_at: "2026-11-24T13:15", duration_minutes: 15 });
+    // 19:49:39 and 19:49:46: two taps on ✓ done under the 17:32 "4 still open from today".
+    vi.setSystemTime(at("2026-11-24T19:49"));
+    await runAction("done", Number(research.id), undefined, new Date());
+    await runAction("done", Number(saved.id), undefined, new Date());
+    expect(byTitle("Watch saved video").status).toBe("done");
+    const result = await run("Sorry, I misclicked some tasks, like, to be done.", "2026-11-24T19:50", [tools(["undo", { reply: "No problem, sir. Tap ↩ on each one to bring it back." }])]);
+    const thought = thoughtOf(result);
+    // That evening: "Send /undo once for each one you want back. It reverses the last change each time…"
+    expect(thought?.showUndo).toBe(true);
+    expect(result.replies[0]).toBe("No problem, sir. Tap ↩ on each one to bring it back.");
+    expect(result.replies[0]).not.toMatch(/\/undo|send|type/i);
+    expect(state.calls[0].system).toMatch(/I misclicked[\s\S]*call undo/);
+    // Nothing is reopened by the model or the code until he taps.
+    expect(byTitle("Research: Can AI help us learn English?").status).toBe("done");
+    // The list under the words: both ticks first, newest first, each with its own ↩.
+    const list = await undoList(result.replies[0]);
+    expect(list.text).toMatch(/^No problem, sir\. Tap ↩ on each one to bring it back\.\n\n\*\*Last changes\*\*/);
+    expect(list.text).toContain("1. 19:49 · **Watch saved video**: done");
+    expect(list.text).toContain("2. 19:49 · **Research: Can AI help us learn English?**: done");
+    expect(list.rows[0].slice(0, 2).map((button) => button.text)).toEqual(["↩ 1", "↩ 2"]);
+    // His two taps put both back as they were.
+    for (const button of list.rows[0].slice(0, 2)) await undoChange(Number(button.data.slice(3)));
+    expect(byTitle("Research: Can AI help us learn English?").status).toBe("todo");
+    expect(byTitle("Watch saved video").status).toBe("todo");
+    expect(byTitle("Watch saved video").completed_at ?? null).toBeNull();
   });
 });

@@ -123,6 +123,7 @@ export async function POST(request: Request) {
             else if (thought.slot?.kind === "ask") replies.push(`${markdownToPlain(thought.reply)} (${thought.slot.options.map((option) => formatTime(option.at)).join(" / ")}, or say another time)`);
             else if (thought.slot?.kind === "split") replies.push(`${markdownToPlain(thought.reply)} (Tap Split in Telegram, or say a time.)`);
             else if (thought.proposal) replies.push(`${markdownToPlain(thought.reply)} Say "yes" and it's done.`);
+            else if (thought.showUndo) replies.push("Send /undo in Telegram, sir: the last ten changes are listed there, each with an undo button.");
             // The app's chat shows plain text: the rich markdown is flattened (lists stay one per line).
             else replies.push(markdownToPlain(thought.reply));
           }
