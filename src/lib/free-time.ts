@@ -4,7 +4,7 @@ import { logEvent } from "./events";
 import { getRoutine } from "./routine";
 import { kindOf, parseClockText } from "./routine-rules";
 import { budgetLeft, notify } from "./safety";
-import { band, freeTimeText, pickFreeItem, type FreeItem, type FreeStats } from "./smart-rules";
+import { band, freeTimeText, freeUntilFrom, pickFreeItem, type Booked, type FreeItem, type FreeStats } from "./smart-rules";
 import { choicesFor } from "./routine";
 import { scheduleReminder, settleReminders } from "./reminders";
 import { dayLoads } from "./smart-inbox";
@@ -59,17 +59,22 @@ async function recentOffers(now: Date): Promise<{ items: Set<number>; today: num
   };
 }
 
-/** When the next thing begins (a task, a prayer less 15 minutes, or his bedtime), so "free until" is true. */
+/** When the next thing begins (a task, a prayer less 15 minutes, or his bedtime), or now while a task is under way, so "free until" is true. */
 async function freeUntil(now: Date): Promise<Date> {
   const routine = await getRoutine();
   const sleep = parseClockText(routine.sleep) ?? 23 * 60;
   const { start } = dayBounds(now, TIMEZONE);
   const bedtime = new Date(start.getTime() + sleep * MINUTE);
-  const { data } = await requireDb().from("tasks").select("due_at, kind").in("status", OPEN_STATUSES).gt("due_at", now.toISOString()).lt("due_at", bedtime.toISOString()).order("due_at").limit(5);
-  const next = ((data ?? []) as { due_at: string; kind: string | null }[])[0];
-  if (!next) return bedtime;
-  const at = new Date(next.due_at);
-  return next.kind === "prayer" ? new Date(at.getTime() - 15 * MINUTE) : at;
+  // From six hours back, so a long task that began earlier (or this very minute) is seen as under way.
+  const { data } = await requireDb()
+    .from("tasks")
+    .select("due_at, kind, duration_minutes, anytime")
+    .in("status", OPEN_STATUSES)
+    .gt("due_at", new Date(now.getTime() - 6 * HOUR).toISOString())
+    .lt("due_at", bedtime.toISOString())
+    .order("due_at")
+    .limit(50);
+  return freeUntilFrom((data ?? []) as Booked[], now, bedtime);
 }
 
 export type FreeSuggestion = { text: string; rows: { text: string; data: string }[][]; taskId?: number };

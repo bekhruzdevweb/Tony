@@ -8,6 +8,7 @@ import {
   asksForRules,
   downtime,
   freeTimeText,
+  freeUntilFrom,
   groupBursts,
   isFreeTimeRequest,
   isRuleRequest,
@@ -90,6 +91,23 @@ describe("c) Free Time list and suggestions", () => {
   });
   it("reads as the spec says", () => {
     expect(freeTimeText(items[0], at("2026-11-21T18:00"), at("2026-11-21T13:30"))).toBe("You're free until **18:00**. Want to finally watch **Instagram Masterclass**? It's been waiting 9 days.");
+  });
+  it("24 Nov 10:15: a task that begins this minute (or is under way) means he is not free", () => {
+    // That morning: "You're free until 12:00" the very minute "Watch both NotebookLM videos" (10:15, 90 min) began.
+    const day = [
+      { due_at: iso("2026-11-24T09:30"), duration_minutes: 30 },
+      { due_at: iso("2026-11-24T10:15"), duration_minutes: 90 },
+      { due_at: iso("2026-11-24T12:00"), duration_minutes: 30 },
+      { due_at: iso("2026-11-24T20:00"), duration_minutes: 30, anytime: true },
+    ];
+    const bedtime = at("2026-11-24T23:00");
+    expect(freeUntilFrom(day, at("2026-11-24T10:15"), bedtime).getTime()).toBe(at("2026-11-24T10:15").getTime());
+    expect(freeUntilFrom(day, at("2026-11-24T11:00"), bedtime).getTime()).toBe(at("2026-11-24T11:00").getTime());
+    // Once it has run its length, the next thing ends the free time; 09:30's task long over does not count.
+    expect(freeUntilFrom(day, at("2026-11-24T11:45"), bedtime).getTime()).toBe(at("2026-11-24T12:00").getTime());
+    // A task with no time of its own is never under way; a prayer ends free time 15 minutes before it.
+    expect(freeUntilFrom(day, at("2026-11-24T20:05"), bedtime).getTime()).toBe(bedtime.getTime());
+    expect(freeUntilFrom([{ due_at: iso("2026-11-24T15:50"), kind: "prayer" }], at("2026-11-24T14:00"), bedtime).getTime()).toBe(at("2026-11-24T15:35").getTime());
   });
 });
 

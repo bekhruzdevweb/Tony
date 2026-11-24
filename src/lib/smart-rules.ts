@@ -121,6 +121,28 @@ export function pickFreeItem(items: FreeItem[], input: { minutesFree: number; ho
   return fits.sort((a, b) => rate(b) - rate(a) || a.created_at.localeCompare(b.created_at))[0];
 }
 
+export type Booked = { due_at: string; kind?: string | null; duration_minutes?: number | null; anytime?: boolean | null };
+
+/**
+ * When his free time ends: now, if a task is under way (it began and its length has not run out; 24 Nov
+ * 10:15: "You're free until 12:00" the very minute "Watch both NotebookLM videos", 10:15–11:45, began),
+ * else the next thing to begin (a prayer less 15 minutes), else his bedtime. A task with no time of its
+ * own ("anytime") is not under way at any hour.
+ */
+export function freeUntilFrom(tasks: Booked[], now: Date, bedtime: Date): Date {
+  const t = now.getTime();
+  const underway = tasks.some((task) => {
+    if (task.anytime || task.kind === "prayer") return false;
+    const start = new Date(task.due_at).getTime();
+    return start <= t && t < start + (task.duration_minutes || 30) * MINUTE;
+  });
+  if (underway) return now;
+  const next = tasks.filter((task) => new Date(task.due_at).getTime() > t).sort((a, b) => a.due_at.localeCompare(b.due_at))[0];
+  if (!next || new Date(next.due_at).getTime() >= bedtime.getTime()) return bedtime;
+  const at = new Date(next.due_at);
+  return next.kind === "prayer" ? new Date(at.getTime() - 15 * MINUTE) : at;
+}
+
 /** "You're free until 18:00. Want to finally watch **X**? It's been waiting 9 days." */
 export function freeTimeText(item: FreeItem, until: Date | undefined, now: Date): string {
   const days = Math.floor((now.getTime() - new Date(item.created_at).getTime()) / DAY_MS);
