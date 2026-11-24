@@ -5,6 +5,7 @@ import type { AppDayState, AppHabit, AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
 import { addMinutes, formatLongDate, formatTime, localDate } from "@/lib/time";
+import { DayCalendar } from "./calendar";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
 
 export type ScreenProps = {
@@ -20,6 +21,12 @@ export type ScreenProps = {
 export const PAGE = "mx-auto w-full max-w-[820px] px-4 md:px-10";
 const DAY_MS = 24 * 60 * 60_000;
 const TZ = "Asia/Tashkent";
+/** The three boxes of a day: urgent, important, and everything small. */
+const GROUPS: { title: string; color: string; has: (task: Task) => boolean }[] = [
+  { title: "Urgent", color: "var(--p1)", has: (task) => task.priority === 1 },
+  { title: "Important", color: "var(--p2)", has: (task) => task.priority === 2 },
+  { title: "Small tasks", color: "var(--p4)", has: (task) => task.priority !== 1 && task.priority !== 2 },
+];
 const byDue = (a: Task, b: Task) => (a.due_at ?? "").localeCompare(b.due_at ?? "");
 const fmt = (at: Date, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...options }).format(at);
 
@@ -77,11 +84,28 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [rescheduling, setRescheduling] = useState(false);
+  // Phones show one at a time (his choice is remembered); a wide screen shows the list and the calendar side by side.
+  const [view, setView] = useState<"list" | "calendar">(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem("tony-today-view") === "calendar" ? "calendar" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const choose = (next: "list" | "calendar") => {
+    setView(next);
+    try {
+      localStorage.setItem("tony-today-view", next);
+    } catch {}
+  };
   const { carried, timed, done, total } = splitToday(state.tasks, now);
   // Overdue: everything whose time has passed (earlier days, or earlier today), unless started.
   const late = (t: Task) => t.status !== "in_progress" && new Date(t.due_at!).getTime() < now.getTime();
   const overdue = [...carried, ...timed.filter(late)].sort(byDue);
-  const today = timed.filter((t) => !late(t));
+  const overdueIds = new Set(overdue.map((t) => t.id));
+  const isLate = (t: Task) => overdueIds.has(t.id);
+  // Timed tasks in time order, then the ones with no time (tasks.ts is server-only, so the order is spelled out here).
+  const open = [...carried, ...timed].sort((a, b) => Number(!!a.anytime) - Number(!!b.anytime) || byDue(a, b));
   const openCount = total - done.length;
   const minutes = [...carried, ...timed].reduce((sum, t) => sum + (t.duration_minutes ?? 0), 0);
   const row = { projects: state.projects, now, onOpen, onToggle };
@@ -98,7 +122,17 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto pb-8">
+      <div className="flex shrink-0 justify-center px-4 pt-1 pb-1 lg:hidden">
+        <div className="grid w-full max-w-xs grid-cols-2 rounded-[10px] bg-surface p-0.5" role="tablist" aria-label="Today as">
+          {(["list", "calendar"] as const).map((option) => (
+            <button key={option} type="button" role="tab" aria-selected={view === option} onClick={() => choose(option)} className={`h-8 rounded-[8px] text-[13px] font-medium capitalize ${view === option ? "bg-background shadow-sm" : "text-secondary"}`}>
+              {option}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1">
+      <div className={`min-w-0 flex-1 overflow-y-auto pb-8 ${view === "calendar" ? "hidden lg:block" : ""}`}>
         <div className={PAGE}>
           <Title
             sub={
@@ -112,41 +146,41 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
           </Title>
           <PrayerStrip state={state} now={now} onToggle={onToggle} />
           {overdue.length > 0 && (
-            <Section
-              title="Overdue"
-              collapsible
-              action={
-                <span className="relative">
-                  <button type="button" onClick={() => setRescheduling(!rescheduling)} className="h-7 rounded px-1.5 text-[13px] font-medium text-primary hover:bg-surface">
-                    Reschedule
-                  </button>
-                  {rescheduling && (
-                    <>
-                      <button type="button" aria-label="Close" className="fixed inset-0 z-20 cursor-default" onClick={() => setRescheduling(false)} />
-                      <span className="fade-in absolute top-8 right-0 z-30 w-48 overflow-hidden rounded-lg border border-hairline bg-background py-1 shadow-xl">
-                        {(["today", "tomorrow"] as const).map((to) => (
-                          <button key={to} type="button" onClick={() => (setRescheduling(false), onReschedule(to))} className="flex h-9 w-full items-center gap-2.5 px-3 text-left text-[14px] text-ink hover:bg-surface">
-                            <span style={{ color: to === "today" ? "var(--today)" : "var(--tomorrow)" }}>{Icon.calendar}</span>
-                            All {overdue.length} to {to}
-                          </button>
-                        ))}
-                      </span>
-                    </>
-                  )}
-                </span>
-              }
-            >
-              {overdue.map((task) => (
-                <TaskRow key={task.id} task={task} overdue when="full" attached={attached(task)} {...row} />
-              ))}
-            </Section>
+            <div className="mt-4 flex items-center justify-between rounded-card bg-overdue/8 py-1.5 pr-1.5 pl-3.5">
+              <span className="text-[13px] font-medium text-overdue">{overdue.length} past {overdue.length === 1 ? "its" : "their"} time</span>
+              <span className="relative">
+                <button type="button" onClick={() => setRescheduling(!rescheduling)} className="h-8 rounded-full px-3 text-[13px] font-medium text-primary hover:bg-surface">
+                  Reschedule
+                </button>
+                {rescheduling && (
+                  <>
+                    <button type="button" aria-label="Close" className="fixed inset-0 z-20 cursor-default" onClick={() => setRescheduling(false)} />
+                    <span className="fade-in absolute top-9 right-0 z-30 w-48 overflow-hidden rounded-lg border border-hairline bg-background py-1 shadow-xl">
+                      {(["today", "tomorrow"] as const).map((to) => (
+                        <button key={to} type="button" onClick={() => (setRescheduling(false), onReschedule(to))} className="flex h-9 w-full items-center gap-2.5 px-3 text-left text-[14px] text-ink hover:bg-surface">
+                          <span style={{ color: to === "today" ? "var(--today)" : "var(--tomorrow)" }}>{Icon.calendar}</span>
+                          All {overdue.length} to {to}
+                        </button>
+                      ))}
+                    </span>
+                  </>
+                )}
+              </span>
+            </div>
           )}
-          <Section title={`${fmt(now, { month: "short", day: "numeric" })} · Today · ${fmt(now, { weekday: "long" })}`}>
-            {today.map((task) => (
-              <TaskRow key={task.id} task={task} attached={attached(task)} {...row} />
-            ))}
-            <AddTaskRow onAdd={() => onAdd({ day: localDate(now) })} />
-          </Section>
+          {/* His day in three boxes (24 Nov: "divide into urgent, important, small tasks"), each in time order. */}
+          {GROUPS.map((group) => {
+            const tasks = open.filter(group.has);
+            if (tasks.length === 0) return null;
+            return (
+              <Section key={group.title} title={<span className="inline-flex items-center gap-2"><span className="size-2 rounded-full" style={{ background: group.color }} />{group.title} · {tasks.length}</span>}>
+                {tasks.map((task) => (
+                  <TaskRow key={task.id} task={task} overdue={isLate(task)} when={isLate(task) ? "full" : undefined} attached={attached(task)} {...row} />
+                ))}
+              </Section>
+            );
+          })}
+          <AddTaskRow onAdd={() => onAdd({ day: localDate(now) })} />
           {done.length > 0 && (
             <Section title={`Completed · ${done.length}`} collapsible defaultOpen={false}>
               {done.map((task) => (
@@ -156,6 +190,10 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
           )}
           {total === 0 && <Empty art="today-clear">Nothing on today, sir. A rare and agreeable state of affairs.</Empty>}
         </div>
+      </div>
+      <aside className={`min-h-0 flex-col border-hairline lg:flex lg:w-[400px] lg:shrink-0 lg:border-l xl:w-[460px] ${view === "calendar" ? "flex w-full" : "hidden"}`} aria-label="Calendar">
+        <DayCalendar state={state} now={now} onOpen={onOpen} onToggle={onToggle} onAdd={onAdd} />
+      </aside>
       </div>
       <form
         className="border-t border-hairline bg-background py-2"
