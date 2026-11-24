@@ -5,7 +5,7 @@ import type { AppDayState, AppHabit, AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
 import { addMinutes, formatLongDate, formatTime, localDate } from "@/lib/time";
-import { DayCalendar } from "./calendar";
+import { WeekCalendar } from "./calendar";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
 
 export type ScreenProps = {
@@ -84,7 +84,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [rescheduling, setRescheduling] = useState(false);
-  // Phones show one at a time (his choice is remembered); a wide screen shows the list and the calendar side by side.
+  // Today as his list, or the week at a glance; his choice is remembered.
   const [view, setView] = useState<"list" | "calendar">(() => {
     try {
       return typeof window !== "undefined" && localStorage.getItem("tony-today-view") === "calendar" ? "calendar" : "list";
@@ -122,17 +122,17 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
 
   return (
     <>
-      <div className="flex shrink-0 justify-center px-4 pt-1 pb-1 lg:hidden">
+      <div className="flex shrink-0 justify-center px-4 pt-1 pb-1 md:pt-4">
         <div className="grid w-full max-w-xs grid-cols-2 rounded-[10px] bg-surface p-0.5" role="tablist" aria-label="Today as">
           {(["list", "calendar"] as const).map((option) => (
-            <button key={option} type="button" role="tab" aria-selected={view === option} onClick={() => choose(option)} className={`h-8 rounded-[8px] text-[13px] font-medium capitalize ${view === option ? "bg-background shadow-sm" : "text-secondary"}`}>
-              {option}
+            <button key={option} type="button" role="tab" aria-selected={view === option} onClick={() => choose(option)} className={`h-8 rounded-[8px] text-[13px] font-medium ${view === option ? "bg-background shadow-sm" : "text-secondary"}`}>
+              {option === "calendar" ? "Week" : "List"}
             </button>
           ))}
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-      <div className={`min-w-0 flex-1 overflow-y-auto pb-8 ${view === "calendar" ? "hidden lg:block" : ""}`}>
+      <div className={`min-w-0 flex-1 overflow-y-auto pb-8 ${view === "calendar" ? "hidden" : ""}`}>
         <div className={PAGE}>
           <Title
             sub={
@@ -191,9 +191,7 @@ export function TodayScreen(props: ScreenProps & { onQuickAdd: (text: string) =>
           {total === 0 && <Empty art="today-clear">Nothing on today, sir. A rare and agreeable state of affairs.</Empty>}
         </div>
       </div>
-      <aside className={`min-h-0 flex-col border-hairline lg:flex lg:w-[400px] lg:shrink-0 lg:border-l xl:w-[460px] ${view === "calendar" ? "flex w-full" : "hidden"}`} aria-label="Calendar">
-        <DayCalendar state={state} now={now} onOpen={onOpen} onToggle={onToggle} onAdd={onAdd} />
-      </aside>
+      {view === "calendar" && <WeekCalendar state={state} now={now} onOpen={onOpen} onToggle={onToggle} onAdd={onAdd} />}
       </div>
       <form
         className="border-t border-hairline bg-background py-2"

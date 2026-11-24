@@ -31,7 +31,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | J | Calm and clear: every line on its own line, 3+ receipts as one short list; after midnight the day just begun is "today"; small things get no time ("anytime", one quiet check at 20:00); three priorities (urgent is chased 15 min after its time, then hourly, until he answers or it is done; important; normal); no clash for two things he put together | Live, awaiting your check |
 | I | Smart inbox: a new thing with no day gets the first day that is not full (7 tasks) at its best free time, one tap to set ([📅 Later day] [✏️ Other time] [📥 Inbox]); the evening poll keeps its day after midnight and sends overflow to the next free day; a yes to Tony's question runs it, several proposals are one ✓; videos are read (cover frame and speech); kept files named in reminders; "forget this file" works | Live, awaiting your check |
 | H | Habits and organizing: habits you choose with streaks (/habits, reminders, the board, Sunday's week), plans' progress, tags (#content), the Plan board (Today · This week · Someday); a short call inside a long block is not a clash | Live, awaiting your check |
-| M | App: bright Apple-style theme, pictures, motion; Today as List or Calendar (side by side on a wide screen), the list in three boxes (Urgent, Important, Small tasks) | Awaiting his check |
+| M | App: bright Apple-style theme, pictures, motion; Today as List or Week (seven days side by side, each a short list), the list in three boxes (Urgent, Important, Small tasks) | Awaiting his check |
 
 ## Phase 1 setup (about 10 minutes, all doable on a phone)
 
