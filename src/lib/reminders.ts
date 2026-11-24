@@ -241,7 +241,9 @@ export async function runTick(
       // What is kept with each, named in its line, so a file below is known for what it is (23 Nov: the IELTS
       // plan came as a bare PDF under the reminders).
       const filesOf = new Map<number, Awaited<ReturnType<typeof mediaListForTask>>>();
-      for (const reminder of together) filesOf.set(reminder.task!.id, await mediaListForTask(reminder.task!.id).catch(() => []));
+      // Documents stay behind: a plan he gave Tony to read is not sent back with every reminder (24 Nov:
+      // "no need to send me the PDF file", on the daily stretching). Photos and videos he works from still come.
+      for (const reminder of together) filesOf.set(reminder.task!.id, (await mediaListForTask(reminder.task!.id).catch(() => [])).filter((item) => item.kind !== "document"));
       const lines = together.map((reminder, index) => {
         const held = notesBlock(reminder.task!.notes, 500);
         const files = filesOf.get(reminder.task!.id) ?? [];
@@ -425,7 +427,9 @@ export async function runTick(
     const example = attempt === 0 && !prayer ? await sendTaskExample(bot, chatId, task.id).catch((error) => (console.error("Could not send the task's example:", error), false as const)) : false;
     // The example goes from the chat with the reminder, once the task is done, skipped or moved.
     if (example) for (const id of example) await track(id, "reminder", { taskId: task.id });
-    const attached = attempt === 0 && !example ? await mediaForTask(task.id).catch(() => undefined) : undefined;
+    // A document (a plan he gave Tony to read) is not sent back with the reminder; he asks for it when he wants it (24 Nov).
+    const kept = attempt === 0 && !example ? await mediaForTask(task.id).catch(() => undefined) : undefined;
+    const attached = kept?.kind === "document" ? undefined : kept;
     let messageId: number | undefined;
     // Two tries, each with a hard timeout: a stalled connection must never
     // hold the tick until the platform kills it.
