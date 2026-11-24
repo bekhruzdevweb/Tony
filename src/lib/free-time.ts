@@ -26,9 +26,13 @@ const DAY_MS = 24 * HOUR;
 /** Unasked free-time suggestions a day. */
 export const FREE_TIME_PER_DAY = 2;
 
-/** The Free Time list, oldest first. */
+/**
+ * The Free Time list, oldest first: only what has no date. A task he has put on a day is no longer
+ * "someday" (24 Nov 10:15: "Write Telegram posts like Freya's Talking", which he had put on Thursday at
+ * 19:15 that morning, was offered as "It's been waiting 2 days").
+ */
 export async function freeTimeTasks(): Promise<Task[]> {
-  const { data, error } = await requireDb().from("tasks").select().eq("free_time", true).in("status", OPEN_STATUSES).order("created_at");
+  const { data, error } = await requireDb().from("tasks").select().eq("free_time", true).is("due_at", null).in("status", OPEN_STATUSES).order("created_at");
   if (error) return [];
   return data as Task[];
 }

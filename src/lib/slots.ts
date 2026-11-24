@@ -42,7 +42,10 @@ export async function placeTask(taskId: number, at: Date, options: { learn?: boo
   if (!task) return { text: "That task no longer exists, sir." };
   if (!OPEN_STATUSES.includes(task.status)) return { text: `**${task.title}** is already settled, sir.` };
   if (at.getTime() <= Date.now() - 60_000) return { text: "That time has already passed, sir." };
-  const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo" }).eq("id", taskId);
+  // A time he chose is a time: the task leaves the 🌙 Free Time list and is no longer "no time" (24 Nov 03:20:
+  // "Write Telegram posts like Freya's Talking", put on Thu 19:15 by his tap, stayed both, and at 10:15 was
+  // offered as free time, "waiting 2 days").
+  const { error } = await db.from("tasks").update({ due_at: at.toISOString(), status: "todo", free_time: false, anytime: false }).eq("id", taskId);
   if (error) throw new Error(`placeTask: ${error.message}`);
   await scheduleReminder(taskId, at);
   if (options.learn) await recordSample(task, at);
@@ -77,7 +80,7 @@ export async function splitTask(taskId: number, parts: Date[]): Promise<{ text: 
   if (parts.length !== 2 || parts.some((at) => at.getTime() <= Date.now() - 60_000)) return { text: "Those times have already passed, sir." };
   const half = Math.ceil((task.duration_minutes || 60) / 2);
   const base = task.title.replace(/\s*\(\d\/2\)$/, "");
-  const first = { title: `${base} (1/2)`, due_at: parts[0].toISOString(), status: "todo", duration_minutes: half };
+  const first = { title: `${base} (1/2)`, due_at: parts[0].toISOString(), status: "todo", duration_minutes: half, free_time: false, anytime: false };
   const { error } = await db.from("tasks").update(first).eq("id", taskId);
   if (error) throw new Error(`splitTask: ${error.message}`);
   await scheduleReminder(taskId, parts[0]);

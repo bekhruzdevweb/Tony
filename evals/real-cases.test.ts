@@ -38,6 +38,7 @@ const { transcribeAudio } = await import("../src/lib/voice");
 const { placeTask, runProposal } = await import("../src/lib/slots");
 const { runTick } = await import("../src/lib/reminders");
 const { libraryForPrompt } = await import("../src/lib/library");
+const { shouldSuggestFreeTime, suggestFreeTime } = await import("../src/lib/free-time");
 
 // ── helpers ──────────────────────────────────────────────────────────────
 let callId = 0;
@@ -1356,5 +1357,38 @@ describe("23 Nov 15:45 · the call with Olga at 18:00, when the workout and stre
     // Told once: the same three are not flagged again.
     const again = await run("the call with Olga is at 18:00, she is in Astana", "2026-11-23T15:50", [tools(["update_task", { id: byTitle("Call with Ольга").id, due_at: "2026-11-23T18:00", notes: "She is in Astana", reply: "" }])]);
     expect(again.replies[0]).not.toContain("⚠️");
+  });
+});
+
+describe("24 Nov 03:20–10:15 · 'You're free until 12:00. Want to finally get to Write Telegram posts like Freya's Talking?'", () => {
+  it("his tap on Thursday 19:15 takes the task off the Free Time list and out of 'no time'", async () => {
+    const freya = task({ title: "Write Telegram posts like Freya's Talking", due_at: "2026-11-24T20:00", duration_minutes: 45, free_time: true, anytime: true });
+    const result = await run("Also write a post like Freya should be in Thursday as well.", "2026-11-24T03:20", [tools(["update_task", { id: freya.id, day: "2026-11-26" }])]);
+    expect(askOf(result).day).toBe("2026-11-26");
+    await placeTask(Number(freya.id), at("2026-11-26T19:15"), { learn: true });
+    const stored = byTitle("Write Telegram posts like Freya's Talking");
+    expect(local(stored.due_at)).toBe("2026-11-26T19:15");
+    // That morning both flags stayed on: it was offered as free time at 10:15, and showed as "no time" on Thursday.
+    expect(stored.free_time).toBe(false);
+    expect(stored.anytime).toBe(false);
+  });
+
+  it("10:15, the minute 'Watch both NotebookLM videos' (90 min) begins: no free-time offer, and a dated task is never offered", async () => {
+    routineRow({ wake: "07:00", sleep: "23:00" });
+    task({ title: "Watch both NotebookLM videos", due_at: "2026-11-24T10:15", duration_minutes: 90 });
+    task({ title: "Watch reel: humor plus education", due_at: "2026-11-24T12:00", duration_minutes: 30 });
+    // As it was stored that morning: on Thursday at 19:15, yet still flagged as free time.
+    task({ title: "Write Telegram posts like Freya's Talking", due_at: "2026-11-26T19:15", duration_minutes: 45, free_time: true, anytime: true, created_at: at("2026-11-21T18:52").toISOString() });
+    task({ title: "Watch: How to Master Storytelling", duration_minutes: 30, free_time: true, created_at: at("2026-11-23T05:00").toISOString() });
+    said("user", "Video about Weary Chinese Time Mem is done.", "2026-11-24T04:42");
+    vi.setSystemTime(at("2026-11-24T10:15"));
+    expect(await shouldSuggestFreeTime(new Date())).toBe(false);
+    // Asked ("I'm free"), only an undated item from the list comes up.
+    const asked = await suggestFreeTime(new Date(), { asked: true });
+    expect(asked?.text).not.toContain("Freya");
+    expect(asked?.text).toContain("Master Storytelling");
+    // Still under way at 10:50 (until 11:45): still no offer.
+    vi.setSystemTime(at("2026-11-24T10:50"));
+    expect(await shouldSuggestFreeTime(new Date())).toBe(false);
   });
 });

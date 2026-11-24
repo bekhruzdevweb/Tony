@@ -415,11 +415,16 @@ async function readFields(
     if (at.getTime() <= now.getTime()) at = toWholeMinute(new Date(now.getTime() + 30 * 60_000));
     patch.anytime = true;
     patch.due_at = at.toISOString();
+    // On a day now: no longer "someday".
+    patch.free_time = false;
     return { patch, dueAt: at, dayOnly: undefined };
   }
   if (args.anytime === false) patch.anytime = false;
-  // A time he gives takes it out of "anytime".
-  if (dueAt) patch.anytime = false;
+  // A time he gives takes it out of "anytime", and off the 🌙 Free Time list (which holds only what has no date).
+  if (dueAt) {
+    patch.anytime = false;
+    patch.free_time = false;
+  }
   return { patch, dueAt, dayOnly };
 }
 
