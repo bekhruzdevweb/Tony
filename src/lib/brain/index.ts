@@ -7,7 +7,7 @@ import { formatTime, formatWhen, localDate, parseLocalDateTime } from "../time";
 import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text";
 import { joinedSay, placeTask } from "../slots";
 import { fullNote, soonestSlot } from "../smart-inbox";
-import { wantsSuggestion } from "../smart-inbox-rules";
+import { keepsUnplanned, wantsSuggestion } from "../smart-inbox-rules";
 import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
@@ -655,6 +655,11 @@ export async function think(
         slot = { kind: "ask", taskId: id, title: task.title, day: suggestion.day, options: suggestion.options, inbox: true, minutes: taskMinutes(task) };
         slotLines.push(slotQuestion({ title: task.title, marks: savedMarks(marks(id)), when: dayLabel(suggestion.day, now, ownWords(text)).when, options: suggestion.options, note: fullNote(suggestion.full, now) || undefined }));
       }
+    } else if (named.size === 0 && undated.length === 1 && planId === undefined && !slot && !keepsUnplanned(ownWords(text))) {
+      // Captured to the inbox with its receipt and three buttons (25 Nov): nothing is asked in words, and
+      // nothing changes unless he taps.
+      const task = stored.get(undated[0])!;
+      if (task.status === "inbox" && !task.free_time) slot = { kind: "capture", taskId: task.id, title: task.title, day: "" };
     }
 
     const done: DoneAction[] = [...changes].flatMap(([id, change]) => {
@@ -765,7 +770,9 @@ export async function think(
 export type Slot =
   | { kind: "ask"; taskId: number; title: string; day: string; options: SlotOption[]; taken?: string; minutes?: number; inbox?: boolean }
   | { kind: "auto"; taskId: number; title: string; day: string; at: Date; why: string }
-  | { kind: "split"; taskId: number; title: string; day: string; parts: Date[]; minutes: number };
+  | { kind: "split"; taskId: number; title: string; day: string; parts: Date[]; minutes: number }
+  /** A new thing with no day, already in the inbox: [⏰ Set a time] [📅 Schedule] [📥 Inbox] under its receipt. */
+  | { kind: "capture"; taskId: number; title: string; /** No day yet: empty. */ day: "" };
 
 export { dayLabel };
 

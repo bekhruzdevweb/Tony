@@ -1264,6 +1264,21 @@ describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes
   /** A day already full: seven tasks at 09:00 onwards. */
   const fill = (date: string) => Array.from({ length: 7 }, (_, n) => task({ title: `Busy ${date} ${n}`, due_at: `${date}T${String(9 + n).padStart(2, "0")}:00`, duration_minutes: 30 }));
 
+  it("25 Nov 'buy a notebook' (no day): in the inbox, one receipt line, and three buttons: Set a time, Schedule, Inbox", async () => {
+    const result = await run("buy a notebook", "2026-11-25T22:30", [tools(["add_task", { title: "Buy a notebook", reply: "" }])]);
+    expect(result.replies[0]).toBe("✓ **Buy a notebook** in the inbox");
+    expect(byTitle("Buy a notebook").status).toBe("inbox");
+    const slot = result.thought?.slot;
+    expect(slot?.kind).toBe("capture");
+    const { slotButtons } = await import("../src/lib/slot-text");
+    expect(slotButtons(slot!).flat().map((button) => button.text)).toEqual(["⏰ Set a time", "📅 Schedule", "📥 Inbox"]);
+  });
+
+  it("'put it in the inbox: buy a notebook': he already chose, so no buttons", async () => {
+    const result = await run("put it in the inbox: buy a notebook", "2026-11-25T22:30", [tools(["add_task", { title: "Buy a notebook", reply: "" }])]);
+    expect(result.thought?.slot).toBeUndefined();
+  });
+
   it("'I want to shoot videos like this, suggest a day' with tomorrow full: the day after, and it says tomorrow is full", async () => {
     fill("2026-11-24");
     const result = await run("I want to shoot videos like this reel, suggest a day", "2026-11-23T21:00", [tools(["add_task", { title: "Shoot videos like this reel", reply: "" }])]);

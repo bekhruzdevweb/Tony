@@ -65,12 +65,25 @@ export function splitQuestion(input: { title: string; marks: string; when: strin
  * answers it: the day he named lives only in its buttons (21 Nov 20:25: "…23 November" was asked, never
  * answered, and tidied away with the receipts three hours later). Tony's own pick is a receipt.
  */
-export const awaitsAnswer = (slot: { kind: "ask" | "auto" | "split" } | undefined): boolean => slot !== undefined && slot.kind !== "auto";
+export const awaitsAnswer = (slot: { kind: "ask" | "auto" | "split" | "capture" } | undefined): boolean => slot !== undefined && slot.kind !== "auto" && slot.kind !== "capture";
+
+/**
+ * Under a new thing with no day (25 Nov: "you should respond me with three options"): it is already in the
+ * inbox, and one tap sets a time he types, has Tony find it a day, or leaves it where it is.
+ */
+export const captureButtons = (taskId: number): Button[][] => [
+  [
+    { text: "⏰ Set a time", data: `sl:when:${taskId}:0` },
+    { text: "📅 Schedule", data: `sl:plan:${taskId}:0` },
+    { text: "📥 Inbox", data: `sl:keep:${taskId}:0` },
+  ],
+];
 
 /** The buttons under the question: best first (⭐), then [✏️ Other time]; [✏️ Change] under Tony's own pick; [✂️ Split …] for halves. */
 export function slotButtons(
-  slot: { kind: "ask"; taskId: number; day: string; options: SlotOption[]; inbox?: boolean } | { kind: "auto"; taskId: number; day: string } | { kind: "split"; taskId: number; day: string; parts: Date[] },
+  slot: { kind: "ask"; taskId: number; day: string; options: SlotOption[]; inbox?: boolean } | { kind: "auto"; taskId: number; day: string } | { kind: "split"; taskId: number; day: string; parts: Date[] } | { kind: "capture"; taskId: number },
 ): Button[][] {
+  if (slot.kind === "capture") return captureButtons(slot.taskId);
   const other = { text: "✏️ Other time", data: `sl:other:${slot.taskId}:${slot.day}` };
   if (slot.kind === "auto") return [[{ text: "✏️ Change", data: `sl:edit:${slot.taskId}:${slot.day}` }]];
   if (slot.kind === "split") {

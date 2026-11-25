@@ -49,6 +49,10 @@ export function fullNote(full: string[], now: Date): string {
  * unplanned ("put it in the inbox", "someday", "no time", "just save it").
  */
 export function wantsSuggestion(said: string): boolean {
-  if (/\b(inbox|someday|some day|one day|no (time|date|day)|without (a )?(time|date|day)|just (save|keep|note)|don'?t (schedule|plan)|not now|no rush)\b/i.test(said)) return false;
-  return asksForATime(said);
+  return !keepsUnplanned(said) && asksForATime(said);
+}
+
+/** He said to keep it unplanned: no suggestion and no buttons, only the receipt. */
+export function keepsUnplanned(said: string): boolean {
+  return /\b(inbox|someday|some day|one day|no (time|date|day)|without (a )?(time|date|day)|just (save|keep|note)|don'?t (schedule|plan)|not now|no rush)\b/i.test(said);
 }

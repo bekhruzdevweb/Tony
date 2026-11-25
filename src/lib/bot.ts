@@ -687,7 +687,7 @@ export function getBot(): Bot | undefined {
         await ctx.answerCallbackQuery(note ? { text: note.slice(0, 190) } : undefined).catch(() => undefined);
       };
       // [✏️ Other time] answers with a small note on the screen, not a message.
-      if (action === "other") await answer("Type the time");
+      if (action === "other" || action === "when") await answer(action === "when" ? "Type the day and time" : "Type the time");
       else if (action !== "ok" && action !== "at" && action !== "split" && action !== "none") await answer();
       // The question stays in the chat until he answers it (the day he named lives only in its buttons;
       // 21 Nov 20:25: "…23 November" was asked, never answered, and removed with the receipts at 23:26).
@@ -746,6 +746,28 @@ export function getBot(): Bot | undefined {
         const found = await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle();
         const title = (found.data as { title?: string } | null)?.title ?? "It";
         return showOutcome(`📥 **${title}** stays in the inbox.`);
+      }
+      if (action === "plan") {
+        // [📅 Schedule] under a new thing in the inbox: Tony's day and best free time for it, one tap to set.
+        const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+        const task = found.data as Task | null;
+        if (!task) return showOutcome("That task no longer exists, sir.");
+        const suggestion = await soonestSlot(task, new Date());
+        if (!suggestion) return showOutcome(`**${task.title}**: the next two weeks are full, sir. It stays in the inbox.`);
+        const text = slotQuestion({ title: task.title, marks: "", when: dayLabel(suggestion.day, new Date()).when, options: suggestion.options, note: fullNote(suggestion.full, new Date()) || undefined });
+        await showOutcome(text, keyboardOf(slotButtons({ kind: "ask", taskId, day: suggestion.day, options: suggestion.options, inbox: true })), "waiting");
+        return;
+      }
+      if (action === "when") {
+        // [⏰ Set a time]: the day and time he types next are his; nothing is picked for him.
+        const found = await requireDb().from("tasks").select("title").eq("id", taskId).maybeSingle();
+        const title = (found.data as { title?: string } | null)?.title;
+        if (!title) return showOutcome("That task no longer exists, sir.");
+        await updateSettings({ pending_note: `He tapped Set a time on task #${taskId} "${title}" (in the inbox). His next message gives its day and time ("tomorrow 5 pm", "18:00"): set exactly that with update_task on #${taskId}; a time with no day means today, or tomorrow if that time has passed. Add no new task.`, pending_note_at: new Date().toISOString() });
+        const waiting = `⏰ **${title}**: type the day and time.`;
+        const edited = chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(waiting)) : false;
+        if (!edited) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+        return;
       }
       if (action === "later") {
         // [📅 Later day]: the next day after this one that has room, in the same message.
