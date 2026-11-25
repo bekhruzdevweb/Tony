@@ -238,12 +238,12 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-body font-semibold">Daily timeline</h2>
-                    <p className="text-[12.5px] text-secondary">Your time blocks, in order.</p>
+                    <p className="text-[12.5px] text-secondary">Your time blocks, hour by hour.</p>
                   </div>
                   <button type="button" onClick={onCalendar} className="h-8 rounded-full px-3 text-[13px] font-medium text-primary hover:bg-surface">Calendar →</button>
                 </div>
                 {blocks.length > 0 ? (
-                  <Timeline blocks={blocks} now={now} colorOf={(task) => areaOf(task)?.color ?? "var(--primary)"} areaOf={(task) => areaOf(task)?.name} onOpen={onOpen} />
+                  <Timeline blocks={blocks} now={now} colorOf={(task) => areaOf(task)?.color ?? "#007AFF"} onOpen={onOpen} />
                 ) : (
                   <Empty art="today-clear">No time blocks today. Give a big task a time and a length and it appears here.</Empty>
                 )}
@@ -286,102 +286,81 @@ function Counter({ label, value, tone, note, share }: { label: string; value: st
   );
 }
 
-/** A small line icon for a block, from its life area's name. */
-function glyphOf(area: string | undefined) {
-  const name = (area ?? "").toLowerCase();
-  if (/teach|lesson|student/.test(name)) return Icon.cap;
-  if (/content|creat|media/.test(name)) return Icon.play;
-  if (/health|fit|workout|sport/.test(name)) return Icon.heart;
-  if (/ielts|study|exam|educat/.test(name)) return Icon.book;
-  if (/business|work|career|money/.test(name)) return Icon.briefcase;
-  if (/personal|growth|develop/.test(name)) return Icon.sprout;
-  return Icon.clock;
-}
-
 const clockOf = (minute: number) => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
-/** Where the day stands, between the blocks. */
-function NowLine({ minute }: { minute: number }) {
-  return (
-    <li className="flex items-center gap-2 py-0.5" aria-label={`Now, ${clockOf(minute)}`}>
-      <span className="w-11 shrink-0 text-right text-[11px] font-semibold text-overdue tabular-nums">{clockOf(minute)}</span>
-      <span className="size-2 shrink-0 rounded-full bg-overdue" />
-      <span className="h-[1.5px] flex-1 rounded-full bg-overdue/60" />
-    </li>
-  );
+/** Black or white, whichever reads on a solid block of this colour. */
+function inkOn(color: string): string {
+  const hex = /^#([0-9a-f]{6})$/i.exec(color.trim())?.[1];
+  if (!hex) return "#ffffff";
+  const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.42 ? "#111111" : "#ffffff";
 }
 
-const gapText = (minutes: number) => (minutes >= 60 ? formatMinutes(Math.round(minutes / 15) * 15) : `${minutes}m`);
+const HOUR_PX = 60;
 
 /**
- * The day's time blocks as one stacked schedule (25 Nov, from his reference: "it looks basic"): each block a
- * solid coloured card as tall as its length, with its start time beside it, its area and its length; free
- * time between blocks is one slim dashed row, never an empty grid. A line marks where the day stands now.
+ * Time blocking as he drew it (25 Nov, his reference): the hours down the left with a line at each, an axis,
+ * and each block a bold solid slab of its area's colour, exactly as tall as its length, with its hours in the
+ * corner and its name large in the middle. Blocks that follow each other touch. A red line marks now.
  */
-function Timeline({ blocks, now, colorOf, areaOf, onOpen }: { blocks: ReturnType<typeof layoutDay>["blocks"]; now: Date; colorOf: (task: Task) => string; areaOf: (task: Task) => string | undefined; onOpen: (task: Task) => void }) {
+function Timeline({ blocks, now, colorOf, onOpen }: { blocks: ReturnType<typeof layoutDay>["blocks"]; now: Date; colorOf: (task: Task) => string; onOpen: (task: Task) => void }) {
   const nowMinute = minuteOfDay(now);
-  const ordered = [...blocks].sort((a, b) => a.start - b.start);
-  const height = (minutes: number) => Math.round(Math.min(132, Math.max(52, 30 + minutes * 0.62)));
-  const clock = clockOf;
-  let cursor = -1;
-  let nowShown = false;
-  const rows: React.ReactNode[] = [];
-  ordered.forEach((block, index) => {
-    const { task, start, minutes } = block;
-    const gap = cursor >= 0 ? start - cursor : 0;
-    // Where the day stands: before this block, if the present moment falls ahead of it.
-    const nowBefore = !nowShown && nowMinute < start;
-    if (gap >= 30) {
-      if (nowBefore && nowMinute >= cursor) {
-        nowShown = true;
-        rows.push(<NowLine key={`now-${index}`} minute={nowMinute} />);
-      }
-      rows.push(
-        <li key={`gap-${index}`} className="flex items-center gap-2">
-          <span className="w-11 shrink-0" />
-          <span className="flex h-8 flex-1 items-center justify-center rounded-[10px] border border-dashed border-secondary/30 text-[11.5px] text-secondary">Free · {gapText(gap)}</span>
-        </li>,
-      );
-    } else if (nowBefore) {
-      nowShown = true;
-      rows.push(<NowLine key={`now-${index}`} minute={nowMinute} />);
-    }
-    const open = isOpen(task);
-    const color = colorOf(task);
-    const inside = !nowShown && nowMinute >= start && nowMinute < start + minutes && open;
-    if (inside) nowShown = true;
-    const area = areaOf(task);
-    rows.push(
-      <li key={task.id} className="flex items-stretch gap-2">
-        <span className={`w-11 shrink-0 pt-2 text-right text-[11.5px] tabular-nums ${inside ? "font-semibold text-overdue" : "text-secondary"}`}>{clock(start)}</span>
-        <button
-          type="button"
-          onClick={() => onOpen(task)}
-          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-[14px] py-2 pr-3 pl-2.5 text-left ${inside ? "ring-2 ring-offset-1" : ""}`}
-          style={{
-            minHeight: height(minutes),
-            background: open ? `color-mix(in srgb, ${color} 20%, var(--background))` : "var(--surface)",
-            boxShadow: `inset 4px 0 0 ${open ? color : "var(--p4)"}`,
-            ...(inside ? ({ "--tw-ring-color": color } as React.CSSProperties) : {}),
-          }}
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-background/85 [&_svg]:size-[17px]" style={{ color: open ? color : "var(--secondary)" }} aria-hidden>
-            {open ? glyphOf(area) : Icon.check}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className={`block truncate text-[14px] leading-tight font-semibold ${open ? "text-ink" : "text-secondary line-through"}`}>{task.title}</span>
-            <span className="mt-0.5 block truncate text-[11.5px] text-secondary">{[area, `${clock(start)} – ${clock(start + minutes)}`].filter(Boolean).join(" · ")}</span>
-          </span>
-          <span className={`shrink-0 text-[12.5px] font-semibold tabular-nums ${open ? "" : "text-secondary"}`} style={open ? { color: `color-mix(in srgb, ${color} 70%, var(--ink))` } : undefined}>
-            {formatMinutes(minutes)}
-          </span>
-        </button>
-      </li>,
-    );
-    cursor = Math.max(cursor, start + minutes);
-  });
-  if (!nowShown) rows.push(<NowLine key="now-end" minute={nowMinute} />);
-  return <ol className="mt-3 space-y-1.5">{rows}</ol>;
+  const from = Math.floor(Math.min(...blocks.map((block) => block.start)) / 60);
+  const to = Math.min(24, Math.ceil(Math.max(...blocks.map((block) => block.start + block.minutes)) / 60));
+  const hours = Array.from({ length: to - from + 1 }, (_, index) => from + index);
+  const top = (minute: number) => ((minute - from * 60) / 60) * HOUR_PX;
+  const PAD = 10;
+  return (
+    <div className="relative mt-4" style={{ height: (to - from) * HOUR_PX + PAD * 2 }}>
+      {hours.map((hour) => (
+        <div key={hour} className="absolute inset-x-0 flex items-center" style={{ top: top(hour * 60) + PAD - 8, height: 16 }}>
+          <span className="w-12 shrink-0 text-[12px] font-medium text-secondary tabular-nums">{String(hour % 24).padStart(2, "0")}:00</span>
+          <span className="h-px flex-1 bg-ink/15" />
+        </div>
+      ))}
+      {/* The axis the blocks hang from. */}
+      <span className="absolute w-px bg-ink/25" style={{ left: 64, top: 0, bottom: 0 }} />
+      <div className="absolute" style={{ left: 76, right: 6, top: PAD, bottom: PAD }}>
+        {blocks.map(({ task, start, minutes, column, columns }) => {
+          const open = isOpen(task);
+          const color = open ? colorOf(task) : "#d1d1d6";
+          const ink = open ? inkOn(color) : "#6e6e73";
+          const height = Math.max((minutes / 60) * HOUR_PX - 2, 26);
+          const roomy = height >= 62;
+          return (
+            <button
+              key={task.id}
+              type="button"
+              onClick={() => onOpen(task)}
+              className="absolute flex flex-col overflow-hidden rounded-[14px] px-3 text-left"
+              style={{ top: top(start) + 1, height, left: `calc(${(column / columns) * 100}% + 1px)`, width: `calc(${100 / columns}% - 2px)`, background: color, color: ink, paddingTop: roomy ? 7 : 0, paddingBottom: roomy ? 7 : 0, justifyContent: roomy ? "flex-start" : "center" }}
+            >
+              {roomy ? (
+                <>
+                  <span className="text-[11.5px] leading-none font-medium tabular-nums opacity-80">{clockOf(start)} – {clockOf(start + minutes)}</span>
+                  <span className={`flex min-h-0 flex-1 items-center justify-center text-center leading-tight font-bold tracking-tight ${open ? "" : "line-through"} ${columns > 1 ? "text-[14px]" : height >= 110 ? "text-[20px]" : "text-[16.5px]"}`}>
+                    <span className="line-clamp-2">{task.title}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="flex items-baseline gap-2">
+                  <span className="shrink-0 text-[11px] font-medium tabular-nums opacity-80">{clockOf(start)} – {clockOf(start + minutes)}</span>
+                  <span className={`min-w-0 truncate text-[14px] font-bold tracking-tight ${open ? "" : "line-through"}`}>{task.title}</span>
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {nowMinute >= from * 60 && nowMinute <= to * 60 && (
+        <div className="pointer-events-none absolute inset-x-0 z-10 flex items-center" style={{ top: top(nowMinute) + PAD - 5, height: 10 }} aria-label={`Now, ${clockOf(nowMinute)}`}>
+          <span className="w-12 shrink-0" />
+          <span className="-ml-0.5 size-2.5 shrink-0 rounded-full bg-overdue ring-2 ring-background" style={{ marginLeft: 11 }} />
+          <span className="h-[2px] flex-1 rounded-full bg-overdue" />
+        </div>
+      )}
+    </div>
+  );
 }
 
 const FOCUS_MINUTES = 25;
