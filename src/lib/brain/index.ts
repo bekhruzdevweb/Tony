@@ -9,6 +9,7 @@ import { joinedSay, placeTask } from "../slots";
 import { fullNote, soonestSlot } from "../smart-inbox";
 import { keepsUnplanned, wantsSuggestion } from "../smart-inbox-rules";
 import { weekGoalsForPrompt } from "../week-goals";
+import { getSettings } from "../settings";
 import { big3ForPrompt } from "../big3";
 import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
@@ -252,6 +253,8 @@ export async function think(
   const saved: string[] = [];
   // Files he filed under a label this turn ("ideas for my reels").
   const filed: string[] = [];
+  // The week's outcomes added this turn: each gets its receipt (26 Nov: three were saved and the reply named none).
+  const outcomes: string[] = [];
   // Memory notes written or removed this turn, each read back before it is confirmed.
   const remembered: { id: number; fact: string; layer: string; quiet: boolean }[] = [];
   const forgotten: { id: number; fact: string }[] = [];
@@ -339,6 +342,7 @@ export async function think(
           }
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
+          if (call.function.name === "week_goal" && typeof (outcome as { outcome?: unknown }).outcome === "string") outcomes.push(String((outcome as { outcome?: unknown }).outcome));
           if (call.function.name === "media" && typeof (outcome as { saved_as?: unknown }).saved_as === "string") filed.push(String((outcome as { saved_as?: unknown }).saved_as));
           if (name === "rule_fire" && typeof (outcome as { send_item?: unknown }).send_item === "string") sendItems.push(String((outcome as { send_item?: unknown }).send_item));
           const sending = (outcome as { send_items?: unknown }).send_items;
@@ -733,6 +737,12 @@ export async function think(
     const kept = ((data ?? []) as { title: string | null }[]).map((row) => row.title ?? "");
     const lines = saved.map((title) => (kept.some((known) => known.includes(title) || title.includes(known)) ? `💾 Saved to your library: **${title}**` : `⚠️ **${title}** did not save, sir.`)).join("\n");
     reply = reply ? `${reply}\n${lines}` : `${lines}. Ask me for it any time.`;
+  }
+  if (outcomes.length > 0) {
+    const lines = outcomes.map((title) => `✓ Outcome added: **${title}**`).join("\n");
+    // In the guided planning, the way on is named too.
+    const guided = Boolean((await getSettings().catch(() => undefined))?.week_session);
+    reply = [reply, lines, guided ? "_Send another, or tap ▶️ Start with the tasks._" : undefined].filter(Boolean).join("\n");
   }
   if (filed.length > 0) {
     // Where it went and how to get it back, in one line (21 Nov: "how did it save it?").

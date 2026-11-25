@@ -184,10 +184,13 @@ describe("Phase O: references and areas", () => {
 // ── Phase P (25 Nov): the weekly planner. Outcomes he chooses, five at most; a waiting task placed on a day ──
 describe("Phase P: the weekly planner", () => {
   it("'my goals this week: launch the website, study 10 hours': two outcomes on this week, shown to Tony next time; a sixth is refused", async () => {
-    await run("my goals this week: launch the website, study 10 hours", "2026-11-25T10:00", [
+    const told = await run("my goals this week: launch the website, study 10 hours", "2026-11-25T10:00", [
       tools(["week_goal", { action: "add", title: "Launch the website", week: "this" }], ["week_goal", { action: "add", title: "Study 10 hours", week: "this" }]),
       says("Two outcomes set for this week, sir."),
     ]);
+    // Each outcome is named in the receipt (26 Nov: three were saved and the reply named none).
+    expect(told.replies[0]).toContain("✓ Outcome added: **Launch the website**");
+    expect(told.replies[0]).toContain("✓ Outcome added: **Study 10 hours**");
     const goals = state.db.rows("week_goals");
     expect(goals.map((goal) => [goal.title, goal.week_start, goal.done])).toEqual([
       ["Launch the website", "2026-11-23", false],
