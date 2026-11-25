@@ -166,7 +166,7 @@ describe("Phase O: references and areas", () => {
   it("an area that does not exist is refused, and nothing is marked", async () => {
     const shot = state.db.insert("media", { kind: "photo", file_id: "COVER", caption: "", created_at: at("2026-11-25T21:00").toISOString() });
     state.db.rows("settings")[0].last_shared_media_id = shot.id;
-    await run("save it as a reference", "2026-11-25T21:01", [tools(["media", { action: "reference", text: "cover idea", project: "Gardening" }]), "Which area, sir?"]);
+    await run("save it as a reference", "2026-11-25T21:01", [tools(["media", { action: "reference", text: "cover idea", project: "Gardening" }]), says("Which area, sir?")]);
     expect(state.db.rows("media").find((row) => row.id === shot.id)?.reference ?? false).toBe(false);
   });
 });
