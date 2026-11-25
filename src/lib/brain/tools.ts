@@ -217,7 +217,7 @@ export const TOOLS: ToolDefinition[] = [
   // His main priority (22 Nov): the one thing chased until it is done.
   tool(
     "main_priority",
-    "His main priority (⭐ in the list): the one thing he must finish. While reminders are calm (25 Nov) it is not chased: it is starred, comes first in his lists and briefs, and is reminded like any task (at its time, once more an hour later). Never promise more nudges than that.",
+    "His main priority (⭐ in the list): the one thing he must finish. While reminders are calm (25 Nov) it is not chased: it is starred, comes first in his lists and briefs, and is reminded like any task (at its time, once more an hour later). Never promise more nudges than that. set: the task's id, or the ids of one plan's sessions; setting one replaces the last. clear: he no longer wants it as his main priority.",
     {
       action: { type: "string", enum: ["set", "clear"] },
       task_ids: { type: "array", items: { type: "integer" } },
