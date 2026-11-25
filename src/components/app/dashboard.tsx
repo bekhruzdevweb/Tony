@@ -288,20 +288,13 @@ function Counter({ label, value, tone, note, share }: { label: string; value: st
 
 const clockOf = (minute: number) => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
-/** Black or white, whichever reads on a solid block of this colour. */
-function inkOn(color: string): string {
-  const hex = /^#([0-9a-f]{6})$/i.exec(color.trim())?.[1];
-  if (!hex) return "#ffffff";
-  const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.42 ? "#111111" : "#ffffff";
-}
-
-const HOUR_PX = 60;
+const HOUR_PX = 58;
 
 /**
- * Time blocking as he drew it (25 Nov, his reference): the hours down the left with a line at each, an axis,
- * and each block a bold solid slab of its area's colour, exactly as tall as its length, with its hours in the
- * corner and its name large in the middle. Blocks that follow each other touch. A red line marks now.
+ * Time blocking, in Apple Calendar's manner (25 Nov: his reference for the structure, "in apple design,
+ * easy to use, clean" for the look): the hours down the left on hairlines, each block a soft tint of its
+ * area's colour with a solid bar on its edge, exactly as tall as its length, its name in that colour and its
+ * hours beneath. Blocks that follow each other sit a hair apart. A red line with a dot marks now.
  */
 function Timeline({ blocks, now, colorOf, onOpen }: { blocks: ReturnType<typeof layoutDay>["blocks"]; now: Date; colorOf: (task: Task) => string; onOpen: (task: Task) => void }) {
   const nowMinute = minuteOfDay(now);
@@ -310,53 +303,50 @@ function Timeline({ blocks, now, colorOf, onOpen }: { blocks: ReturnType<typeof 
   const hours = Array.from({ length: to - from + 1 }, (_, index) => from + index);
   const top = (minute: number) => ((minute - from * 60) / 60) * HOUR_PX;
   const PAD = 10;
+  const GUTTER = 52;
   return (
     <div className="relative mt-4" style={{ height: (to - from) * HOUR_PX + PAD * 2 }}>
       {hours.map((hour) => (
         <div key={hour} className="absolute inset-x-0 flex items-center" style={{ top: top(hour * 60) + PAD - 8, height: 16 }}>
-          <span className="w-12 shrink-0 text-[12px] font-medium text-secondary tabular-nums">{String(hour % 24).padStart(2, "0")}:00</span>
-          <span className="h-px flex-1 bg-ink/15" />
+          <span className="shrink-0 pr-2.5 text-right text-[11.5px] text-secondary tabular-nums" style={{ width: GUTTER }}>{String(hour % 24).padStart(2, "0")}:00</span>
+          <span className="h-px flex-1 bg-hairline" />
         </div>
       ))}
-      {/* The axis the blocks hang from. */}
-      <span className="absolute w-px bg-ink/25" style={{ left: 64, top: 0, bottom: 0 }} />
-      <div className="absolute" style={{ left: 76, right: 6, top: PAD, bottom: PAD }}>
+      <div className="absolute" style={{ left: GUTTER + 4, right: 2, top: PAD, bottom: PAD }}>
         {blocks.map(({ task, start, minutes, column, columns }) => {
           const open = isOpen(task);
-          const color = open ? colorOf(task) : "#d1d1d6";
-          const ink = open ? inkOn(color) : "#6e6e73";
-          const height = Math.max((minutes / 60) * HOUR_PX - 2, 26);
-          const roomy = height >= 62;
+          const color = open ? colorOf(task) : "var(--p4)";
+          const height = Math.max((minutes / 60) * HOUR_PX - 3, 24);
+          const roomy = height >= 44;
           return (
             <button
               key={task.id}
               type="button"
               onClick={() => onOpen(task)}
-              className="absolute flex flex-col overflow-hidden rounded-[14px] px-3 text-left"
-              style={{ top: top(start) + 1, height, left: `calc(${(column / columns) * 100}% + 1px)`, width: `calc(${100 / columns}% - 2px)`, background: color, color: ink, paddingTop: roomy ? 7 : 0, paddingBottom: roomy ? 7 : 0, justifyContent: roomy ? "flex-start" : "center" }}
+              className={`absolute flex overflow-hidden rounded-[9px] pr-2.5 pl-3 text-left ${roomy ? "flex-col justify-start pt-1.5" : "items-center gap-2"}`}
+              style={{
+                top: top(start) + 1.5,
+                height,
+                left: `calc(${(column / columns) * 100}% + 1px)`,
+                width: `calc(${100 / columns}% - 3px)`,
+                background: `color-mix(in srgb, ${color} ${open ? 17 : 9}%, var(--background))`,
+                boxShadow: `inset 3.5px 0 0 ${color}`,
+                color: open ? `color-mix(in srgb, ${color} 72%, var(--ink))` : "var(--secondary)",
+              }}
             >
-              {roomy ? (
-                <>
-                  <span className="text-[11.5px] leading-none font-medium tabular-nums opacity-80">{clockOf(start)} – {clockOf(start + minutes)}</span>
-                  <span className={`flex min-h-0 flex-1 items-center justify-center text-center leading-tight font-bold tracking-tight ${open ? "" : "line-through"} ${columns > 1 ? "text-[14px]" : height >= 110 ? "text-[20px]" : "text-[16.5px]"}`}>
-                    <span className="line-clamp-2">{task.title}</span>
-                  </span>
-                </>
-              ) : (
-                <span className="flex items-baseline gap-2">
-                  <span className="shrink-0 text-[11px] font-medium tabular-nums opacity-80">{clockOf(start)} – {clockOf(start + minutes)}</span>
-                  <span className={`min-w-0 truncate text-[14px] font-bold tracking-tight ${open ? "" : "line-through"}`}>{task.title}</span>
-                </span>
-              )}
+              <span className={`min-w-0 font-semibold tracking-tight ${roomy ? "line-clamp-2 text-[14.5px] leading-snug" : "truncate text-[13.5px]"} ${open ? "" : "line-through"}`}>{task.title}</span>
+              <span className={`shrink-0 text-[11.5px] tabular-nums opacity-80 ${roomy ? "mt-0.5" : "ml-auto"}`}>
+                {clockOf(start)} – {clockOf(start + minutes)}
+              </span>
             </button>
           );
         })}
       </div>
       {nowMinute >= from * 60 && nowMinute <= to * 60 && (
         <div className="pointer-events-none absolute inset-x-0 z-10 flex items-center" style={{ top: top(nowMinute) + PAD - 5, height: 10 }} aria-label={`Now, ${clockOf(nowMinute)}`}>
-          <span className="w-12 shrink-0" />
-          <span className="-ml-0.5 size-2.5 shrink-0 rounded-full bg-overdue ring-2 ring-background" style={{ marginLeft: 11 }} />
-          <span className="h-[2px] flex-1 rounded-full bg-overdue" />
+          <span className="shrink-0" style={{ width: GUTTER - 1 }} />
+          <span className="size-2 shrink-0 rounded-full bg-overdue" />
+          <span className="h-[1.5px] flex-1 bg-overdue" />
         </div>
       )}
     </div>
