@@ -2,10 +2,11 @@ import "server-only";
 import { clearBig3, setBig3 } from "./big3";
 import { BIG3 } from "./big3-rules";
 import { requireDb } from "./db";
-import { getSettings, updateSettings } from "./settings";
-import { placeAnytime } from "./slots";
+import { choicesFor } from "./routine";
+import { getSettings, setPendingSlot, updateSettings } from "./settings";
+import { placeAnytime, placeTask } from "./slots";
 import { OPEN_STATUSES, type Task } from "./tasks";
-import { localDate } from "./time";
+import { formatTime, localDate, parseLocalDateTime } from "./time";
 import { weekGoals } from "./week-goals";
 import { MAX_WEEK_GOALS, planningWeek, shiftDay, weekStart } from "./week-rules";
 import { daysLeft, queue, type WeekSession } from "./week-session-rules";
@@ -75,6 +76,8 @@ export async function openWeekSession(now = new Date()): Promise<View> {
 export async function nextTask(now = new Date(), lead?: string): Promise<View> {
   const state = await session();
   if (!state) return { text: "That planning session has ended, sir. Send /week to start one.", rows: [] };
+  // The task before is settled: a time typed from here on is not for it.
+  await setPendingSlot(null).catch(() => undefined);
   const today = localDate(now);
   const { tasks, areas } = await waiting(state);
   const task = tasks[0];
@@ -104,25 +107,47 @@ export async function nextTask(now = new Date(), lead?: string): Promise<View> {
   };
 }
 
-/** A tap on a day: the task goes there with no time; then, if that day's three are not taken, whether it is one of them. */
+/** A tap on a day: the task goes there; then whether it is one of that day's three (if any are free), then its time. */
 export async function placeOn(taskId: number, day: string, now = new Date()): Promise<View> {
   const state = await session();
   if (!state) return nextTask(now);
   const placed = await placeAnytime(taskId, day, now);
   if (!placed) return nextTask(now, "That task is gone, sir.");
   await save({ ...state, placed: state.placed + 1 });
-  await updateSettings({
-    pending_note: `He is planning his week and just put task #${placed.id} "${placed.title}" on ${day} with no time. If his next message gives a time or a length for it ("at 9", "for 90 minutes"), set exactly that on #${placed.id} with update_task, in one short line. Add no new task.`,
-    pending_note_at: now.toISOString(),
-  });
-  const done = `✓ **${placed.title}** → ${long(day)}, no time.`;
+  await updateSettings({ pending_note: null, pending_note_at: null });
+  const done = `✓ **${placed.title}** → ${long(day)}.`;
   const taken = await topCount(day);
-  if (taken >= BIG3) return nextTask(now, `${done}\n_${fmt(day, { weekday: "long" })}'s three urgent tasks are already chosen._`);
+  // That day's three are taken: straight on to its time.
+  if (taken >= BIG3) return timeStep(placed.id, day, now, `${done}\n_${fmt(day, { weekday: "long" })}'s three urgent tasks are already chosen._`);
   return {
-    text: [done, "", `One of **${fmt(day, { weekday: "long" })}'s three urgent tasks**? (${taken} of ${BIG3} taken)`, "_To give it a time, just tell me: “at 9 for 90 minutes”._"].join("\n"),
+    text: [done, "", `One of **${fmt(day, { weekday: "long" })}'s three urgent tasks**? (${taken} of ${BIG3} taken)`].join("\n"),
     rows: [
       [
         { text: "⭐ Yes, urgent", data: `wk:top:${placed.id}:${day}` },
+        { text: "Not urgent", data: `wk:time:${placed.id}:${day}` },
+      ],
+      [{ text: "⏹ Stop", data: "wk:stop" }],
+    ],
+  };
+}
+
+/**
+ * The time, asked for every task he puts on a day (26 Nov: "I choose the task, is it important, but after
+ * that he's not asking the time"): the free times that day, best first, [No time], or a time he types,
+ * which is placed in code.
+ */
+export async function timeStep(taskId: number, day: string, now = new Date(), lead?: string): Promise<View> {
+  const found = await requireDb().from("tasks").select().eq("id", taskId).maybeSingle();
+  const task = found.data as Task | null;
+  if (!task) return nextTask(now, "That task is gone, sir.");
+  const options = (await choicesFor({ ...task, due_at: null } as Task, parseLocalDateTime(`${day}T12:00`)!, now).catch(() => [])).filter((option) => option.at.getTime() > now.getTime()).slice(0, 4);
+  await setPendingSlot({ task_id: taskId, day });
+  return {
+    text: [...(lead ? [lead, ""] : []), `**${task.title}** · ${long(day)}`, "", options.length ? "What time, sir? Tap one, or type it (“9:00”, “18:30”)." : "What time, sir? Type it (“9:00”, “18:30”), or leave it with no time.", "_After typing a time, tap Next._"].join("\n"),
+    rows: [
+      ...(options.length ? [options.map((option, index) => ({ text: `${index === 0 ? "⭐ " : ""}${formatTime(option.at)}`, data: `wk:at:${taskId}:${Math.round(option.at.getTime() / 60_000)}` }))] : []),
+      [
+        { text: "No time", data: "wk:next" },
         { text: "Next →", data: "wk:next" },
       ],
       [{ text: "⏹ Stop", data: "wk:stop" }],
@@ -130,10 +155,16 @@ export async function placeOn(taskId: number, day: string, now = new Date()): Pr
   };
 }
 
-/** [⭐ Yes, urgent]: one of that day's three (three at most), then the next task. */
+/** A tap on a time: the task is set for it (and gets its reminder), then the next task. */
+export async function setTime(taskId: number, minute: number, now = new Date()): Promise<View> {
+  const placed = await placeTask(taskId, new Date(minute * 60_000), { learn: true });
+  return nextTask(now, placed.task?.due_at ? `✓ **${placed.task.title}** → ${long(localDate(new Date(placed.task.due_at)))}, **${formatTime(new Date(placed.task.due_at))}**` : placed.text);
+}
+
+/** [⭐ Yes, urgent]: one of that day's three (three at most), then its time. */
 export async function markTop(taskId: number, day: string, now = new Date()): Promise<View> {
   const chosen = await setBig3(taskId, day, now);
-  return nextTask(now, chosen.ok ? `⭐ **${chosen.task.title}** is one of ${fmt(day, { weekday: "long" })}'s three.` : `${chosen.error}, sir.`);
+  return timeStep(taskId, day, now, chosen.ok ? `⭐ **${chosen.task.title}** is one of ${fmt(day, { weekday: "long" })}'s three.` : `${chosen.error}, sir.`);
 }
 
 /** [📥 Keep in inbox], [🌙 Someday], [🗑 Drop]: settled without a day, then the next task. */

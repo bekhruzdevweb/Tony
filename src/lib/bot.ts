@@ -2,7 +2,7 @@ import "server-only";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Message, MessageOrigin, Update } from "grammy/types";
 import { askForSlot, keyboardOf, runAction } from "./actions";
-import { markTop, nextTask, openWeekSession, placeOn, settle, summary as weekSummary } from "./week-session";
+import { markTop, nextTask, openWeekSession, placeOn, setTime, settle, summary as weekSummary, timeStep } from "./week-session";
 import { answerFreeTime, freeTimeList, backToFreeTime } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
@@ -697,9 +697,13 @@ export function getBot(): Bot | undefined {
               ? await placeOn(Number(id), day, now)
               : action === "top"
                 ? await markTop(Number(id), day, now)
-                : action === "keep" || action === "some" || action === "drop"
-                  ? await settle(Number(id), action, now)
-                  : await weekSummary(now);
+                : action === "time"
+                  ? await timeStep(Number(id), day, now)
+                  : action === "at"
+                    ? await setTime(Number(id), Number(day), now)
+                    : action === "keep" || action === "some" || action === "drop"
+                      ? await settle(Number(id), action, now)
+                      : await weekSummary(now);
       const keyboard = view.rows.length ? keyboardOf(view.rows) : undefined;
       // From the board the session opens as a new message; inside the session each step redraws it.
       const redrawn = action !== "open" && chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(view.text), keyboard) : false;

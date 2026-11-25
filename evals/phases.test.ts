@@ -269,18 +269,26 @@ describe("Phase R: /week, one task at a time", () => {
     expect(one.text).not.toContain("Buy notebook");
     expect(one.rows[0].map((button) => button.text)).toEqual(["Today 26", "Fri 27", "Sat 28", "Sun 29"]);
 
-    // Saturday has room among its three: he is asked, and a yes makes it one of them.
+    // Saturday has room among its three: he is asked; a yes makes it one of them, and then its time is asked.
     const asked = await placeOn(Number(first.id), "2026-11-28", new Date());
     expect(asked.text).toContain("(0 of 3 taken)");
-    expect(byTitle("Write reel script")).toMatchObject({ status: "todo", anytime: true });
-    const afterTop = await markTop(Number(first.id), "2026-11-28", new Date());
+    expect(asked.rows[0].map((button) => button.text)).toEqual(["⭐ Yes, urgent", "Not urgent"]);
+    const timeAsked = await markTop(Number(first.id), "2026-11-28", new Date());
     expect(byTitle("Write reel script").big3_on).toBe("2026-11-28");
-    expect(afterTop.text).toContain("**Shoot b-roll**");
+    expect(timeAsked.text).toContain("What time, sir?");
+    expect(timeAsked.rows.at(-2)?.map((button) => button.text)).toEqual(["No time", "Next →"]);
+    // A tap on a time sets it, with its reminder, and the next task comes.
+    const { setTime } = await import("../src/lib/week-session");
+    const afterTime = await setTime(Number(first.id), Math.round(at("2026-11-28T10:00").getTime() / 60_000), new Date());
+    expect(local(byTitle("Write reel script").due_at)).toBe("2026-11-28T10:00");
+    expect(byTitle("Write reel script").anytime).toBe(false);
+    expect(afterTime.text).toContain("**Shoot b-roll**");
 
-    // Friday's three are taken: it is placed and the next task comes at once, with no question.
+    // Friday's three are taken: no urgent question, straight to its time; "No time" moves on.
     const full = await placeOn(Number(third.id), "2026-11-27", new Date());
     expect(full.text).toContain("three urgent tasks are already chosen");
-    expect(full.text).toContain("**Buy notebook**");
+    expect(full.text).toContain("What time, sir?");
+    expect((await nextTask(new Date())).text).toContain("**Buy notebook**");
 
     // Kept in the inbox: not asked again; then the summary.
     const end = await settle(Number(second.id), "keep", new Date());
