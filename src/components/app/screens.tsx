@@ -332,7 +332,7 @@ export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (ta
 
 type Lane = "inbox" | "today" | "week" | "someday";
 const LANES: { id: Lane; title: string; hint: string }[] = [
-  { id: "inbox", title: "📥 Inbox", hint: "Not planned yet" },
+  { id: "inbox", title: "Inbox", hint: "Not planned yet" },
   { id: "today", title: "Today", hint: "Today, and anything overdue" },
   { id: "week", title: "This week", hint: "The next six days" },
   { id: "someday", title: "Someday", hint: "No date, no reminders" },

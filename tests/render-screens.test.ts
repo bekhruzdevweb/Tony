@@ -50,14 +50,16 @@ describe("Phase H screens", () => {
   it("Habits: the run, the two weeks, today's check-in, and the plans' progress", () => {
     const html = renderToString(createElement(HabitsScreen, { state, onCheck: () => undefined }));
     expect(html).toContain("Reading");
-    expect(html).toContain(">🔥3</p>");
+    expect(html).toContain(">3</p>");
+    // No flame: he asked for the emoji to go (25 Nov).
+    expect(html).not.toContain("🔥");
     expect(html).toContain("✓ Done today");
     expect(html).toContain("IELTS");
     expect((html.match(/aspect-square/g) ?? []).length).toBe(14);
   });
   it("Plan: four lanes; a one-off task can move, a plan's session and a habit cannot", () => {
     const html = renderToString(createElement(BoardScreen, { state, now, onOpen: () => undefined, onToggle: () => undefined, onAdd: () => undefined, onLane: () => undefined }));
-    for (const lane of ["📥 Inbox", "Today", "This week", "🌙 Someday"]) expect(html).toContain(lane);
+    for (const lane of ["Inbox", "Today", "This week", "Someday"]) expect(html).toContain(lane);
     expect(html).toContain("Buy a zippered shirt");
     expect(html).toContain("→ <!-- -->Someday");
     // The IELTS session and the Reading habit show without moves; the inbox task has three, the others two.
