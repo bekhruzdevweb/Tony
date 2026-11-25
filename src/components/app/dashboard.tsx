@@ -7,6 +7,7 @@ import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
 import { formatTime, localDate, minuteOfDay } from "@/lib/time";
 import { shiftDay, weekStart } from "@/lib/week-rules";
+import { clockOf, inkOn } from "./block-style";
 import { PrayerStrip, type ScreenProps } from "./screens";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
 
@@ -284,16 +285,6 @@ function Counter({ label, value, tone, note, share }: { label: string; value: st
       {note && <p className="mt-1 text-[11px] text-secondary">{note}</p>}
     </div>
   );
-}
-
-const clockOf = (minute: number) => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
-
-/** Black or white, whichever reads on a solid block of this colour. */
-function inkOn(color: string): string {
-  const hex = /^#([0-9a-f]{6})$/i.exec(color.trim())?.[1];
-  if (!hex) return "#ffffff";
-  const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.42 ? "#111111" : "#ffffff";
 }
 
 const HOUR_PX = 60;
