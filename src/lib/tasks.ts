@@ -29,6 +29,8 @@ export type Task = {
   habit?: boolean;
   /** A task for a day with no time (Phase J): shown as "anytime", one quiet check at 20:00 if still open. */
   anytime?: boolean;
+  /** The day (YYYY-MM-DD) he chose it as one of that day's Big 3 (Phase Q); null or absent: not chosen. */
+  big3_on?: string | null;
   /** His words for a theme ("content", "ielts"), lower case, without the #. */
   tags?: string[];
   created_at: string;

@@ -1,3 +1,4 @@
+import { clearBig3, setBig3 } from "@/lib/big3";
 import { addWeekGoal, removeWeekGoal, setWeekGoalDone } from "@/lib/week-goals";
 import { planningWeek, weekStart } from "@/lib/week-rules";
 import { markdownToPlain } from "@/lib/rich";
@@ -192,6 +193,18 @@ export async function POST(request: Request) {
       }
       case "remove_subtask": {
         await removeSubtask(Number(body.id));
+        break;
+      }
+
+      // Today's Big 3 (Phase Q): three a day at most, chosen and cleared in plain code.
+      case "big3_set": {
+        const day = typeof body.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.day) ? body.day : localDate(new Date());
+        const chosen = await setBig3(Number(body.id), day);
+        if (!chosen.ok) problem = chosen.error;
+        break;
+      }
+      case "big3_clear": {
+        if (!(await clearBig3(Number(body.id)))) problem = "That task is gone";
         break;
       }
 

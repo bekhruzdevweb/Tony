@@ -19,7 +19,7 @@ import { budgetLeft, budgetWarnings, dueToday, notify, runBackup } from "./safet
 import { selfTest, selfTestAlert } from "./selftest";
 import type { Settings } from "./settings";
 import { pruneIncoming } from "./burst";
-import { inWindow, TIMEZONE } from "./time";
+import { inWindow, TIMEZONE, localDate } from "./time";
 import { connectTelegram } from "./telegram-setup";
 import { requireDb } from "./db";
 
@@ -122,6 +122,19 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
         if (!suggestion?.taskId) return;
         await send(bot, chatId, suggestion.text, suggestion.rows);
         await countFreeTime(now);
+        sent++;
+      });
+    }
+    // 21:00 (Phase Q, 25 Nov): "which three for tomorrow?", once, unless he has already chosen them.
+    if (sent === 0) {
+      await job("big3-pick", async () => {
+        if ((await budgetLeft(now)) <= 0 || !(await dueToday("big3-pick", "21:00", now))) return;
+        const tomorrow = localDate(new Date(now.getTime() + 24 * 60 * 60_000));
+        const chosen = await requireDb().from("tasks").select("id", { count: "exact", head: true }).eq("big3_on", tomorrow);
+        if ((chosen.count ?? 0) >= 3) return;
+        const url = settings.app_url?.startsWith("https://") ? settings.app_url : undefined;
+        await send(bot, chatId, "🎯 Sir, which **three** make tomorrow a success? Tell me, or pick them in the app.", url ? [[{ text: "Pick tomorrow's Big 3", data: `url:${url}` }]] : [], { silent: true });
+        await notify("big3_pick", now);
         sent++;
       });
     }

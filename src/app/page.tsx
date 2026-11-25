@@ -5,11 +5,11 @@ import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
 import { hasSession } from "@/lib/session";
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ login?: string }> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<{ login?: string; tab?: string }> }) {
   await connection();
 
   if (await hasSession()) {
-    return <TonyApp initial={await loadAppState()} />;
+    return <TonyApp initial={await loadAppState()} initialTab={(await searchParams).tab} />;
   }
 
   // Signed out: say only what a stranger may know, which is how to ask Tony for a key.

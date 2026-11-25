@@ -43,7 +43,7 @@ export function Menu(props: {
   onOpen: (task: Task) => void;
   onToggle: (task: Task) => void;
   /** Phones: the Plan board and Habits open from here (wide screens have them in the sidebar). */
-  onGo?: (tab: "habits" | "board" | "week") => void;
+  onGo?: (tab: "habits" | "board" | "week" | "calendar") => void;
 }) {
   const { tony, now, theme, onTheme, onClose, onOpen, onToggle, onGo } = props;
   const { state, act } = tony;
@@ -96,6 +96,13 @@ export function Menu(props: {
                       <button type="button" onClick={() => onGo("week")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
                         <span className="flex-1 text-body">🗓 Weekly planner</span>
                         <span className="text-caption text-secondary">Outcomes · Week</span>
+                        <span className="text-secondary/60">{Icon.chevron}</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" onClick={() => onGo("calendar")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
+                        <span className="flex-1 text-body">📅 Calendar</span>
+                        <span className="text-caption text-secondary">The week, day by day</span>
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
                     </li>

@@ -54,6 +54,8 @@ Library, rules and free time:
 - Never give a task a time he did not give or tap: no time means "no time".
 - References: when he shares a screenshot, photo, video or link as an example to work from later ("make a reel cover like this", "I want to shoot like this", "save it as a reference", "for inspiration"), with no day or time: media reference (text: what it is for, in his words; project: its area). Add NO task and set NO reminder, even if he says "remind me": he means "bring it up when I do that kind of thing". Reply in one line: "Saved as a reference in Content creation, sir." If he gives a day or time, it is a task: add_task as usual (the file stays with it).
 - Offering a reference: his references are listed below. When the task he is adding, starting or asking about is really the same thing as a reference (a reel cover and his "reel cover like this"; a storytelling video and his "shoot like this" example), add one line: "Sir, you saved a reference for this: <what it is for>. Want it?" and send it only when he says yes (library send with its item). Only for the same kind of work, never for a loose link (both are "content" is not enough); one reference at most; not again in the same conversation once offered.
+- Big 3: the three tasks he chooses for a day go in with big3 (one call each; a new task is added first). "What should I do today": his Big 3 first, by name; if none are chosen, ask which three matter most today, offering candidates from the week's outcomes and today's list, and set only what he picks.
+- Deep work blocks: big focused work (studying, IELTS practice, writing a script, building his app or website, preparing a lesson) with a time is a time block: pass duration_minutes (what he said, else 90 for study and building, 60 for writing and lesson prep). Small things (a call, a purchase, a quick post, a video to watch) get no block and no invented time. Never block out sleep, meals or routines, and never fill the gaps of his day: only what he asks for is put on the timeline.
 - Weekly planning: the outcomes he chooses for a week go in with week_goal (one call each), never as tasks or memory notes. "Plan my week", "weekly planning": point him to the Weekly planner in the app in one line, and help in words: which outcomes matter, which inbox tasks serve them. He decides; you never fill his week for him.
 - "When X, do Y" ("when I'm not motivated to work out, send me this video"): rule add, with attach "last" when he means what he just shared. "Show my rules": rule list. When his message fits one of his rules (listed below): call rule_fire (Tony sends its item) and reply with empathy and a helpful offer.
 - "In my free time", "someday", "when I'm free": add_task with free_time true; it goes to his 🌙 Free Time list, no date.
@@ -179,7 +181,7 @@ const LIVE = `Now: {today}, {now} (Asia/Tashkent). Days: {calendar}.
 Areas (his projects): {projects}.
 His routine: {routine}.
 
-{shared}{waiting}{habits}{prayers}{rules}{library}{references}{weekGoals}Memory:
+{shared}{waiting}{habits}{prayers}{rules}{library}{references}{weekGoals}{big3}Memory:
 {memory}
 
 Open tasks{task_note}:
@@ -327,6 +329,8 @@ export function buildSystemPrompt(input: {
   references?: string;
   /** The outcomes he chose for this week and the next (Phase P). */
   weekGoals?: string;
+  /** The three tasks he chose for today and for tomorrow (Phase Q). */
+  big3?: string;
 }): SystemPrompt {
   const { now, projects, reminders, message = "" } = input;
   const tasks = relevantTasks(input.tasks, message, now);
@@ -355,6 +359,7 @@ export function buildSystemPrompt(input: {
     prayers: input.prayers ? `Prayer times today (his location, official times; reminders are automatic, not tasks to manage): ${input.prayers}\n\n` : "",
     habits: input.habits ? `Habits (from his log; quote only these numbers, never estimate one):\n${input.habits}\n\n` : "",
     rules: input.rules ? `His rules (when his message fits one, act on it: empathy first, rule_fire sends its item, then a helpful offer):\n${input.rules}\n\n` : "",
+    big3: input.big3 ? `${input.big3}\n(The Big 3 are what makes his day a success: name them first when he asks what to do; everything else is optional.)\n\n` : "",
     weekGoals: input.weekGoals ? `His outcomes for the week (he chose them; when he asks what to do or plans a day, these come first):\n${input.weekGoals}\n\n` : "",
     references: input.references ? `His references (things he saved to work from; offer one only when his task is really the same thing):\n${input.references}\n\n` : "",
     library: input.library ? `His library (send one with library send and its reference; find older ones with library find):\n${input.library}\n\n` : "",

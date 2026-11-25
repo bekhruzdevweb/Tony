@@ -2,12 +2,14 @@
 
 import Image from "next/image";
 import { PlannerScreen } from "./planner";
+import { DashboardScreen } from "./dashboard";
+import { WeekCalendar } from "./calendar";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Menu, type Theme } from "./menu";
-import { BoardScreen, ChatScreen, FiltersScreen, FreeTimeScreen, HabitsScreen, InboxScreen, ProjectScreen, SearchScreen, TodayScreen, UpcomingScreen } from "./screens";
+import { BoardScreen, ChatScreen, FiltersScreen, FreeTimeScreen, HabitsScreen, InboxScreen, ProjectScreen, SearchScreen, UpcomingScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
 import { Icon, RowActionsContext, isOpen, type RowActions } from "./ui";
 import { splitToday } from "@/lib/today";
@@ -15,7 +17,7 @@ import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | "week" | `project:${number}`;
+type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | "week" | "calendar" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
@@ -35,11 +37,11 @@ const readTheme = (): Theme => {
   return saved === "dark" || saved === "system" ? saved : "light";
 };
 
-export function TonyApp({ initial }: { initial: AppState }) {
+export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab?: string }) {
   const tony = useTony(initial);
   const { state, act, say, toast, signedOut } = tony;
-  // "?tab=week" (the Sunday invitation's button) opens the weekly planner.
-  const [tab, setTab] = useState<Tab>(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "week" ? "week" : "today"));
+  // "?tab=week" (the Sunday invitation's button) opens the weekly planner: the page reads it on the server.
+  const [tab, setTab] = useState<Tab>(initialTab === "week" ? "week" : "today");
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [menu, setMenu] = useState(false);
   const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "light");
@@ -197,9 +199,10 @@ export function TonyApp({ initial }: { initial: AppState }) {
           <SideItem icon={Icon.search} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
           <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox" && !t.free_time).length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
           <SideItem icon={<span aria-hidden>🌙</span>} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
-          <SideItem icon={Icon.today} label="Today" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
+          <SideItem icon={Icon.today} label="Dashboard" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
           <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
           <SideItem icon={<span aria-hidden>🗓</span>} label="Weekly planner" active={tab === "week"} onClick={() => setTab("week")} />
+          <SideItem icon={Icon.calendar} label="Calendar" active={tab === "calendar"} onClick={() => setTab("calendar")} />
           <SideItem icon={<span aria-hidden>🗂</span>} label="Plan" active={tab === "board"} onClick={() => setTab("board")} />
           <SideItem icon={<span aria-hidden>🔥</span>} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
@@ -235,7 +238,18 @@ export function TonyApp({ initial }: { initial: AppState }) {
       </div>
 
       <div key={tab} className="view-in flex min-h-0 flex-1 flex-col">
-      {tab === "today" && <TodayScreen {...screen} onQuickAdd={tell} onReschedule={reschedule} />}
+      {tab === "today" && (
+        <DashboardScreen
+          {...screen}
+          onQuickAdd={tell}
+          onReschedule={reschedule}
+          onBig3={(action, payload) => void act(action, payload)}
+          onGoal={(action, payload) => void act(action, payload)}
+          onPlanner={() => setTab("week")}
+          onCalendar={() => setTab("calendar")}
+        />
+      )}
+      {tab === "calendar" && <WeekCalendar {...screen} />}
       {tab === "inbox" && <InboxScreen {...screen} onFreeTime={() => setTab("freetime")} />}
       {tab === "freetime" && <FreeTimeScreen {...screen} />}
       {tab === "upcoming" && <UpcomingScreen {...screen} onMove={move} onAddTo={(day) => setSheet({ day })} />}

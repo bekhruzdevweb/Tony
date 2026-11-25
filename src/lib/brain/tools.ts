@@ -24,6 +24,7 @@ import { isNight, localDate, minuteOfDay } from "../time";
 import { startDate } from "../smart-inbox-rules";
 import { addWeekGoal, removeWeekGoal, setWeekGoalDone } from "../week-goals";
 import { weekNamed } from "../week-rules";
+import { clearBig3, setBig3 } from "../big3";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 import { normalTag, normalTags, prefixTag, tagsFor } from "../tags";
 import { namesDay } from "./checks";
@@ -183,6 +184,13 @@ export const TOOLS: ToolDefinition[] = [
     "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' lists saved files matching the text (to send one, use library send). 'reference': he shared something to work from later (\"make a reel cover like this\", \"I want to shoot like this\", \"for inspiration\") with no day or time: it is kept as a reference in its area, with no task and no reminder. text: what it is for, in his words. project: the area. item: a library item (\"media:7\", \"library:3\") when it is not the thing he just shared.",
     { action: { type: "string", enum: ["note", "find", "reference"] }, text: { type: "string" }, project: { type: "string", description: "reference: the area it belongs to (one of his areas, listed below)" }, item: { type: "string", description: "reference: a library item, when it is not the last thing he shared" }, reply },
     ["action", "text"],
+  ),
+  // Today's Big 3 (Phase Q): the three tasks that make a day a success.
+  tool(
+    "big3",
+    "His Big 3: the three tasks he chooses for a day (\"my big 3 today are …\", \"tomorrow's three: …\", \"make X one of today's three\"). set: one call per task (task_id of an existing task; add it first if it is new), day today or tomorrow. clear: he takes one out. Three a day at most. Only what he chooses: suggest in words, never pick for him.",
+    { action: { type: "string", enum: ["set", "clear"] }, task_id: { type: "integer" }, day: { type: "string", enum: ["today", "tomorrow"] }, reply },
+    ["action", "task_id"],
   ),
   // The weekly planner (Phase P): the three to five outcomes he chooses for a week.
   tool(
@@ -1007,6 +1015,16 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (found.length === 0) return fail(`nothing saved matches "${text}"`);
       // A list to choose from, never sent as it is: send the one he means with library send.
       return { ok: true, items: found.map((item) => `media:${item.id} ${mediaLabel(item)}`), note: "send the one he asked for with library send (usually one)" };
+    }
+
+    case "big3": {
+      const id = Number(args.task_id);
+      if (!Number.isFinite(id)) return fail("task_id is required");
+      if (args.action === "clear") return (await clearBig3(id)) ? { ok: true, task_id: id, cleared: true } : fail(`no task #${id}`);
+      const day = args.day === "tomorrow" ? localDate(new Date(now.getTime() + 24 * 60 * 60_000)) : localDate(now);
+      const chosen = await setBig3(id, day, now);
+      if (!chosen.ok) return fail(chosen.error);
+      return { ok: true, task_id: id, task: chosen.task.title, big3_on: day };
     }
 
     case "week_goal": {

@@ -218,6 +218,32 @@ describe("Phase P: the weekly planner", () => {
   });
 });
 
+// ── Phase Q (25 Nov): Today's Big 3. Three a day at most, his choice; an inbox task chosen lands on that day ──
+describe("Phase Q: the Big 3", () => {
+  it("three are chosen and a fourth is refused; a task from the inbox is put on that day with no time; clearing frees a place", async () => {
+    vi.setSystemTime(at("2026-11-25T10:00"));
+    const { setBig3, clearBig3, big3ForPrompt } = await import("../src/lib/big3");
+    const timed = task({ title: "IELTS reading", due_at: "2026-11-25T15:00" });
+    const waiting = task({ title: "Write reel script" });
+    const third = task({ title: "Workout", due_at: "2026-11-25T18:00" });
+    const fourth = task({ title: "Reply to students" });
+    for (const chosen of [timed, waiting, third]) expect((await setBig3(Number(chosen.id), "2026-11-25", new Date())).ok).toBe(true);
+    expect(await setBig3(Number(fourth.id), "2026-11-25", new Date())).toMatchObject({ ok: false });
+    // His own time is kept; the inbox task is on the day with no time.
+    expect(local(byTitle("IELTS reading").due_at)).toBe("2026-11-25T15:00");
+    expect(byTitle("Write reel script")).toMatchObject({ status: "todo", anytime: true, big3_on: "2026-11-25" });
+    expect(await big3ForPrompt(new Date())).toContain("Today's Big 3: #");
+    expect(await clearBig3(Number(third.id))).toBe(true);
+    expect((await setBig3(Number(fourth.id), "2026-11-25", new Date())).ok).toBe(true);
+  });
+
+  it("'my big 3 today: …' through Tony: each is set with the big3 tool, and nothing else changes", async () => {
+    const reading = task({ title: "IELTS reading", due_at: "2026-11-25T15:00" });
+    await run("IELTS reading is one of my big 3 today", "2026-11-25T10:00", [tools(["big3", { action: "set", task_id: reading.id, day: "today" }]), says("Noted, sir.")]);
+    expect(byTitle("IELTS reading").big3_on).toBe("2026-11-25");
+  });
+});
+
 // ── b) Situation rules ─────────────────────────────────────────────────
 describe("b) Situation rules: 'when X, do Y'", () => {
   const video = () => state.db.insert("media", { kind: "video", file_id: "MOTIVATION", description: "A short motivation clip", created_at: at("2026-11-21T10:00").toISOString() });

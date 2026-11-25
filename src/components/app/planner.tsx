@@ -69,7 +69,7 @@ export function PlannerScreen(props: ScreenProps & { onGoal: (action: "week_goal
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        <aside className="shrink-0 space-y-4 px-4 pb-4 md:px-8 lg:w-[340px] lg:overflow-y-auto lg:pr-3" aria-label="Outcomes and waiting tasks">
+        <aside className="shrink-0 space-y-4 px-4 pb-4 md:px-8 lg:w-[300px] lg:overflow-y-auto lg:pr-2" aria-label="Outcomes and waiting tasks">
           <section className="rounded-card bg-surface p-3.5">
             <div className="flex items-baseline justify-between">
               <h2 className="text-body font-semibold">Outcomes</h2>

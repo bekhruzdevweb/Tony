@@ -12,7 +12,6 @@ const DAY_MS = 24 * 60 * 60_000;
 const noon = (day: string) => new Date(`${day}T12:00:00+05:00`);
 const shift = (day: string, days: number) => localDate(new Date(noon(day).getTime() + days * DAY_MS));
 const fmt = (at: Date, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...options }).format(at);
-const tint = (task: Task) => (task.priority === 1 ? "var(--p1)" : task.priority === 2 ? "var(--p2)" : "var(--primary)");
 
 /**
  * The week at a glance (24 Nov: the hour-by-hour day was "weird"; he asked for a weekly calendar that is
@@ -23,6 +22,8 @@ export function WeekCalendar({ state, now, onOpen, onToggle, onAdd, week }: { st
   const [own, setStart] = useState(today);
   const start = week ?? own;
   const days = Array.from({ length: 7 }, (_, index) => shift(start, index));
+  // A task wears its life area's colour, here as on the dashboard.
+  const colorOf = (task: Task) => state.projects.find((project) => project.id === task.project_id)?.color ?? "var(--primary)";
   const last = days[6];
   const range = `${fmt(noon(start), { month: "short", day: "numeric" })} – ${fmt(noon(last), start.slice(5, 7) === last.slice(5, 7) ? { day: "numeric" } : { month: "short", day: "numeric" })}`;
 
@@ -48,7 +49,7 @@ export function WeekCalendar({ state, now, onOpen, onToggle, onAdd, week }: { st
           return (
             <section key={day} aria-label={fmt(noon(day), { weekday: "long", month: "short", day: "numeric" })} className={`flex min-h-0 w-[46%] shrink-0 snap-start flex-col rounded-card md:w-[30%] lg:w-auto ${isToday ? "bg-primary/6" : "bg-surface"}`}>
               <header className="flex shrink-0 items-center gap-2 px-2.5 pt-2.5 pb-1.5">
-                <span className={`grid size-8 place-items-center rounded-full text-[15px] font-semibold ${isToday ? "bg-primary text-white" : "text-ink"}`}>{Number(day.slice(8))}</span>
+                <span className={`grid size-8 shrink-0 place-items-center rounded-full text-[15px] font-semibold ${isToday ? "bg-primary text-white" : "text-ink"}`}>{Number(day.slice(8))}</span>
                 <span className={`text-[13px] font-medium ${isToday ? "text-primary" : "text-secondary"}`}>{isToday ? "Today" : fmt(noon(day), { weekday: "short" })}</span>
                 <span className="flex-1" />
                 {left > 0 && <span className="text-[12px] text-secondary">{left}</span>}
@@ -57,16 +58,20 @@ export function WeekCalendar({ state, now, onOpen, onToggle, onAdd, week }: { st
                 {tasks.map((task) => {
                   const open = isOpen(task);
                   return (
-                    <li key={task.id} className="relative rounded-[10px] bg-background shadow-[0_1px_2px_rgb(0_0_0/0.05)]" style={{ borderLeft: `3px solid ${open ? tint(task) : "var(--p4)"}` }}>
-                      <button type="button" onClick={() => onOpen(task)} className="block w-full py-1.5 pr-7 pl-2 text-left">
-                        <span className="block text-[11px] text-secondary">{task.anytime ? "no time" : formatTime(new Date(task.due_at!))}</span>
-                        <span className={`line-clamp-2 text-[13px] leading-snug font-medium ${open ? "text-ink" : "text-secondary line-through"}`}>{task.title}</span>
+                    <li key={task.id} className="rounded-[10px] bg-background shadow-[0_1px_2px_rgb(0_0_0/0.05)]" style={{ borderLeft: `3px solid ${open ? colorOf(task) : "var(--p4)"}` }}>
+                      <div className="flex items-center justify-between pl-2">
+                        <span className="text-[11px] text-secondary">{task.anytime ? "no time" : formatTime(new Date(task.due_at!))}</span>
+                        {open ? (
+                          <button type="button" aria-label={`Done: ${task.title}`} onClick={() => onToggle(task)} className="grid size-7 shrink-0 place-items-center">
+                            <span className="size-4 rounded-full border-[1.6px] border-p4" />
+                          </button>
+                        ) : (
+                          <span className="size-7" />
+                        )}
+                      </div>
+                      <button type="button" onClick={() => onOpen(task)} className="-mt-1 block w-full px-2 pb-1.5 text-left">
+                        <span className={`line-clamp-3 text-[13px] leading-snug font-medium break-words ${open ? "text-ink" : "text-secondary line-through"}`}>{task.title}</span>
                       </button>
-                      {open && (
-                        <button type="button" aria-label={`Done: ${task.title}`} onClick={() => onToggle(task)} className="absolute top-1 right-0.5 grid size-7 place-items-center">
-                          <span className="size-4 rounded-full border-[1.6px] border-p4" />
-                        </button>
-                      )}
                     </li>
                   );
                 })}
