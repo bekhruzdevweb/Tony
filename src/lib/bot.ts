@@ -2,7 +2,7 @@ import "server-only";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Message, MessageOrigin, Update } from "grammy/types";
 import { askForSlot, keyboardOf, runAction } from "./actions";
-import { markTop, nextTask, openWeekSession, placeOn, setTime, settle, summary as weekSummary, timeStep } from "./week-session";
+import { markTop, nextTask, openWeekSession, otherDay, placeOn, setTime, settle, summary as weekSummary, timeStep } from "./week-session";
 import { answerFreeTime, freeTimeList, backToFreeTime } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
@@ -697,6 +697,8 @@ export function getBot(): Bot | undefined {
               ? await placeOn(Number(id), day, now)
               : action === "top"
                 ? await markTop(Number(id), day, now)
+                : action === "redo"
+                  ? await otherDay(Number(id), now)
                 : action === "time"
                   ? await timeStep(Number(id), day, now)
                   : action === "at"

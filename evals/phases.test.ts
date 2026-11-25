@@ -276,7 +276,18 @@ describe("Phase R: /week, one task at a time", () => {
     const timeAsked = await markTop(Number(first.id), "2026-11-28", new Date());
     expect(byTitle("Write reel script").big3_on).toBe("2026-11-28");
     expect(timeAsked.text).toContain("What time, sir?");
-    expect(timeAsked.rows.at(-2)?.map((button) => button.text)).toEqual(["No time", "Next →"]);
+    expect(timeAsked.rows.at(-3)?.map((button) => button.text)).toEqual(["No time", "📅 Other day"]);
+    expect(timeAsked.rows.at(-2)?.map((button) => button.text)).toEqual(["Next task →"]);
+    // [📅 Other day]: the same task's days again; the new day replaces the old one and it leaves the old day's three.
+    const { otherDay } = await import("../src/lib/week-session");
+    const again = await otherDay(Number(first.id), new Date());
+    expect(again.text).toContain("**Write reel script**");
+    expect(again.text).toContain("Which day instead, sir?");
+    await placeOn(Number(first.id), "2026-11-29", new Date());
+    expect(local(byTitle("Write reel script").due_at)?.slice(0, 10)).toBe("2026-11-29");
+    expect(byTitle("Write reel script").big3_on ?? null).toBeNull();
+    await placeOn(Number(first.id), "2026-11-28", new Date());
+    await markTop(Number(first.id), "2026-11-28", new Date());
     // A tap on a time sets it, with its reminder, and the next task comes.
     const { setTime } = await import("../src/lib/week-session");
     const afterTime = await setTime(Number(first.id), Math.round(at("2026-11-28T10:00").getTime() / 60_000), new Date());

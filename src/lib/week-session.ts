@@ -78,42 +78,65 @@ export async function nextTask(now = new Date(), lead?: string): Promise<View> {
   if (!state) return { text: "That planning session has ended, sir. Send /week to start one.", rows: [] };
   // The task before is settled: a time typed from here on is not for it.
   await setPendingSlot(null).catch(() => undefined);
-  const today = localDate(now);
   const { tasks, areas } = await waiting(state);
   const task = tasks[0];
   if (!task) return summary(now, lead);
+  return dayStep(task, state, now, { lead, left: tasks.length, area: task.project_id ? areas.get(task.project_id) : undefined });
+}
+
+/** One task, alone, with the days it can go on. Also where [📅 Other day] returns to, for a task already placed. */
+function dayStep(task: Task, state: WeekSession, now: Date, options: { lead?: string; left?: number; area?: string; again?: boolean } = {}): View {
+  const today = localDate(now);
   const days = daysLeft(state.week, today);
   const dayRows: Row[] = [];
   for (let index = 0; index < days.length; index += 4) dayRows.push(days.slice(index, index + 4).map((day) => ({ text: day === today ? `Today ${Number(day.slice(8))}` : short(day), data: `wk:day:${task.id}:${day}` })));
   return {
     text: [
-      ...(lead ? [lead, ""] : []),
-      `🗓 **Planning the week** · ${tasks.length} left`,
+      ...(options.lead ? [options.lead, ""] : []),
+      `🗓 **Planning the week**${options.left ? ` · ${options.left} left` : ""}`,
       "",
       `**${task.title}**`,
-      `${task.project_id && areas.get(task.project_id) ? areas.get(task.project_id) : "No area"}${task.duration_minutes ? ` · ${task.duration_minutes} min` : ""}`,
+      `${options.area ?? "No area"}${task.duration_minutes ? ` · ${task.duration_minutes} min` : ""}`,
       "",
-      "Which day, sir?",
+      options.again ? "Which day instead, sir?" : "Which day, sir?",
     ].join("\n"),
     rows: [
       ...dayRows,
-      [
-        { text: "📥 Keep in inbox", data: `wk:keep:${task.id}` },
-        { text: "🌙 Someday", data: `wk:some:${task.id}` },
-        { text: "🗑 Drop", data: `wk:drop:${task.id}` },
-      ],
+      options.again
+        ? [{ text: "Next task →", data: "wk:next" }]
+        : [
+            { text: "📥 Keep in inbox", data: `wk:keep:${task.id}` },
+            { text: "🌙 Someday", data: `wk:some:${task.id}` },
+            { text: "🗑 Drop", data: `wk:drop:${task.id}` },
+          ],
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
+}
+
+/** [📅 Other day] on a task he has just placed: the days again, for that same task. */
+export async function otherDay(taskId: number, now = new Date()): Promise<View> {
+  const state = await session();
+  if (!state) return nextTask(now);
+  await setPendingSlot(null).catch(() => undefined);
+  const db = requireDb();
+  const found = await db.from("tasks").select().eq("id", taskId).maybeSingle();
+  const task = found.data as Task | null;
+  if (!task) return nextTask(now, "That task is gone, sir.");
+  const area = task.project_id ? ((await db.from("projects").select("name").eq("id", task.project_id).maybeSingle()).data as { name?: string } | null)?.name : undefined;
+  return dayStep(task, state, now, { area, again: true });
 }
 
 /** A tap on a day: the task goes there; then whether it is one of that day's three (if any are free), then its time. */
 export async function placeOn(taskId: number, day: string, now = new Date()): Promise<View> {
   const state = await session();
   if (!state) return nextTask(now);
+  const before = (await requireDb().from("tasks").select("status, big3_on").eq("id", taskId).maybeSingle()).data as { status: string; big3_on: string | null } | null;
   const placed = await placeAnytime(taskId, day, now);
   if (!placed) return nextTask(now, "That task is gone, sir.");
-  await save({ ...state, placed: state.placed + 1 });
+  // Moved from a day he had just chosen: it leaves that day's three, and is counted once.
+  if (before?.big3_on && before.big3_on !== day) await clearBig3(taskId);
+  if (before?.status === "inbox") await save({ ...state, placed: state.placed + 1 });
   await updateSettings({ pending_note: null, pending_note_at: null });
   const done = `✓ **${placed.title}** → ${long(day)}.`;
   const taken = await topCount(day);
@@ -126,6 +149,7 @@ export async function placeOn(taskId: number, day: string, now = new Date()): Pr
         { text: "⭐ Yes, urgent", data: `wk:top:${placed.id}:${day}` },
         { text: "Not urgent", data: `wk:time:${placed.id}:${day}` },
       ],
+      [{ text: "📅 Other day", data: `wk:redo:${placed.id}` }],
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
@@ -143,13 +167,14 @@ export async function timeStep(taskId: number, day: string, now = new Date(), le
   const options = (await choicesFor({ ...task, due_at: null } as Task, parseLocalDateTime(`${day}T12:00`)!, now).catch(() => [])).filter((option) => option.at.getTime() > now.getTime()).slice(0, 4);
   await setPendingSlot({ task_id: taskId, day });
   return {
-    text: [...(lead ? [lead, ""] : []), `**${task.title}** · ${long(day)}`, "", options.length ? "What time, sir? Tap one, or type it (“9:00”, “18:30”)." : "What time, sir? Type it (“9:00”, “18:30”), or leave it with no time.", "_After typing a time, tap Next._"].join("\n"),
+    text: [...(lead ? [lead, ""] : []), `**${task.title}** · ${long(day)}`, "", options.length ? "What time, sir? Tap one, or type it (“9:00”, “18:30”)." : "What time, sir? Type it (“9:00”, “18:30”), or leave it with no time.", "_Next task leaves this one as it is and moves on._"].join("\n"),
     rows: [
       ...(options.length ? [options.map((option, index) => ({ text: `${index === 0 ? "⭐ " : ""}${formatTime(option.at)}`, data: `wk:at:${taskId}:${Math.round(option.at.getTime() / 60_000)}` }))] : []),
       [
         { text: "No time", data: "wk:next" },
-        { text: "Next →", data: "wk:next" },
+        { text: "📅 Other day", data: `wk:redo:${taskId}` },
       ],
+      [{ text: "Next task →", data: "wk:next" }],
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
