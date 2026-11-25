@@ -277,7 +277,16 @@ describe("Phase R: /week, one task at a time", () => {
     expect(byTitle("Write reel script").big3_on).toBe("2026-11-28");
     expect(timeAsked.text).toContain("What time, sir?");
     expect(timeAsked.rows.at(-3)?.map((button) => button.text)).toEqual(["No time", "📅 Other day"]);
-    expect(timeAsked.rows.at(-2)?.map((button) => button.text)).toEqual(["Next task →"]);
+    expect(timeAsked.rows.at(-2)?.map((button) => button.text)).toEqual(["↩ Back to inbox", "Next task →"]);
+    // [↩ Back to inbox]: a slip of the thumb is undone; the task loses its day, star and reminder and is asked again.
+    const { backToInbox } = await import("../src/lib/week-session");
+    const undone = await backToInbox(Number(first.id), new Date());
+    expect(byTitle("Write reel script")).toMatchObject({ status: "inbox", due_at: null, big3_on: null });
+    expect(state.db.rows("reminders").filter((row) => row.task_id === first.id && row.state === "scheduled")).toHaveLength(0);
+    expect(undone.text).toContain("is back in the inbox");
+    expect(undone.text).toContain("**Write reel script**");
+    await placeOn(Number(first.id), "2026-11-28", new Date());
+    await markTop(Number(first.id), "2026-11-28", new Date());
     // [📅 Other day]: the same task's days again; the new day replaces the old one and it leaves the old day's three.
     const { otherDay } = await import("../src/lib/week-session");
     const again = await otherDay(Number(first.id), new Date());
@@ -294,6 +303,7 @@ describe("Phase R: /week, one task at a time", () => {
     expect(local(byTitle("Write reel script").due_at)).toBe("2026-11-28T10:00");
     expect(byTitle("Write reel script").anytime).toBe(false);
     expect(afterTime.text).toContain("**Shoot b-roll**");
+    expect(afterTime.rows.at(-2)).toEqual([{ text: "↩ Undo the last one", data: `wk:back:${first.id}` }]);
 
     // Friday's three are taken: no urgent question, straight to its time; "No time" moves on.
     const full = await placeOn(Number(third.id), "2026-11-27", new Date());

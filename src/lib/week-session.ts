@@ -73,7 +73,7 @@ export async function openWeekSession(now = new Date()): Promise<View> {
 }
 
 /** The next waiting task, alone, with the days it can go on; or the summary when none is left. */
-export async function nextTask(now = new Date(), lead?: string): Promise<View> {
+export async function nextTask(now = new Date(), lead?: string, /** The task just given a time: [↩ Back to inbox] is offered for it. */ undoId?: number): Promise<View> {
   const state = await session();
   if (!state) return { text: "That planning session has ended, sir. Send /week to start one.", rows: [] };
   // The task before is settled: a time typed from here on is not for it.
@@ -81,7 +81,10 @@ export async function nextTask(now = new Date(), lead?: string): Promise<View> {
   const { tasks, areas } = await waiting(state);
   const task = tasks[0];
   if (!task) return summary(now, lead);
-  return dayStep(task, state, now, { lead, left: tasks.length, area: task.project_id ? areas.get(task.project_id) : undefined });
+  const view = dayStep(task, state, now, { lead, left: tasks.length, area: task.project_id ? areas.get(task.project_id) : undefined });
+  // A slip of the thumb on the task before: one tap puts it back in the inbox.
+  if (undoId !== undefined && undoId !== task.id) view.rows.splice(view.rows.length - 1, 0, [{ text: "↩ Undo the last one", data: `wk:back:${undoId}` }]);
+  return view;
 }
 
 /** One task, alone, with the days it can go on. Also where [📅 Other day] returns to, for a task already placed. */
@@ -103,7 +106,10 @@ function dayStep(task: Task, state: WeekSession, now: Date, options: { lead?: st
     rows: [
       ...dayRows,
       options.again
-        ? [{ text: "Next task →", data: "wk:next" }]
+        ? [
+            { text: "↩ Back to inbox", data: `wk:back:${task.id}` },
+            { text: "Next task →", data: "wk:next" },
+          ]
         : [
             { text: "📥 Keep in inbox", data: `wk:keep:${task.id}` },
             { text: "🌙 Someday", data: `wk:some:${task.id}` },
@@ -112,6 +118,23 @@ function dayStep(task: Task, state: WeekSession, now: Date, options: { lead?: st
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
+}
+
+/**
+ * [↩ Back to inbox] (26 Nov: "I suddenly pressed one task … and there is no such thing as bring it back to
+ * inbox"): the task he just placed loses its day, time, reminder and star, and is asked about again.
+ */
+export async function backToInbox(taskId: number, now = new Date()): Promise<View> {
+  const state = await session();
+  if (!state) return nextTask(now);
+  const db = requireDb();
+  const found = await db.from("tasks").select("id, title, status").eq("id", taskId).maybeSingle();
+  const task = found.data as Pick<Task, "id" | "title" | "status"> | null;
+  if (!task || !OPEN_STATUSES.includes(task.status)) return nextTask(now, "That task is no longer open, sir.");
+  await db.from("tasks").update({ due_at: null, status: "inbox", anytime: false, big3_on: null }).eq("id", taskId);
+  await db.from("reminders").update({ state: "cancelled" }).eq("task_id", taskId).eq("state", "scheduled");
+  await save({ ...state, placed: Math.max(0, state.placed - 1), kept: state.kept.filter((id) => id !== taskId) });
+  return nextTask(now, `↩ **${task.title}** is back in the inbox.`);
 }
 
 /** [📅 Other day] on a task he has just placed: the days again, for that same task. */
@@ -149,7 +172,10 @@ export async function placeOn(taskId: number, day: string, now = new Date()): Pr
         { text: "⭐ Yes, urgent", data: `wk:top:${placed.id}:${day}` },
         { text: "Not urgent", data: `wk:time:${placed.id}:${day}` },
       ],
-      [{ text: "📅 Other day", data: `wk:redo:${placed.id}` }],
+      [
+        { text: "📅 Other day", data: `wk:redo:${placed.id}` },
+        { text: "↩ Back to inbox", data: `wk:back:${placed.id}` },
+      ],
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
@@ -174,7 +200,10 @@ export async function timeStep(taskId: number, day: string, now = new Date(), le
         { text: "No time", data: "wk:next" },
         { text: "📅 Other day", data: `wk:redo:${taskId}` },
       ],
-      [{ text: "Next task →", data: "wk:next" }],
+      [
+        { text: "↩ Back to inbox", data: `wk:back:${taskId}` },
+        { text: "Next task →", data: "wk:next" },
+      ],
       [{ text: "⏹ Stop", data: "wk:stop" }],
     ],
   };
@@ -183,7 +212,7 @@ export async function timeStep(taskId: number, day: string, now = new Date(), le
 /** A tap on a time: the task is set for it (and gets its reminder), then the next task. */
 export async function setTime(taskId: number, minute: number, now = new Date()): Promise<View> {
   const placed = await placeTask(taskId, new Date(minute * 60_000), { learn: true });
-  return nextTask(now, placed.task?.due_at ? `✓ **${placed.task.title}** → ${long(localDate(new Date(placed.task.due_at)))}, **${formatTime(new Date(placed.task.due_at))}**` : placed.text);
+  return nextTask(now, placed.task?.due_at ? `✓ **${placed.task.title}** → ${long(localDate(new Date(placed.task.due_at)))}, **${formatTime(new Date(placed.task.due_at))}**` : placed.text, taskId);
 }
 
 /** [⭐ Yes, urgent]: one of that day's three (three at most), then its time. */
