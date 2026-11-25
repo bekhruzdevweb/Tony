@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { PlannerScreen } from "./planner";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
@@ -14,7 +15,7 @@ import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | `project:${number}`;
+type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | "week" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
@@ -37,7 +38,8 @@ const readTheme = (): Theme => {
 export function TonyApp({ initial }: { initial: AppState }) {
   const tony = useTony(initial);
   const { state, act, say, toast, signedOut } = tony;
-  const [tab, setTab] = useState<Tab>("today");
+  // "?tab=week" (the Sunday invitation's button) opens the weekly planner.
+  const [tab, setTab] = useState<Tab>(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "week" ? "week" : "today"));
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [menu, setMenu] = useState(false);
   const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "light");
@@ -197,6 +199,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
           <SideItem icon={<span aria-hidden>🌙</span>} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
           <SideItem icon={Icon.today} label="Today" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
           <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
+          <SideItem icon={<span aria-hidden>🗓</span>} label="Weekly planner" active={tab === "week"} onClick={() => setTab("week")} />
           <SideItem icon={<span aria-hidden>🗂</span>} label="Plan" active={tab === "board"} onClick={() => setTab("board")} />
           <SideItem icon={<span aria-hidden>🔥</span>} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
@@ -240,6 +243,14 @@ export function TonyApp({ initial }: { initial: AppState }) {
       {tab === "filters" && <FiltersScreen {...screen} onProject={(id) => setTab(`project:${id}`)} />}
       {tab === "habits" && <HabitsScreen state={state} onCheck={checkHabit} />}
       {tab === "board" && <BoardScreen {...screen} onLane={lane} />}
+      {tab === "week" && (
+        <PlannerScreen
+          {...screen}
+          onGoal={(action, payload) => void act(action, payload)}
+          onPlace={(task, day) => void act("update_task", { id: task.id, day, anytime: true })}
+          onTell={tell}
+        />
+      )}
       {projectId !== undefined && <ProjectScreen {...screen} projectId={projectId} />}
       {tab === "chat" && <ChatScreen state={state} onSend={tell} onVoice={voice} />}
       </div>

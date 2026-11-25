@@ -22,6 +22,8 @@ import { checkInDays, checkInTime, ROUTINE_FIELDS } from "../routine-rules";
 import { getRoutine, recordSample, setAutoKinds, setRoutineField } from "../routine";
 import { isNight, localDate, minuteOfDay } from "../time";
 import { startDate } from "../smart-inbox-rules";
+import { addWeekGoal, removeWeekGoal, setWeekGoalDone } from "../week-goals";
+import { weekNamed } from "../week-rules";
 import { addSubtasks, allDone, findSubtask, progress, removeSubtask, setSubtaskDone, subtasksFor } from "../subtasks";
 import { normalTag, normalTags, prefixTag, tagsFor } from "../tags";
 import { namesDay } from "./checks";
@@ -181,6 +183,20 @@ export const TOOLS: ToolDefinition[] = [
     "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' lists saved files matching the text (to send one, use library send). 'reference': he shared something to work from later (\"make a reel cover like this\", \"I want to shoot like this\", \"for inspiration\") with no day or time: it is kept as a reference in its area, with no task and no reminder. text: what it is for, in his words. project: the area. item: a library item (\"media:7\", \"library:3\") when it is not the thing he just shared.",
     { action: { type: "string", enum: ["note", "find", "reference"] }, text: { type: "string" }, project: { type: "string", description: "reference: the area it belongs to (one of his areas, listed below)" }, item: { type: "string", description: "reference: a library item, when it is not the last thing he shared" }, reply },
     ["action", "text"],
+  ),
+  // The weekly planner (Phase P): the three to five outcomes he chooses for a week.
+  tool(
+    "week_goal",
+    "The outcomes he chooses for a week (\"my goals this week: launch the website, study 10 hours\", \"add 'post 4 reels' to next week\"), three to five a week. add: one call per outcome, title in his words, week \"this\" or \"next\" (leave out when he does not say: on a Sunday that is next week). done: he reached one (id from the list below, e.g. 7 for #g7). remove: he drops one. Never invent outcomes for him: suggest in words, add only what he chooses.",
+    {
+      action: { type: "string", enum: ["add", "done", "remove"] },
+      title: { type: "string" },
+      week: { type: "string", enum: ["this", "next"] },
+      project: { type: "string", description: "Its life area, when clear" },
+      id: { type: "integer" },
+      reply,
+    },
+    ["action"],
   ),
   // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
   tool(
@@ -991,6 +1007,21 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (found.length === 0) return fail(`nothing saved matches "${text}"`);
       // A list to choose from, never sent as it is: send the one he means with library send.
       return { ok: true, items: found.map((item) => `media:${item.id} ${mediaLabel(item)}`), note: "send the one he asked for with library send (usually one)" };
+    }
+
+    case "week_goal": {
+      if (args.action === "add") {
+        const projects = await loadProjects();
+        const area = typeof args.project === "string" ? projects.find((p) => p.name.toLowerCase() === (args.project as string).trim().toLowerCase()) : undefined;
+        const week = weekNamed(args.week, localDate(now));
+        const added = await addWeekGoal({ title: typeof args.title === "string" ? args.title : "", week, projectId: area?.id ?? null });
+        if (!added.ok) return fail(added.error);
+        return { ok: true, outcome: added.goal.title, week_of: week, note: "Confirm in one short line. The weekly planner in the app shows it." };
+      }
+      const id = Number(args.id);
+      if (!Number.isFinite(id)) return fail("id is required (the number after #g in the list)");
+      const ok = args.action === "done" ? await setWeekGoalDone(id, true) : args.action === "remove" ? await removeWeekGoal(id) : false;
+      return ok ? { ok: true, outcome_id: id, [args.action === "done" ? "done" : "removed"]: true } : fail(`no outcome #g${id}`);
     }
 
     case "ask": {

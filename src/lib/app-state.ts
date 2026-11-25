@@ -9,6 +9,7 @@ import { getClockStatus, getSettings } from "./settings";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { habitStats, planProgress, streakLine } from "./habits";
 import { formatTime } from "./time";
+import { weekGoals } from "./week-goals";
 
 const clock = (value: string) => value.slice(0, 5);
 
@@ -36,7 +37,7 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
   const media = await mediaForApp(shown.map((task) => task.id), now).catch((error) => (console.error("App media failed:", error), []));
   const parts = await subtasksFor(shown.map((task) => task.id));
   // Habits and plans' progress are a nicety too: without them the tasks still load.
-  const [habits, progress] = await Promise.all([habitStats(now).catch(() => []), planProgress(now).catch(() => [])]);
+  const [habits, progress, goals] = await Promise.all([habitStats(now).catch(() => []), planProgress(now).catch(() => []), weekGoals(now).catch(() => [])]);
 
   const bot = getBot();
   let botUsername: string | null = null;
@@ -52,6 +53,7 @@ export async function loadAppState(now = new Date()): Promise<AppState> {
   return {
     now: now.toISOString(),
     tasks: shown,
+    weekGoals: goals.map((goal) => ({ id: goal.id, week_start: goal.week_start, title: goal.title, done: goal.done, project_id: goal.project_id })),
     media,
     subtasks: [...parts.values()].flat(),
     habits: habits.map((stats) => ({

@@ -88,6 +88,8 @@ export type AppState = {
   habits: AppHabit[];
   /** His plans' progress this week. */
   progress: AppPlanProgress[];
+  /** The outcomes he chose for this week and the next (Phase P). Missing in an old cached state. */
+  weekGoals?: { id: number; week_start: string; title: string; done: boolean; project_id: number | null }[];
   settings: AppSettings;
   status: AppStatus;
 };

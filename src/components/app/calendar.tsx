@@ -18,15 +18,17 @@ const tint = (task: Task) => (task.priority === 1 ? "var(--p1)" : task.priority 
  * The week at a glance (24 Nov: the hour-by-hour day was "weird"; he asked for a weekly calendar that is
  * "very easy to understand"). Seven days side by side, each a short list in time order: no hours, no blocks.
  */
-export function WeekCalendar({ state, now, onOpen, onToggle, onAdd }: { state: AppState; now: Date; onOpen: (task: Task) => void; onToggle: (task: Task) => void; onAdd: (target?: { day?: string }) => void }) {
+export function WeekCalendar({ state, now, onOpen, onToggle, onAdd, week }: { state: AppState; now: Date; onOpen: (task: Task) => void; onToggle: (task: Task) => void; onAdd: (target?: { day?: string }) => void; /** A fixed week (its Monday): the weekly planner chooses it, and the header is left out. */ week?: string }) {
   const today = localDate(now);
-  const [start, setStart] = useState(today);
+  const [own, setStart] = useState(today);
+  const start = week ?? own;
   const days = Array.from({ length: 7 }, (_, index) => shift(start, index));
   const last = days[6];
   const range = `${fmt(noon(start), { month: "short", day: "numeric" })} – ${fmt(noon(last), start.slice(5, 7) === last.slice(5, 7) ? { day: "numeric" } : { month: "short", day: "numeric" })}`;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {!week && (
       <div className="flex shrink-0 items-center justify-between px-4 pt-2 pb-2 md:px-8 md:pt-6">
         <h1 className="text-title leading-tight font-bold tracking-tight">{range}</h1>
         <div className="flex items-center text-secondary">
@@ -35,6 +37,7 @@ export function WeekCalendar({ state, now, onOpen, onToggle, onAdd }: { state: A
           <button type="button" aria-label="Later week" onClick={() => setStart(shift(start, 7))} className="grid size-10 place-items-center rounded-full text-[20px] hover:bg-surface">›</button>
         </div>
       </div>
+      )}
 
       <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-3 md:px-6 lg:grid lg:grid-cols-7 lg:overflow-x-visible">
         {days.map((day) => {

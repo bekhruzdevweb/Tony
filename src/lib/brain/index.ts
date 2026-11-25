@@ -8,6 +8,7 @@ import { autoReceipt, dayLabel, slotQuestion, splitQuestion } from "../slot-text
 import { joinedSay, placeTask } from "../slots";
 import { fullNote, soonestSlot } from "../smart-inbox";
 import { keepsUnplanned, wantsSuggestion } from "../smart-inbox-rules";
+import { weekGoalsForPrompt } from "../week-goals";
 import type { Interval, SlotOption } from "../routine-rules";
 import { attachmentCounts } from "../media";
 import { habitsForPrompt } from "../coach";
@@ -115,6 +116,7 @@ async function loadContext(input: { message?: string; rejected?: string[]; now?:
     rules: await rulesForPrompt(ruleList).catch(() => undefined),
     library: await libraryForPrompt(input.now ?? new Date(), { message: input.message, rejected: input.rejected }).catch(() => undefined),
     references: await referencesForPrompt().catch(() => undefined),
+    weekGoals: await weekGoalsForPrompt(input.now ?? new Date()).catch(() => undefined),
   };
 }
 

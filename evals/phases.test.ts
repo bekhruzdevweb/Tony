@@ -181,6 +181,43 @@ describe("Phase O: references and areas", () => {
   });
 });
 
+// ── Phase P (25 Nov): the weekly planner. Outcomes he chooses, five at most; a waiting task placed on a day ──
+describe("Phase P: the weekly planner", () => {
+  it("'my goals this week: launch the website, study 10 hours': two outcomes on this week, shown to Tony next time; a sixth is refused", async () => {
+    await run("my goals this week: launch the website, study 10 hours", "2026-11-25T10:00", [
+      tools(["week_goal", { action: "add", title: "Launch the website", week: "this" }], ["week_goal", { action: "add", title: "Study 10 hours", week: "this" }]),
+      says("Two outcomes set for this week, sir."),
+    ]);
+    const goals = state.db.rows("week_goals");
+    expect(goals.map((goal) => [goal.title, goal.week_start, goal.done])).toEqual([
+      ["Launch the website", "2026-11-23", false],
+      ["Study 10 hours", "2026-11-23", false],
+    ]);
+    expect(state.db.rows("tasks")).toHaveLength(0);
+    const { weekGoalsForPrompt, addWeekGoal } = await import("../src/lib/week-goals");
+    expect(await weekGoalsForPrompt(at("2026-11-25T10:05"))).toBe(`This week: #g${goals[0].id} ☐ Launch the website · #g${goals[1].id} ☐ Study 10 hours`);
+    for (const title of ["Three", "Four", "Five"]) expect((await addWeekGoal({ title, week: "2026-11-23" })).ok).toBe(true);
+    expect(await addWeekGoal({ title: "Six", week: "2026-11-23" })).toMatchObject({ ok: false });
+  });
+
+  it("on a Sunday an outcome with no week named is for the week ahead", async () => {
+    await run("goal: post 4 reels", "2026-11-29T19:05", [tools(["week_goal", { action: "add", title: "Post 4 reels" }]), says("Noted for next week, sir.")]);
+    expect(state.db.rows("week_goals")[0].week_start).toBe("2026-11-30");
+  });
+
+  it("the planner places a waiting task on a day with no time: it leaves the inbox and keeps no clock time", async () => {
+    const waiting = task({ title: "Write reel script" });
+    const { runTool } = await import("../src/lib/brain/tools");
+    vi.setSystemTime(at("2026-11-25T10:00"));
+    const result = await runTool("update_task", { id: waiting.id, day: "2026-11-27", anytime: true });
+    expect(result.ok).toBe(true);
+    const placed = byTitle("Write reel script");
+    expect(placed.status).toBe("todo");
+    expect(placed.anytime).toBe(true);
+    expect(local(placed.due_at)?.slice(0, 10)).toBe("2026-11-27");
+  });
+});
+
 // ── b) Situation rules ─────────────────────────────────────────────────
 describe("b) Situation rules: 'when X, do Y'", () => {
   const video = () => state.db.insert("media", { kind: "video", file_id: "MOTIVATION", description: "A short motivation clip", created_at: at("2026-11-21T10:00").toISOString() });

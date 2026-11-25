@@ -1,5 +1,7 @@
+import { addWeekGoal, removeWeekGoal, setWeekGoalDone } from "@/lib/week-goals";
+import { planningWeek, weekStart } from "@/lib/week-rules";
 import { markdownToPlain } from "@/lib/rich";
-import { formatTime } from "@/lib/time";
+import { formatTime, localDate } from "@/lib/time";
 import type { AppResult } from "@/lib/app-types";
 import { loadAppState } from "@/lib/app-state";
 import { getBot } from "@/lib/bot";
@@ -190,6 +192,22 @@ export async function POST(request: Request) {
       }
       case "remove_subtask": {
         await removeSubtask(Number(body.id));
+        break;
+      }
+
+      // The weekly planner's outcomes (Phase P): plain code, five a week at most.
+      case "week_goal_add": {
+        const week = typeof body.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.week) ? weekStart(body.week) : planningWeek(localDate(new Date()));
+        const added = await addWeekGoal({ title: typeof body.title === "string" ? body.title : "", week, projectId: Number.isFinite(Number(body.project_id)) && body.project_id !== null && body.project_id !== undefined ? Number(body.project_id) : null });
+        if (!added.ok) problem = added.error;
+        break;
+      }
+      case "week_goal_done": {
+        if (!(await setWeekGoalDone(Number(body.id), body.done !== false))) problem = "That outcome is gone";
+        break;
+      }
+      case "week_goal_remove": {
+        if (!(await removeWeekGoal(Number(body.id)))) problem = "That outcome is gone";
         break;
       }
 
