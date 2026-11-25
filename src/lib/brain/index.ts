@@ -166,6 +166,8 @@ export async function think(
   askComplete?: { taskId: number; title: string };
   /** A day he named without a time: the one slot Tony proposes ([✓] [✏️]), or the free slots to choose from. */
   slot?: Slot;
+  /** A new task whose area Tony could not tell: one button per candidate area under the reply (Phase O). */
+  areaAsk?: { taskId: number; areas: { id: number; name: string }[] };
   /** Something Tony will do once he taps ✓ ("I'll remove Buy notebook"). */
   proposal?: { offerId: number; say: string };
   /** Library items a rule sends him ("media:7", "library:3"). */
@@ -195,6 +197,7 @@ export async function think(
   // Saved photos or files he asked to see again.
   let mediaIds: number[] | undefined;
   const offerIds: number[] = [];
+  let areaAsk: { taskId: number; areas: { id: number; name: string }[] } | undefined;
   // Web pages behind the answer, listed under it as links.
   const sources = new Map<string, string>();
   const fetched: { url: string; title: string }[] = [];
@@ -326,6 +329,9 @@ export async function think(
             const options = freeOptions(asked.options, (open.data ?? []) as Task[], now);
             choices = options.length >= 2 ? { question: asked.question, options } : undefined;
             if (!choices) prepared = asked.question;
+          }
+          if (call.function.name === "add_task" && Array.isArray((outcome as { area_options?: unknown }).area_options)) {
+            areaAsk = { taskId: Number((outcome as { task_id?: unknown }).task_id), areas: (outcome as unknown as { area_options: { id: number; name: string }[] }).area_options };
           }
           if (call.function.name === "offer_task") offerIds.push(Number((outcome as { offer_id?: unknown }).offer_id));
           if (call.function.name === "save_link") saved.push(String((outcome as { saved?: unknown }).saved ?? "the link"));
@@ -764,7 +770,7 @@ export async function think(
   const settling = (change: { tool: DoneAction["tool"]; wrote?: Record<string, unknown> }) =>
     change.tool === "complete_task" || (change.tool === "update_task" && Boolean(change.wrote) && Object.keys(change.wrote!).every((key) => ["status", "due_at", "day"].includes(key)));
   const settled = changes.size > 0 && [...changes.values()].every(settling) && saved.length + remembered.length + forgotten.length + routineSet.length + ruleLines.length === 0 && !clash && !slot && !proposal;
-  return { reply, tools, titles, planId, ...(plansByDay.size > 1 ? { planIds: planIdsOf() } : {}), choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, proposal, sendItems, showRules, showUndo, libraryChoices, changed: [...changes.keys()], settled };
+  return { reply, tools, titles, planId, ...(plansByDay.size > 1 ? { planIds: planIdsOf() } : {}), choices, mediaIds, offerIds: offerIds.filter(Number.isFinite), fetched, clash, askComplete, slot, areaAsk, proposal, sendItems, showRules, showUndo, libraryChoices, changed: [...changes.keys()], settled };
 }
 
 /** A day he named, without a time: he is asked (best first), Tony's own pick for an "auto" kind, or two halves offered. */

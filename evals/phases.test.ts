@@ -163,6 +163,16 @@ describe("Phase O: references and areas", () => {
     expect(await referencesForPrompt()).toBe(`media:${shot.id} photo [Content creation] for: "reel cover like that"`);
   });
 
+  it("unsure between two areas: the task is added with none, and one button for each is offered; a clear one is just set", async () => {
+    for (const name of ["Content creation", "Business"]) state.db.insert("projects", { name });
+    const unsure = await run("add update my website bio", "2026-11-25T21:00", [tools(["add_task", { title: "Update website bio", area_options: ["Content creation", "Business"], reply: "" }])]);
+    expect(byTitle("Update website bio").project_id ?? null).toBeNull();
+    expect(unsure.thought?.areaAsk?.areas.map((area) => area.name).sort()).toEqual(["Business", "Content creation"]);
+    const clear = await run("add write a reel script", "2026-11-25T21:05", [tools(["add_task", { title: "Write a reel script", project: "Content creation", area_options: ["Content creation", "Business"], reply: "" }])]);
+    expect(byTitle("Write a reel script").project_id).toBe(state.db.rows("projects").find((row) => row.name === "Content creation")?.id);
+    expect(clear.thought?.areaAsk).toBeUndefined();
+  });
+
   it("an area that does not exist is refused, and nothing is marked", async () => {
     const shot = state.db.insert("media", { kind: "photo", file_id: "COVER", caption: "", created_at: at("2026-11-25T21:00").toISOString() });
     state.db.rows("settings")[0].last_shared_media_id = shot.id;

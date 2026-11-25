@@ -38,6 +38,7 @@ const taskFields = {
   title: { type: "string", description: "Short: 2-6 words, without the time, never a link or a question." },
   due_at: { type: "string", description: TIME },
   project: { type: "string" },
+  area_options: { type: "array", items: { type: "string" }, description: "add_task only, and only when you cannot tell which of two or three areas the task belongs to (\"content creation or business?\"): those areas' exact names, with project left out. Tony's code asks him with one button each. Never when one area clearly fits, never for an errand that fits none." },
   priority: { type: "integer", description: "1 urgent (must be done that day; like every task it is reminded at its time and once more an hour later, never promise more than that), 2 important, 4 normal (the default)" },
   anytime: { type: "boolean", description: "A small thing with no time on its day (\"clean my room\", \"quick\", \"no need for a time\", \"anytime today\", tasks of 5-15 min): with day (or none: today). No time is asked or shown; one quiet check at 20:00 if still open." },
   persistent: { type: "boolean" },
@@ -522,8 +523,12 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       if (parts.length) await addSubtasks(task.id, parts);
       const attached = await attachShared(args, task.id);
       const checkIn = await addCheckIn(task.id, args, said, now);
+      // Unsure of its area (25 Nov: "if he isn't sure … he can ask me, only when he doesn't know"): his own tap decides.
+      const weighed = !task.project_id && Array.isArray(args.area_options) ? args.area_options.map((name) => String(name).trim().toLowerCase()) : [];
+      const areaOptions = weighed.length >= 2 ? (await loadProjects()).filter((p) => weighed.includes(p.name.toLowerCase())).slice(0, 3) : [];
       // What was meant to be written, so it is read back before Tony confirms it.
       return {
+        ...(areaOptions.length >= 2 ? { area_options: areaOptions.map((p) => ({ id: p.id, name: p.name })), area_note: "Tony's code shows the area buttons under your reply. Do not ask about the area in words." } : {}),
         ok: true,
         task_id: task.id,
         task: taskLine(task, await loadProjects(), now),

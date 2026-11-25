@@ -676,6 +676,20 @@ export function getBot(): Bot | undefined {
     }
 
     // Tony's slot for a day he named ("sl:..."): ✓ takes it, a time he picks is his, ✏️ shows the free ones. Plain code.
+    // [📂 Area] under a new task: its area is set in plain code, and the area buttons go; the rest of the message stays.
+    if (payload.startsWith("ar:")) {
+      const [, id, area] = payload.split(":");
+      const db = requireDb();
+      const found = await db.from("projects").select("id, name").eq("id", Number(area)).maybeSingle();
+      const project = found.data as { id: number; name: string } | null;
+      const moved = project ? await db.from("tasks").update({ project_id: project.id }).eq("id", Number(id)).select("id") : undefined;
+      const ok = Boolean(project && !moved?.error && (moved?.data ?? []).length > 0);
+      await ctx.answerCallbackQuery({ text: ok ? `→ ${project!.name}` : "That task no longer exists, sir." }).catch(() => undefined);
+      const rows = (ctx.callbackQuery.message?.reply_markup?.inline_keyboard ?? []).filter((row) => !row.some((button) => "callback_data" in button && String(button.callback_data).startsWith("ar:")));
+      await ctx.editMessageReplyMarkup({ reply_markup: rows.length ? { inline_keyboard: rows } : undefined }).catch(() => undefined);
+      return;
+    }
+
     if (payload.startsWith("sl:")) {
       const [, action, id, value] = payload.split(":");
       const taskId = Number(id);
@@ -1449,6 +1463,12 @@ export function getBot(): Bot | undefined {
       // [✏️ Change] under Tony's own pick; [✂️ Split …] for a long task with no gap for it.
       const slot = thought.slot;
       if (slot) keyboard = keyboardOf(slotButtons(slot));
+      // Tony could not tell the new task's area: one button for each he is weighing (25 Nov).
+      if (thought.areaAsk) {
+        keyboard = keyboard ?? new InlineKeyboard();
+        keyboard.row();
+        for (const area of thought.areaAsk.areas) keyboard.text(`📂 ${area.name}`, `ar:${thought.areaAsk.taskId}:${area.id}`);
+      }
       // "I'll remove Buy notebook": [✓] does it in plain code, [✏️] lets him say otherwise.
       if (thought.proposal) keyboard = new InlineKeyboard().text("✓ Do it", `pa:ok:${thought.proposal.offerId}`).text("✏️ Change", `pa:edit:${thought.proposal.offerId}`);
       // A clash the change created: move it to the next free hour, or keep both. Plain code.
