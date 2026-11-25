@@ -23,6 +23,8 @@ export type Settings = {
   today_message_hash: string | null;
   last_shared_media_id: number | null;
   pending_choices: { question: string; options: string[] } | null;
+  /** The guided weekly planning in progress (Phase R, migration 0036); null when none. */
+  week_session?: { week: string; kept: number[]; placed: number; someday: number; dropped: number } | null;
   pending_note: string | null;
   pending_note_at: string | null;
   /** After [✏️ Other time]: the task waiting for the time he types next (migration 0023); after [🧩 Steps], for its steps. */

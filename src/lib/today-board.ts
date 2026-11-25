@@ -169,6 +169,8 @@ export async function boardView(day: Date): Promise<Board> {
   for (const button of plainButtons) keyboard.text(button.text, button.data).row();
   // Telegram has no long-press menu on a message, so adding lives in a last row of its own.
   keyboard.text("➕ Add", "td:add");
+  // The guided weekly planning, one tap away (26 Nov).
+  keyboard.text("🗓 Plan week", "wk:open");
   if (settings.app_url?.startsWith("https://")) keyboard.webApp("📱 App", settings.app_url);
 
   const hash = createHash("sha256").update(`${status}\n${html}\n${JSON.stringify(keyboard.inline_keyboard)}`).digest("hex");
@@ -218,7 +220,7 @@ export async function boardView(day: Date): Promise<Board> {
     // Finished ones fold away, so the open list stays short; the summary keeps the count in view.
     sections.push({ type: "details", summary: `✅ Done · ${done.length}`, blocks: [{ type: "list", items: done.map(doneItem) } as RichBlock] } as RichBlock);
   }
-  const lastRow: RichButton[] = [{ text: "➕ Add", callback_data: "td:add" }];
+  const lastRow: RichButton[] = [{ text: "➕ Add", callback_data: "td:add" }, { text: "🗓 Plan week", callback_data: "wk:open" }];
   if (settings.app_url?.startsWith("https://")) lastRow.push({ text: "📱 App", web_app: { url: settings.app_url } });
   const rich: RichMessage = {
     blocks: [

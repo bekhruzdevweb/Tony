@@ -244,6 +244,51 @@ describe("Phase Q: the Big 3", () => {
   });
 });
 
+// ── Phase R (26 Nov): the guided weekly planning. One task at a time; three urgent a day at most ──
+describe("Phase R: /week, one task at a time", () => {
+  it("outcomes first, then each waiting task alone with the days left; a day places it, urgent is offered until three are taken; kept ones are not asked again", async () => {
+    vi.setSystemTime(at("2026-11-26T10:00"));
+    const { openWeekSession, nextTask, placeOn, markTop, settle, summary } = await import("../src/lib/week-session");
+    const area = state.db.insert("projects", { name: "Content creation", sort_order: 2 });
+    const first = task({ title: "Write reel script", project_id: area.id });
+    const second = task({ title: "Buy notebook" });
+    const third = task({ title: "Shoot b-roll", project_id: area.id });
+    for (const title of ["A", "B", "C"]) task({ title, due_at: "2026-11-27T10:00", big3_on: "2026-11-27" });
+
+    const start = await openWeekSession(new Date());
+    expect(start.text).toContain("Step 1: outcomes");
+    expect(start.text).toContain("**3** waiting tasks, one at a time");
+    expect(start.rows[0][0]).toEqual({ text: "▶️ Start with the tasks", data: "wk:next" });
+
+    // One task, alone: the area's tasks first, and only Thursday to Sunday are offered.
+    const one = await nextTask(new Date());
+    expect(one.text).toContain("**Write reel script**");
+    expect(one.text).not.toContain("Buy notebook");
+    expect(one.rows[0].map((button) => button.text)).toEqual(["Today 26", "Fri 27", "Sat 28", "Sun 29"]);
+
+    // Saturday has room among its three: he is asked, and a yes makes it one of them.
+    const asked = await placeOn(Number(first.id), "2026-11-28", new Date());
+    expect(asked.text).toContain("(0 of 3 taken)");
+    expect(byTitle("Write reel script")).toMatchObject({ status: "todo", anytime: true });
+    const afterTop = await markTop(Number(first.id), "2026-11-28", new Date());
+    expect(byTitle("Write reel script").big3_on).toBe("2026-11-28");
+    expect(afterTop.text).toContain("**Shoot b-roll**");
+
+    // Friday's three are taken: it is placed and the next task comes at once, with no question.
+    const full = await placeOn(Number(third.id), "2026-11-27", new Date());
+    expect(full.text).toContain("three urgent tasks are already chosen");
+    expect(full.text).toContain("**Buy notebook**");
+
+    // Kept in the inbox: not asked again; then the summary.
+    const end = await settle(Number(second.id), "keep", new Date());
+    expect(byTitle("Buy notebook").status).toBe("inbox");
+    expect(end.text).toContain("Week planned, sir");
+    expect(end.text).toContain("2 placed, 1 kept in the inbox");
+    expect(state.db.rows("settings")[0].week_session ?? null).toBeNull();
+    expect((await summary(new Date())).text).toBe("Planning stopped, sir.");
+  });
+});
+
 // ── b) Situation rules ─────────────────────────────────────────────────
 describe("b) Situation rules: 'when X, do Y'", () => {
   const video = () => state.db.insert("media", { kind: "video", file_id: "MOTIVATION", description: "A short motivation clip", created_at: at("2026-11-21T10:00").toISOString() });

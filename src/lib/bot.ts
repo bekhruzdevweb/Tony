@@ -2,6 +2,7 @@ import "server-only";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Message, MessageOrigin, Update } from "grammy/types";
 import { askForSlot, keyboardOf, runAction } from "./actions";
+import { markTop, nextTask, openWeekSession, placeOn, settle, summary as weekSummary } from "./week-session";
 import { answerFreeTime, freeTimeList, backToFreeTime } from "./free-time";
 import { laterToday } from "./followups";
 import { itemLabel } from "./library-rules";
@@ -313,6 +314,12 @@ export function getBot(): Bot | undefined {
 
   // /routine: his routine as Tony uses it. Plain code. He changes it by telling Tony ("I teach Mon–Fri 14–18").
   // "Show my rules": each with 🗑 (phase b).
+  // /week: the guided weekly planning, one task at a time (Phase R). Plain code.
+  tasks.command("week", async (ctx) => {
+    const view = await openWeekSession(new Date());
+    await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
+  });
+
   tasks.command("rules", async (ctx) => {
     const view = await rulesView();
     await sendMarkdown(bot, ctx.chat.id, view.text, { keyboard: view.rows.length ? keyboardOf(view.rows) : undefined });
@@ -676,6 +683,30 @@ export function getBot(): Bot | undefined {
     }
 
     // Tony's slot for a day he named ("sl:..."): ✓ takes it, a time he picks is his, ✏️ shows the free ones. Plain code.
+    // The guided weekly planning ("wk:…", Phase R): every step in plain code, one message redrawn at each.
+    if (payload.startsWith("wk:")) {
+      const [, action, id, day] = payload.split(":");
+      await ctx.answerCallbackQuery().catch(() => undefined);
+      const now = new Date();
+      const view =
+        action === "open"
+          ? await openWeekSession(now)
+          : action === "next"
+            ? await nextTask(now)
+            : action === "day"
+              ? await placeOn(Number(id), day, now)
+              : action === "top"
+                ? await markTop(Number(id), day, now)
+                : action === "keep" || action === "some" || action === "drop"
+                  ? await settle(Number(id), action, now)
+                  : await weekSummary(now);
+      const keyboard = view.rows.length ? keyboardOf(view.rows) : undefined;
+      // From the board the session opens as a new message; inside the session each step redraws it.
+      const redrawn = action !== "open" && chatId !== undefined && tapped ? await editRich(bot, chatId, tapped.message_id, markdownToHtml(view.text), keyboard) : false;
+      if (!redrawn && chatId !== undefined) await sendMarkdown(bot, chatId, view.text, { keyboard });
+      return;
+    }
+
     // [📂 Area] under a new task: its area is set in plain code, and the area buttons go; the rest of the message stays.
     if (payload.startsWith("ar:")) {
       const [, id, area] = payload.split(":");

@@ -4,6 +4,7 @@ import type { Bot } from "grammy";
 export const COMMANDS = [
   { command: "today", description: "Re-send and pin the Today checklist" },
   { command: "tomorrow", description: "Tomorrow's plan" },
+  { command: "week", description: "Plan your week with me, one task at a time" },
   { command: "plan", description: "Let Tony plan the day (or: /plan week)" },
   { command: "inbox", description: "Tasks without a date" },
   { command: "app", description: "Open the app, or get a key for it" },
