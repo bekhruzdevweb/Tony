@@ -94,28 +94,32 @@ export function Menu(props: {
                   <>
                     <li>
                       <button type="button" onClick={() => onGo("week")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="flex-1 text-body">🗓 Weekly planner</span>
+                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.week}</span>
+                        <span className="flex-1 text-body">Weekly planner</span>
                         <span className="text-caption text-secondary">Outcomes · Week</span>
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
                     </li>
                     <li>
                       <button type="button" onClick={() => onGo("calendar")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="flex-1 text-body">📅 Calendar</span>
+                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.calendar}</span>
+                        <span className="flex-1 text-body">Calendar</span>
                         <span className="text-caption text-secondary">The week, day by day</span>
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
                     </li>
                     <li>
                       <button type="button" onClick={() => onGo("habits")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="flex-1 text-body">🔥 Habits</span>
+                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.habit}</span>
+                        <span className="flex-1 text-body">Habits</span>
                         {(state.habits ?? []).some((habit) => habit.dueToday && !habit.doneToday) && <span className="rounded-full bg-done/15 px-2 py-px text-caption font-medium text-done">Today</span>}
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
                     </li>
                     <li>
                       <button type="button" onClick={() => onGo("board")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="flex-1 text-body">🗂 Plan board</span>
+                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.board}</span>
+                        <span className="flex-1 text-body">Plan board</span>
                         <span className="text-caption text-secondary">Today · Week · Someday</span>
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
@@ -275,7 +279,7 @@ function Settings({ tony, theme, onTheme }: { tony: Tony; theme: Theme; onTheme:
           .map((note) => normalNote(note))
           .sort((a, b) => SHOWN_ORDER.indexOf(a.layer) - SHOWN_ORDER.indexOf(b.layer) || b.id - a.id)
           .map((note) => (
-            <Row key={note.id} label={note.fact} hint={[LAYER_TITLES[note.layer], note.goal ? "🎯 goal" : undefined, isAlive(note, new Date()) ? undefined : "fading"].filter(Boolean).join(" · ")}>
+            <Row key={note.id} label={note.fact} hint={[LAYER_TITLES[note.layer], note.goal ? "goal" : undefined, isAlive(note, new Date()) ? undefined : "fading"].filter(Boolean).join(" · ")}>
               <button type="button" onClick={() => act("forget", { id: note.id })} className="h-11 shrink-0 px-1 text-sub font-medium text-overdue">
                 Forget
               </button>

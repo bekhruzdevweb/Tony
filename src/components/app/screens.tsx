@@ -43,7 +43,7 @@ export function PrayerStrip({ state, now, onToggle }: { state: AppState; now: Da
   const next = prayers.find((t) => isOpen(t) && new Date(t.due_at!).getTime() > now.getTime());
   return (
     <div className="mt-4 flex flex-wrap items-center gap-1.5" aria-label="Prayer times today">
-      <span className="mr-1 text-[13px] text-secondary">🕌</span>
+      <span className="mr-0.5 text-secondary [&_svg]:size-4" aria-hidden>{Icon.moon}</span>
       {prayers.map((task) => {
         const done = !isOpen(task);
         const upcoming = task.id === next?.id;
@@ -74,7 +74,7 @@ export function InboxScreen({ state, now, onOpen, onToggle, onAdd, onFreeTime }:
         <Title sub={inbox.length ? `${inbox.length} without a date` : undefined}>Inbox</Title>
         {onFreeTime && freeTime > 0 && (
           <button type="button" onClick={onFreeTime} className="mb-3 flex w-full items-center justify-between rounded-lg border border-hairline px-3 py-2 text-left text-[14px] hover:bg-hairline">
-            <span>🌙 Free Time</span>
+            <span>Free Time</span>
             <span className="text-secondary">{freeTime}</span>
           </button>
         )}
@@ -90,13 +90,13 @@ export function InboxScreen({ state, now, onOpen, onToggle, onAdd, onFreeTime }:
   );
 }
 
-/** The 🌙 Free Time list (phase c): "in my free time", "someday"; no dates, the longest waiting first. */
+/** The Free Time list (phase c): "in my free time", "someday"; no dates, the longest waiting first. */
 export function FreeTimeScreen({ state, now, onOpen, onToggle }: ScreenProps) {
   const items = state.tasks.filter((t) => isOpen(t) && t.free_time).sort((a, b) => a.created_at.localeCompare(b.created_at));
   return (
     <div className="flex-1 overflow-y-auto pb-8">
       <div className={PAGE}>
-        <Title sub={items.length ? `${items.length} waiting for a free moment` : "Say \"in my free time…\" to add one"}>🌙 Free Time</Title>
+        <Title sub={items.length ? `${items.length} waiting for a free moment` : "Say \"in my free time…\" to add one"}>Free Time</Title>
         <Section title="Longest waiting first">
           {items.map((task) => {
             const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
@@ -268,7 +268,7 @@ function HabitCard({ habit, onCheck }: { habit: AppHabit; onCheck: (taskId: numb
           </p>
         </div>
         <div className="text-right">
-          <p className="text-[22px] leading-none font-bold tabular-nums">{habit.streak > 0 ? `🔥${habit.streak}` : "–"}</p>
+          <p className="text-[22px] leading-none font-bold tabular-nums">{habit.streak > 0 ? habit.streak : "–"}</p>
           <p className="mt-1 text-[11px] text-secondary">in a row</p>
         </div>
       </div>
@@ -278,7 +278,7 @@ function HabitCard({ habit, onCheck }: { habit: AppHabit; onCheck: (taskId: numb
         ))}
       </ol>
       <div className="mt-3 flex items-center gap-3">
-        <p className="min-w-0 flex-1 truncate text-[13px] text-secondary">{habit.line}</p>
+        <p className="min-w-0 flex-1 truncate text-[13px] text-secondary">{habit.line.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, "")}</p>
         {habit.dueToday && !habit.doneToday && (
           <button type="button" onClick={() => onCheck(habit.task_id)} className="h-9 shrink-0 rounded-full bg-done px-4 text-[13px] font-semibold text-white active:scale-95">
             ✓ Done today
@@ -290,7 +290,7 @@ function HabitCard({ habit, onCheck }: { habit: AppHabit; onCheck: (taskId: numb
   );
 }
 
-/** 🔥 Habits (Phase H): each habit's run and last two weeks; then each plan's sessions this week. */
+/** Habits (Phase H): each habit's run and last two weeks; then each plan's sessions this week. */
 export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (taskId: number) => void }) {
   const habits = state.habits ?? [];
   const progress = state.progress ?? [];
@@ -298,9 +298,9 @@ export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (ta
   return (
     <div className="flex-1 overflow-y-auto pb-8">
       <div className={PAGE}>
-        <Title sub={today.length ? `${today.filter((habit) => habit.doneToday).length} of ${today.length} done today` : undefined}>🔥 Habits</Title>
+        <Title sub={today.length ? `${today.filter((habit) => habit.doneToday).length} of ${today.length} done today` : undefined}>Habits</Title>
         {habits.length === 0 ? (
-          <Empty art="habits">No habits yet. Tell Tony &ldquo;make reading a daily habit at 21:00&rdquo;, or switch on 🌱 Habit on a repeating task.</Empty>
+          <Empty art="habits">No habits yet. Tell Tony &ldquo;make reading a daily habit at 21:00&rdquo;, or switch on Habit on a repeating task.</Empty>
         ) : (
           <ul className="mt-4 grid gap-3 md:grid-cols-2">
             {habits.map((habit) => (
@@ -335,7 +335,7 @@ const LANES: { id: Lane; title: string; hint: string }[] = [
   { id: "inbox", title: "📥 Inbox", hint: "Not planned yet" },
   { id: "today", title: "Today", hint: "Today, and anything overdue" },
   { id: "week", title: "This week", hint: "The next six days" },
-  { id: "someday", title: "🌙 Someday", hint: "No date, no reminders" },
+  { id: "someday", title: "Someday", hint: "No date, no reminders" },
 ];
 const MOVES: { to: "today" | "week" | "someday"; label: string }[] = [
   { to: "today", label: "Today" },

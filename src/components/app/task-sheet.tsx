@@ -194,7 +194,7 @@ export function TaskSheet(props: {
           {repeat !== "none" && (
             <label className="flex min-h-11 items-center justify-between gap-4 rounded-card bg-surface px-3.5 py-3">
               <span>
-                <span className="block text-body">🌱 Habit</span>
+                <span className="block text-body">Habit</span>
                 <span className="block text-caption text-secondary">Tony keeps its streak and checks in when it slips</span>
               </span>
               <input type="checkbox" className="peer sr-only" checked={habit} onChange={(event) => setHabit(event.target.checked)} />

@@ -145,6 +145,70 @@ export const Icon = {
       <path d="m15.5 8.5-2 5-5 2 2-5z" />
     </svg>
   ),
+  moon: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="M19.5 14.2A7.8 7.8 0 0 1 9.8 4.5a7.8 7.8 0 1 0 9.7 9.7z" />
+    </svg>
+  ),
+  week: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <rect x="3.5" y="5" width="17" height="15" rx="3" />
+      <path d="M8 3v4M16 3v4M9.2 10v10M14.8 10v10M3.5 10h17" />
+    </svg>
+  ),
+  board: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <rect x="3.5" y="4.5" width="4.6" height="15" rx="1.6" />
+      <rect x="9.7" y="4.5" width="4.6" height="10" rx="1.6" />
+      <rect x="15.9" y="4.5" width="4.6" height="12.5" rx="1.6" />
+    </svg>
+  ),
+  habit: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="M20 12a8 8 0 1 1-3.2-6.4" />
+      <path d="m8.8 12.2 2.4 2.4 8-8.2" />
+    </svg>
+  ),
+  target: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="0.8" fill="currentColor" />
+    </svg>
+  ),
+  book: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="M12 6.5C10.4 5.3 8 4.8 4.5 5v13c3.5-.2 5.900.3 7.500 1.500 1.600-1.200 4-1.700 7.500-1.500V5c-3.500-.2-5.900.3-7.500 1.500zM12 6.500V19.500" />
+    </svg>
+  ),
+  play: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="3.2" />
+      <path d="m10.300 9.300 4.700 2.700-4.700 2.700z" />
+    </svg>
+  ),
+  heart: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="M12 19.500s-7-4.300-7-9.600A3.900 3.900 0 0 1 12 7.800a3.900 3.900 0 0 1 7 2.100c0 5.300-7 9.600-7 9.600z" />
+    </svg>
+  ),
+  briefcase: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <rect x="3.500" y="7.500" width="17" height="11.500" rx="2.600" />
+      <path d="M9 7.500V6a1.500 1.500 0 0 1 1.500-1.500h3A1.500 1.500 0 0 1 15 6v1.500M3.500 12.500h17" />
+    </svg>
+  ),
+  cap: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="m3 9.500 9-4.500 9 4.500-9 4.500z" />
+      <path d="M7 11.700v4c1.300 1.200 3 1.800 5 1.800s3.700-.6 5-1.800v-4M21 9.500v5" />
+    </svg>
+  ),
+  sprout: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <path d="M12 20v-8M12 12c0-3.500-2.300-5.500-6.500-5.500C5.500 10 7.800 12 12 12zM12 14c0-3 2-4.800 6-4.800 0 3-2 4.800-6 4.800z" />
+    </svg>
+  ),
 };
 
 /** Priority colours: P1 red, P2 orange, P3 Tony blue, P4 grey (as in Todoist, with Tony's blue). */
@@ -263,7 +327,7 @@ export function TaskRow(props: {
             </span>
           )}
           {task.repeat_rule && <span className="inline-flex items-center gap-1 text-secondary">{Icon.repeat}{task.repeat_rule}</span>}
-          {task.habit && <span aria-label="Habit" title="Habit">🌱</span>}
+          {task.habit && <span aria-label="Habit" title="Habit" className="text-done [&_svg]:size-3.5">{Icon.sprout}</span>}
           {(task.tags ?? []).map((tag) => (
             <span key={tag} className="text-primary/80">#{tag}</span>
           ))}

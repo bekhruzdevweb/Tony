@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BIG3, big3Done, big3For } from "@/lib/big3-rules";
-import { hourRange, layoutDay } from "@/lib/day-calendar";
+import { layoutDay } from "@/lib/day-calendar";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
 import { formatTime, localDate, minuteOfDay } from "@/lib/time";
@@ -11,7 +11,6 @@ import { PrayerStrip, type ScreenProps } from "./screens";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
 
 const TZ = "Asia/Tashkent";
-const HOUR_PX = 46;
 /** The hours of a day he can plan; more than 70% of it planned leaves no room for what comes up. */
 const DAY_HOURS = 8;
 const FULL_SHARE = 0.7;
@@ -42,13 +41,17 @@ export function DashboardScreen(props: ScreenProps & Extra) {
   const [filter, setFilter] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // His other tasks are in view by default: he asked where they went (25 Nov).
+  const [showRest, setShowRest] = useState(true);
 
   const { carried, timed, done, total } = splitToday(state.tasks, now);
   const openToday = [...carried, ...timed];
   const chosen = big3For(state.tasks.filter((task) => task.kind !== "prayer"), day);
   const chosenIds = new Set(big3For(state.tasks, today).map((task) => task.id));
-  const rest = openToday.filter((task) => !chosenIds.has(task.id)).sort((a, b) => Number(!!a.anytime) - Number(!!b.anytime) || (a.due_at ?? "").localeCompare(b.due_at ?? ""));
-  const { blocks, prayers } = layoutDay(state.tasks, today);
+  const { blocks } = layoutDay(state.tasks, today);
+  // Other tasks: today's open tasks that are neither in the Big 3 nor already a block on the timeline.
+  const onTimeline = new Set(blocks.map((block) => block.task.id));
+  const rest = openToday.filter((task) => !chosenIds.has(task.id) && !onTimeline.has(task.id)).sort((a, b) => Number(!!a.anytime) - Number(!!b.anytime) || (a.due_at ?? "").localeCompare(b.due_at ?? ""));
   const doneBlocks = done.filter((task) => !task.anytime && task.due_at);
   const focusMinutes = doneBlocks.reduce((sum, task) => sum + (task.duration_minutes ?? 0), 0);
   const plannedMinutes = blocks.reduce((sum, block) => sum + (block.task.duration_minutes ?? 0), 0);
@@ -90,9 +93,9 @@ export function DashboardScreen(props: ScreenProps & Extra) {
           <PrayerStrip state={state} now={now} onToggle={onToggle} />
 
           <div className="mt-4 grid grid-cols-3 gap-2.5 md:gap-4">
-            <Counter label="Completed" value={`${done.length} / ${total}`} tone="var(--done)" />
-            <Counter label="Focus time" value={focusMinutes ? formatMinutes(focusMinutes) : "0m"} tone="var(--accent)" />
-            <Counter label="Planned" value={`${plannedMinutes ? formatMinutes(plannedMinutes) : "0h"} / ${DAY_HOURS}h`} tone={tooFull ? "var(--p2)" : "var(--primary)"} note={tooFull ? "Leave room for the day" : undefined} />
+            <Counter label="Completed" value={`${done.length} / ${total}`} tone="var(--done)" share={total ? done.length / total : 0} />
+            <Counter label="Focus time" value={focusMinutes ? formatMinutes(focusMinutes) : "0m"} tone="var(--accent)" share={plannedMinutes ? focusMinutes / plannedMinutes : 0} />
+            <Counter label="Planned" value={`${plannedMinutes ? formatMinutes(plannedMinutes) : "0h"} / ${DAY_HOURS}h`} tone={tooFull ? "var(--p2)" : "var(--primary)"} share={plannedMinutes / (DAY_HOURS * 60)} note={tooFull ? "Leave room for the day" : undefined} />
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
@@ -193,24 +196,33 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                 )}
               </section>
 
-              <section className={`${card} pt-1`} aria-label="Everything else today">
-                <Section
-                  title={`Everything else · ${rest.length}`}
-                  collapsible
-                  defaultOpen={rest.length <= 4}
-                  action={
-                    carried.length > 0 ? (
-                      <button type="button" onClick={() => onReschedule("today")} className="h-7 rounded-full px-2.5 text-[12.5px] font-medium text-primary hover:bg-surface">
-                        Move {carried.length} from earlier days to today
+              <section className={card} aria-label="Other tasks today">
+                <div className="flex items-center justify-between gap-2">
+                  <button type="button" aria-expanded={showRest} onClick={() => setShowRest(!showRest)} className="flex min-w-0 items-center gap-2 text-left">
+                    <span>
+                      <span className="block text-body font-semibold">Other tasks <span className="font-normal text-secondary">· {rest.length}</span></span>
+                      <span className="block text-[12.5px] text-secondary">Small things for today, with no time block. Optional once the Big 3 are done.</span>
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center">
+                    {carried.length > 0 && (
+                      <button type="button" onClick={() => onReschedule("today")} className="h-8 rounded-full px-3 text-[12.5px] font-medium text-primary hover:bg-surface">
+                        Bring {carried.length} late to today
                       </button>
-                    ) : undefined
-                  }
-                >
-                  {rest.map((task) => (
-                    <TaskRow key={task.id} task={task} attached={state.media.some((item) => item.task_id === task.id)} {...row} />
-                  ))}
-                  <AddTaskRow onAdd={() => onAdd({ day: today })} />
-                </Section>
+                    )}
+                    <button type="button" aria-label={showRest ? "Hide other tasks" : "Show other tasks"} onClick={() => setShowRest(!showRest)} className={`grid size-8 place-items-center rounded-full text-secondary transition-transform duration-200 hover:bg-surface ${showRest ? "rotate-90" : ""}`}>
+                      {Icon.chevron}
+                    </button>
+                  </div>
+                </div>
+                {showRest && (
+                  <ul className="fade-in mt-1 list-none">
+                    {rest.map((task) => (
+                      <TaskRow key={task.id} task={task} attached={state.media.some((item) => item.task_id === task.id)} {...row} />
+                    ))}
+                    <AddTaskRow onAdd={() => onAdd({ day: today })} />
+                  </ul>
+                )}
                 {done.length > 0 && (
                   <Section title={`Completed · ${done.length}`} collapsible defaultOpen={false}>
                     {done.map((task) => (
@@ -226,12 +238,12 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-body font-semibold">Daily timeline</h2>
-                    <p className="text-[12.5px] text-secondary">Only what has a time.</p>
+                    <p className="text-[12.5px] text-secondary">Your time blocks, in order.</p>
                   </div>
                   <button type="button" onClick={onCalendar} className="h-8 rounded-full px-3 text-[13px] font-medium text-primary hover:bg-surface">Calendar →</button>
                 </div>
                 {blocks.length > 0 ? (
-                  <Timeline blocks={blocks} prayers={prayers} now={now} colorOf={(task) => areaOf(task)?.color ?? "var(--primary)"} onOpen={onOpen} />
+                  <Timeline blocks={blocks} now={now} colorOf={(task) => areaOf(task)?.color ?? "var(--primary)"} areaOf={(task) => areaOf(task)?.name} onOpen={onOpen} />
                 ) : (
                   <Empty art="today-clear">No time blocks today. Give a big task a time and a length and it appears here.</Empty>
                 )}
@@ -259,58 +271,117 @@ export function DashboardScreen(props: ScreenProps & Extra) {
   );
 }
 
-function Counter({ label, value, tone, note }: { label: string; value: string; tone: string; note?: string }) {
+function Counter({ label, value, tone, note, share }: { label: string; value: string; tone: string; note?: string; /** 0..1: how far along, drawn as a thin bar. */ share?: number }) {
   return (
     <div className="rounded-[16px] bg-background px-3 py-2.5 shadow-[var(--shadow-card)] ring-1 ring-hairline md:px-4 md:py-3.5">
       <p className="text-[12px] font-medium text-secondary md:text-[13px]">{label}</p>
-      <p className="mt-0.5 text-[19px] leading-tight font-bold tracking-tight md:text-[26px]" style={{ color: tone }}>{value}</p>
-      {note && <p className="mt-0.5 text-[11px] text-secondary">{note}</p>}
+      <p className="mt-0.5 text-[19px] leading-tight font-bold tracking-tight tabular-nums md:text-[26px]" style={{ color: tone }}>{value}</p>
+      {share !== undefined && (
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface">
+          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${Math.min(1, Math.max(0, share)) * 100}%`, background: tone }} />
+        </div>
+      )}
+      {note && <p className="mt-1 text-[11px] text-secondary">{note}</p>}
     </div>
   );
 }
 
-/** The day's time blocks on an hour grid: each as tall as its length, in its area's colour; a line marks now. */
-function Timeline({ blocks, prayers, now, colorOf, onOpen }: { blocks: ReturnType<typeof layoutDay>["blocks"]; prayers: Task[]; now: Date; colorOf: (task: Task) => string; onOpen: (task: Task) => void }) {
-  const nowMinute = minuteOfDay(now);
-  // From an hour before the first block (or now) to an hour after the last: a short, readable day.
-  const wide = hourRange(blocks, prayers);
-  const first = Math.min(...blocks.map((block) => block.start), nowMinute);
-  const last = Math.max(...blocks.map((block) => block.start + block.minutes), nowMinute);
-  const from = Math.max(wide.from > 7 ? 7 : wide.from, Math.floor(first / 60) - 1, 0);
-  const to = Math.min(24, Math.ceil(last / 60) + 1);
-  const hours = Array.from({ length: to - from }, (_, index) => from + index);
-  const top = (minute: number) => ((minute - from * 60) / 60) * HOUR_PX;
+/** A small line icon for a block, from its life area's name. */
+function glyphOf(area: string | undefined) {
+  const name = (area ?? "").toLowerCase();
+  if (/teach|lesson|student/.test(name)) return Icon.cap;
+  if (/content|creat|media/.test(name)) return Icon.play;
+  if (/health|fit|workout|sport/.test(name)) return Icon.heart;
+  if (/ielts|study|exam|educat/.test(name)) return Icon.book;
+  if (/business|work|career|money/.test(name)) return Icon.briefcase;
+  if (/personal|growth|develop/.test(name)) return Icon.sprout;
+  return Icon.clock;
+}
+
+const clockOf = (minute: number) => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+
+/** Where the day stands, between the blocks. */
+function NowLine({ minute }: { minute: number }) {
   return (
-    <div className="relative mt-3 ml-12" style={{ height: hours.length * HOUR_PX + 12 }}>
-      {hours.map((hour) => (
-        <div key={hour} className="absolute inset-x-0 border-t border-hairline" style={{ top: top(hour * 60) + 6 }}>
-          <span className="absolute -top-2 -left-12 w-10 text-right text-[11px] text-secondary">{String(hour).padStart(2, "0")}:00</span>
-        </div>
-      ))}
-      {blocks.map(({ task, start, minutes, column, columns }) => {
-        const open = isOpen(task);
-        const color = colorOf(task);
-        const height = Math.max((minutes / 60) * HOUR_PX - 3, 24);
-        return (
-          <button
-            key={task.id}
-            type="button"
-            onClick={() => onOpen(task)}
-            className="absolute overflow-hidden rounded-[10px] px-2.5 py-1 text-left"
-            style={{ top: top(start) + 7, height, left: `calc(${(column / columns) * 100}% + 1px)`, width: `calc(${100 / columns}% - 3px)`, background: `color-mix(in srgb, ${color} ${open ? 16 : 7}%, var(--background))`, borderLeft: `3px solid ${open ? color : "var(--p4)"}` }}
-          >
-            <span className={`block truncate text-[13px] leading-tight font-medium ${open ? "text-ink" : "text-secondary line-through"}`}>{task.title}</span>
-            {height >= 38 && <span className="block truncate text-[11px] text-secondary">{formatTime(new Date(task.due_at!))}{task.duration_minutes ? ` · ${formatMinutes(task.duration_minutes)}` : ""}</span>}
-          </button>
-        );
-      })}
-      {nowMinute >= from * 60 && nowMinute <= to * 60 && (
-        <div className="pointer-events-none absolute inset-x-0 z-10 border-t-[1.5px] border-overdue" style={{ top: top(nowMinute) + 6 }}>
-          <span className="absolute -top-[4.5px] -left-1 size-2 rounded-full bg-overdue" />
-        </div>
-      )}
-    </div>
+    <li className="flex items-center gap-2 py-0.5" aria-label={`Now, ${clockOf(minute)}`}>
+      <span className="w-11 shrink-0 text-right text-[11px] font-semibold text-overdue tabular-nums">{clockOf(minute)}</span>
+      <span className="size-2 shrink-0 rounded-full bg-overdue" />
+      <span className="h-[1.5px] flex-1 rounded-full bg-overdue/60" />
+    </li>
   );
+}
+
+const gapText = (minutes: number) => (minutes >= 60 ? formatMinutes(Math.round(minutes / 15) * 15) : `${minutes}m`);
+
+/**
+ * The day's time blocks as one stacked schedule (25 Nov, from his reference: "it looks basic"): each block a
+ * solid coloured card as tall as its length, with its start time beside it, its area and its length; free
+ * time between blocks is one slim dashed row, never an empty grid. A line marks where the day stands now.
+ */
+function Timeline({ blocks, now, colorOf, areaOf, onOpen }: { blocks: ReturnType<typeof layoutDay>["blocks"]; now: Date; colorOf: (task: Task) => string; areaOf: (task: Task) => string | undefined; onOpen: (task: Task) => void }) {
+  const nowMinute = minuteOfDay(now);
+  const ordered = [...blocks].sort((a, b) => a.start - b.start);
+  const height = (minutes: number) => Math.round(Math.min(132, Math.max(52, 30 + minutes * 0.62)));
+  const clock = clockOf;
+  let cursor = -1;
+  let nowShown = false;
+  const rows: React.ReactNode[] = [];
+  ordered.forEach((block, index) => {
+    const { task, start, minutes } = block;
+    const gap = cursor >= 0 ? start - cursor : 0;
+    // Where the day stands: before this block, if the present moment falls ahead of it.
+    const nowBefore = !nowShown && nowMinute < start;
+    if (gap >= 30) {
+      if (nowBefore && nowMinute >= cursor) {
+        nowShown = true;
+        rows.push(<NowLine key={`now-${index}`} minute={nowMinute} />);
+      }
+      rows.push(
+        <li key={`gap-${index}`} className="flex items-center gap-2">
+          <span className="w-11 shrink-0" />
+          <span className="flex h-8 flex-1 items-center justify-center rounded-[10px] border border-dashed border-secondary/30 text-[11.5px] text-secondary">Free · {gapText(gap)}</span>
+        </li>,
+      );
+    } else if (nowBefore) {
+      nowShown = true;
+      rows.push(<NowLine key={`now-${index}`} minute={nowMinute} />);
+    }
+    const open = isOpen(task);
+    const color = colorOf(task);
+    const inside = !nowShown && nowMinute >= start && nowMinute < start + minutes && open;
+    if (inside) nowShown = true;
+    const area = areaOf(task);
+    rows.push(
+      <li key={task.id} className="flex items-stretch gap-2">
+        <span className={`w-11 shrink-0 pt-2 text-right text-[11.5px] tabular-nums ${inside ? "font-semibold text-overdue" : "text-secondary"}`}>{clock(start)}</span>
+        <button
+          type="button"
+          onClick={() => onOpen(task)}
+          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-[14px] py-2 pr-3 pl-2.5 text-left ${inside ? "ring-2 ring-offset-1" : ""}`}
+          style={{
+            minHeight: height(minutes),
+            background: open ? `color-mix(in srgb, ${color} 20%, var(--background))` : "var(--surface)",
+            boxShadow: `inset 4px 0 0 ${open ? color : "var(--p4)"}`,
+            ...(inside ? ({ "--tw-ring-color": color } as React.CSSProperties) : {}),
+          }}
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-background/85 [&_svg]:size-[17px]" style={{ color: open ? color : "var(--secondary)" }} aria-hidden>
+            {open ? glyphOf(area) : Icon.check}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className={`block truncate text-[14px] leading-tight font-semibold ${open ? "text-ink" : "text-secondary line-through"}`}>{task.title}</span>
+            <span className="mt-0.5 block truncate text-[11.5px] text-secondary">{[area, `${clock(start)} – ${clock(start + minutes)}`].filter(Boolean).join(" · ")}</span>
+          </span>
+          <span className={`shrink-0 text-[12.5px] font-semibold tabular-nums ${open ? "" : "text-secondary"}`} style={open ? { color: `color-mix(in srgb, ${color} 70%, var(--ink))` } : undefined}>
+            {formatMinutes(minutes)}
+          </span>
+        </button>
+      </li>,
+    );
+    cursor = Math.max(cursor, start + minutes);
+  });
+  if (!nowShown) rows.push(<NowLine key="now-end" minute={nowMinute} />);
+  return <ol className="mt-3 space-y-1.5">{rows}</ol>;
 }
 
 const FOCUS_MINUTES = 25;

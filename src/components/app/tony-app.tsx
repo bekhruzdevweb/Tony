@@ -198,13 +198,13 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
           </button>
           <SideItem icon={Icon.search} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
           <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox" && !t.free_time).length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
-          <SideItem icon={<span aria-hidden>🌙</span>} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
-          <SideItem icon={Icon.today} label="Dashboard" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
+          <SideItem icon={Icon.moon} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
+          <SideItem icon={Icon.target} label="Dashboard" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
           <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
-          <SideItem icon={<span aria-hidden>🗓</span>} label="Weekly planner" active={tab === "week"} onClick={() => setTab("week")} />
+          <SideItem icon={Icon.week} label="Weekly planner" active={tab === "week"} onClick={() => setTab("week")} />
           <SideItem icon={Icon.calendar} label="Calendar" active={tab === "calendar"} onClick={() => setTab("calendar")} />
-          <SideItem icon={<span aria-hidden>🗂</span>} label="Plan" active={tab === "board"} onClick={() => setTab("board")} />
-          <SideItem icon={<span aria-hidden>🔥</span>} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
+          <SideItem icon={Icon.board} label="Plan board" active={tab === "board"} onClick={() => setTab("board")} />
+          <SideItem icon={Icon.habit} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
           <SideItem icon={Icon.chat} label="Chat with Tony" active={tab === "chat"} onClick={() => setTab("chat")} />
           <p className="mt-5 mb-1 px-2 text-[13px] font-semibold text-secondary">Life areas</p>
