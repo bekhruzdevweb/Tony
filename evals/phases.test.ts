@@ -145,6 +145,32 @@ describe("b) Library: everything he sent, found by what he calls it", () => {
   });
 });
 
+// ── Phase O (25 Nov): references. Saved to work from, in an area; no task, no reminder; listed for Tony ──
+describe("Phase O: references and areas", () => {
+  it("a screenshot with 'remind me to make a reel cover like that': a reference in its area, no task, and Tony is shown it later", async () => {
+    const area = state.db.insert("projects", { name: "Content creation" });
+    const shot = state.db.insert("media", { kind: "photo", file_id: "COVER", caption: "", description: "Shows: a reel cover with bold yellow text", created_at: at("2026-11-25T21:00").toISOString() });
+    state.db.rows("settings")[0].last_shared_media_id = shot.id;
+    const before = state.db.rows("tasks").length;
+    const result = await run("remind me to make a reel cover like that", "2026-11-25T21:01", [
+      tools(["media", { action: "reference", text: "reel cover like that", project: "Content creation", reply: "Saved as a reference in Content creation, sir." }]),
+    ]);
+    expect(state.db.rows("media").find((row) => row.id === shot.id)).toMatchObject({ reference: true, project_id: area.id, note: "reel cover like that" });
+    expect(state.db.rows("tasks")).toHaveLength(before);
+    expect(state.db.rows("reminders")).toHaveLength(0);
+    expect(result.replies[0]).toContain("Saved as a reference in Content creation");
+    const { referencesForPrompt } = await import("../src/lib/library");
+    expect(await referencesForPrompt()).toBe(`media:${shot.id} photo [Content creation] for: "reel cover like that"`);
+  });
+
+  it("an area that does not exist is refused, and nothing is marked", async () => {
+    const shot = state.db.insert("media", { kind: "photo", file_id: "COVER", caption: "", created_at: at("2026-11-25T21:00").toISOString() });
+    state.db.rows("settings")[0].last_shared_media_id = shot.id;
+    await run("save it as a reference", "2026-11-25T21:01", [tools(["media", { action: "reference", text: "cover idea", project: "Gardening" }]), "Which area, sir?"]);
+    expect(state.db.rows("media").find((row) => row.id === shot.id)?.reference ?? false).toBe(false);
+  });
+});
+
 // ── b) Situation rules ─────────────────────────────────────────────────
 describe("b) Situation rules: 'when X, do Y'", () => {
   const video = () => state.db.insert("media", { kind: "video", file_id: "MOTIVATION", description: "A short motivation clip", created_at: at("2026-11-21T10:00").toISOString() });

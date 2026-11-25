@@ -201,7 +201,7 @@ export function TonyApp({ initial }: { initial: AppState }) {
           <SideItem icon={<span aria-hidden>🔥</span>} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
           <SideItem icon={Icon.chat} label="Chat with Tony" active={tab === "chat"} onClick={() => setTab("chat")} />
-          <p className="mt-5 mb-1 px-2 text-[13px] font-semibold text-secondary">My Projects</p>
+          <p className="mt-5 mb-1 px-2 text-[13px] font-semibold text-secondary">Life areas</p>
           {state.projects.map((project) => (
             <SideItem
               key={project.id}

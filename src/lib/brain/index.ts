@@ -26,7 +26,7 @@ import { asksToAttachLink, isGenericTitle, refersToLink, titleForLink } from "..
 import { pageTitle, recentLink } from "../links";
 import { runTool, TOOLS } from "./tools";
 import { listRules, rulesForPrompt, rulesView } from "../rules";
-import { asksForItem, itemRef, libraryCandidates, libraryForPrompt, loadItem } from "../library";
+import { asksForItem, itemRef, libraryCandidates, libraryForPrompt, loadItem, referencesForPrompt } from "../library";
 import { itemLabel, type LibraryItem } from "../library-rules";
 import { carriesMedia } from "../link-rules";
 import { ruleHints } from "../smart-rules";
@@ -114,6 +114,7 @@ async function loadContext(input: { message?: string; rejected?: string[]; now?:
     ruleList,
     rules: await rulesForPrompt(ruleList).catch(() => undefined),
     library: await libraryForPrompt(input.now ?? new Date(), { message: input.message, rejected: input.rejected }).catch(() => undefined),
+    references: await referencesForPrompt().catch(() => undefined),
   };
 }
 

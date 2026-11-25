@@ -3,7 +3,7 @@ import { requireDb } from "./db";
 import { linksIn, mergeNotes } from "./brain/reliability";
 import { asksForLink, ownWords, wordsAround } from "./link-rules";
 import { OPEN_STATUSES } from "./tasks";
-import { describeUrl, groupAlbums, isPromoCaption, itemLabel, labelHit, labelMatch, libraryLine, pickItem, rankItems, refOf, type LibraryItem } from "./library-rules";
+import { describeUrl, referenceLine, groupAlbums, isPromoCaption, itemLabel, labelHit, labelMatch, libraryLine, pickItem, rankItems, refOf, type LibraryItem } from "./library-rules";
 import { askedToSend, asksForMedia, updateMedia } from "./media";
 
 /**
@@ -244,4 +244,44 @@ export async function libraryView(now = new Date(), count = 20): Promise<{ text:
     rows[rows.length - 1].push({ text: `📤 ${index + 1}`, data: `lib:send:${item.source}:${item.id}` });
   });
   return { text: ["📚 **Your library**, newest first. Tap a number to get it back:", ...lines].join("\n"), rows };
+}
+
+/**
+ * References (Phase O, 25 Nov: "I sent him a screenshot and told him to remind me to make a reel cover like
+ * that, and he puts it in the inbox … only when it's actually the similar task, to remind me"). Something he
+ * saved to work from later: not a task, no reminder, kept in its area, and offered when he starts a task
+ * that is really about the same thing.
+ */
+export async function markReference(ref: string, label: string, projectId: number | null): Promise<boolean> {
+  const [source, id] = ref.split(":");
+  if ((source !== "media" && source !== "library") || !Number.isFinite(Number(id))) return false;
+  const words = label.trim().slice(0, 200);
+  const patch = source === "media" ? { reference: true, project_id: projectId, ...(words ? { note: words } : {}) } : { reference: true, project_id: projectId, ...(words ? { description: words } : {}) };
+  const { data, error } = await requireDb().from(source).update(patch).eq("id", Number(id)).select("id");
+  if (error) throw new Error(`markReference: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+
+type ReferenceRow = { id: number; kind: string; note?: string | null; caption?: string | null; title?: string | null; description: string | null; url?: string | null; project_id: number | null; created_at: string };
+
+/** His references for Tony's prompt, newest first, each with its area and what he said it is for. */
+export async function referencesForPrompt(limit = 30): Promise<string | undefined> {
+  const db = requireDb();
+  const [files, links, areas] = await Promise.all([
+    db.from("media").select("id, kind, note, caption, description, project_id, created_at").eq("reference", true).order("created_at", { ascending: false }).limit(limit),
+    db.from("library").select("id, kind, title, description, url, project_id, created_at").eq("reference", true).order("created_at", { ascending: false }).limit(limit),
+    db.from("projects").select("id, name"),
+  ]);
+  const names = new Map((((areas.data ?? []) as { id: number; name: string }[]) ?? []).map((area) => [area.id, area.name]));
+  const line = (source: "media" | "library", row: ReferenceRow) => ({
+    at: row.created_at,
+    text: referenceLine({ ref: `${source}:${row.id}`, kind: row.kind, label: (source === "media" ? row.note || row.caption : row.description || row.title) ?? "", area: row.project_id ? names.get(row.project_id) : undefined }),
+  });
+  const rows = [...(files.error ? [] : ((files.data ?? []) as ReferenceRow[]).map((row) => line("media", row))), ...(links.error ? [] : ((links.data ?? []) as ReferenceRow[]).map((row) => line("library", row)))];
+  if (rows.length === 0) return undefined;
+  return rows
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, limit)
+    .map((row) => row.text)
+    .join("\n");
 }

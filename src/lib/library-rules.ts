@@ -290,3 +290,9 @@ export function libraryLine(item: LibraryItem, now: Date, taskTitle?: string): s
     .filter(Boolean)
     .join(" · ");
 }
+
+/** One reference as Tony's prompt shows it: `media:7 photo [Content creation] for: "reel cover like this"`. */
+export function referenceLine(input: { ref: string; kind: string; label: string; area?: string }): string {
+  const label = input.label.replace(/\s+/g, " ").trim().slice(0, 160);
+  return `${input.ref} ${input.kind === "document" ? "file" : input.kind}${input.area ? ` [${input.area}]` : ""}${label ? ` for: "${label}"` : ""}`;
+}

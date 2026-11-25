@@ -12,7 +12,7 @@ import type { ToolDefinition } from "./model";
 import { taskLine, type ProjectRef } from "./prompt";
 import { decideReminder, findLink, givesTime, isDuplicateReminder, isLinkTask, isOverdue } from "./checks";
 import { fetchTitle } from "../links";
-import { attachItem, findInLibrary, forgetItem, itemRef, loadItem, saveToLibrary } from "../library";
+import { attachItem, findInLibrary, forgetItem, itemRef, loadItem, markReference, saveToLibrary } from "../library";
 import { itemLabel, type LibraryItem } from "../library-rules";
 import { addRule, deleteRule, fireRule } from "../rules";
 import { isFreeTimeRequest } from "../smart-rules";
@@ -177,8 +177,8 @@ export const TOOLS: ToolDefinition[] = [
   ),
   tool(
     "media",
-    "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' lists saved files matching the text (to send one, use library send).",
-    { action: { type: "string", enum: ["note", "find"] }, text: { type: "string" }, reply },
+    "Saved photos and files: 'note' files the last one he shared under a label (e.g. video idea); 'find' lists saved files matching the text (to send one, use library send). 'reference': he shared something to work from later (\"make a reel cover like this\", \"I want to shoot like this\", \"for inspiration\") with no day or time: it is kept as a reference in its area, with no task and no reminder. text: what it is for, in his words. project: the area. item: a library item (\"media:7\", \"library:3\") when it is not the thing he just shared.",
+    { action: { type: "string", enum: ["note", "find", "reference"] }, text: { type: "string" }, project: { type: "string", description: "reference: the area it belongs to (one of his areas, listed below)" }, item: { type: "string", description: "reference: a library item, when it is not the last thing he shared" }, reply },
     ["action", "text"],
   ),
   // The library: every link, post, photo, video, file and voice note he sent, found by what he calls it.
@@ -971,6 +971,16 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
         if (!last_shared_media_id) return fail("he has not shared a photo or file recently");
         await updateMedia(Number(last_shared_media_id), { note: text });
         return { ok: true, saved_as: text };
+      }
+      if (args.action === "reference") {
+        const { last_shared_media_id } = await getSettings();
+        const ref = typeof args.item === "string" && /^(media|library):\d+$/.test(args.item.trim()) ? args.item.trim() : last_shared_media_id ? `media:${last_shared_media_id}` : undefined;
+        if (!ref) return fail("he has not shared a photo, file or link recently: name the item (media:<id> or library:<id>)");
+        const projects = await loadProjects();
+        const area = typeof args.project === "string" ? projects.find((p) => p.name.toLowerCase() === (args.project as string).trim().toLowerCase()) : undefined;
+        if (typeof args.project === "string" && args.project.trim() && !area) return fail(`no area called "${args.project}". Areas: ${projects.map((p) => p.name).join(", ")}`);
+        if (!(await markReference(ref, text, area?.id ?? null))) return fail(`${ref} is not in his library`);
+        return { ok: true, reference: ref, saved_as: text, area: area?.name ?? "no area", note: "No task and no reminder were made. Say in one line that it is saved as a reference (and its area)." };
       }
       const found = await findMedia(text);
       if (found.length === 0) return fail(`nothing saved matches "${text}"`);
