@@ -188,9 +188,9 @@ describe("3. When the AI fails", () => {
 
   it("recovers on the retry", async () => {
     const result = await run("add buy notebook", "2026-11-20T12:00", ["FAIL", tools(["add_task", { title: "Buy notebook" }])]);
-    // Phase I: the smart inbox suggests the first day with room; it stays in the inbox until he taps.
+    // Phase N: captured to the inbox with one line and no question.
     expect(byTitle("Buy notebook").status).toBe("inbox");
-    expect(result.replies[0]).toMatch(/Buy notebook[\s\S]*When today, Fri 20 Nov\? Best:/);
+    expect(result.replies[0]).toBe("✓ **Buy notebook** in the inbox");
     expect(state.db.rows("messages").filter((row) => row.role === "user")).toHaveLength(1);
   });
 });
@@ -290,7 +290,7 @@ describe("6. Act first: inbox, his times, one question", () => {
     expect(thought?.planId).toBeUndefined();
   });
 
-  it("23:09 'I have to update my fitness app…' with no time: inbox until he taps, Tony's suggested day, no plan", async () => {
+  it("23:09 'I have to update my fitness app…' with no time: the inbox, one line, no question, no plan", async () => {
     const result = await run("Also one task. I have to update my fitness app by adding new features such as bodyweight exercise, pull-up challenge and etc.", "2026-11-20T23:09", [
       tools(["add_task", { title: "Update fitness app", notes: "New features: bodyweight exercise, pull-up challenge" }]),
     ]);
@@ -298,8 +298,9 @@ describe("6. Act first: inbox, his times, one question", () => {
     expect(app.status).toBe("inbox");
     expect(app.due_at).toBeNull();
     expect(state.db.rows("plans")).toHaveLength(0);
-    // After 20:00 the suggestion is tomorrow's, never tonight's.
-    expect(result.replies[0]).toMatch(/When tomorrow, Sat 21 Nov\? Best: \*\*\d\d:\d\d\*\*/);
+    // Phase N (25 Nov): no question and no buttons, one line.
+    expect(result.replies[0]).toMatch(/^✓ \*\*Update fitness app\*\* in the inbox/);
+    expect(result.replies[0]).not.toContain("When");
   });
 
   it("12:22 'conduct the lesson at 6.30 p.m.': the model wrote 18:00, his 18:30 stands", async () => {
@@ -955,6 +956,11 @@ describe("Phase 1 · never mention tools, filters or internal errors", () => {
 describe("Phase 2 · a companion first: Tony's own words, one receipt line", () => {
   it("'add milk': one receipt line, nothing else, no 'sir'", async () => {
     const result = await run("add milk", "2026-11-20T21:00", [tools(["add_task", { title: "Milk", reply: "" }])]);
+    expect(result.replies[0]).toBe("✓ **Milk** in the inbox");
+  });
+
+  it("'add milk, suggest a time': only then does Tony offer a day and time", async () => {
+    const result = await run("add milk, suggest a time", "2026-11-20T21:00", [tools(["add_task", { title: "Milk", reply: "" }])]);
     expect(result.replies[0]).toBe("**Milk**\nWhen tomorrow, Sat 21 Nov? Best: **07:00**, the first free time.");
   });
 

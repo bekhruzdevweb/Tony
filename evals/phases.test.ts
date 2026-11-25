@@ -7,6 +7,7 @@
 import type { Update } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Answer, ChatMessage } from "../src/lib/brain/model";
+import { CALM_REMINDERS } from "../src/lib/calm";
 import { createFakeDb, type FakeDb } from "./support/fake-db";
 
 type Step = Answer | "FAIL";
@@ -426,7 +427,8 @@ describe("e) Safety and monitoring", () => {
     await runTick(bot as never, 42, new Date());
     expect(sent).toHaveLength(1);
     expect(sent[0]).not.toContain("reminders together");
-    expect(state.db.rows("reminders").map((row) => row.state).sort()).toEqual(["cancelled", "sent"]);
+    // Phase N: the one repeat, an hour on, waits behind it.
+    expect(state.db.rows("reminders").map((row) => row.state).sort()).toEqual(["cancelled", "scheduled", "sent"]);
   });
   it("the daily backup keeps tasks, memory and the library; /backup gives the newest", async () => {
     task({ title: "Call the bank", due_at: "2026-11-21T10:00" });
@@ -567,7 +569,50 @@ describe("Layered memory: this week, this month, always", () => {
 });
 
 // ── His main priority (22 Nov) ──────────────────────────────────────────
-describe("Main priority: chased until it is done", () => {
+// ── Phase N (25 Nov): calm reminders. One at the time, one repeat an hour on, the old one removed, then quiet ──
+describe("Phase N: calm reminders", () => {
+  const tickAt = async (when: string, calls: { name: string; args: unknown[] }[]) => {
+    const bot = { api: new Proxy({}, { get: (_target, name) => async (...args: unknown[]) => (calls.push({ name: String(name), args }), { message_id: 700 + calls.filter((call) => call.name.startsWith("send")).length }) }) };
+    state.db.rows("settings")[0].last_tick_at = new Date(at(when).getTime() - 60_000).toISOString();
+    vi.setSystemTime(at(when));
+    await runTick(bot as never, 42, new Date());
+  };
+
+  it.each([
+    ["an ordinary task", {}],
+    ["an urgent task with the hourly ladder", { persistent: true, priority: 1, persistent_schedule: [0, 15, 75, 135, 195] }],
+  ])("%s: its reminder, one repeat an hour later that replaces it, then nothing more that day", async (_name, extra) => {
+    const call = task({ title: "Call the bank", due_at: "2026-11-25T14:00", ...extra });
+    state.db.insert("reminders", { task_id: call.id, fire_at: at("2026-11-25T14:00").toISOString(), kind: "due", attempt: 0 });
+    const calls: { name: string; args: unknown[] }[] = [];
+    const sent = () => calls.filter((entry) => entry.name.startsWith("send"));
+    await tickAt("2026-11-25T14:00", calls);
+    expect(sent()).toHaveLength(1);
+    for (const quiet of ["2026-11-25T14:15", "2026-11-25T14:59"]) await tickAt(quiet, calls);
+    expect(sent()).toHaveLength(1);
+    await tickAt("2026-11-25T15:00", calls);
+    expect(sent()).toHaveLength(2);
+    expect(String(sent()[1].args[1])).toContain("still waiting");
+    // The first reminder leaves the chat: one message for the task.
+    expect(calls.filter((entry) => entry.name === "deleteMessage").map((entry) => entry.args[1])).toContain(701);
+    for (const later of ["2026-11-25T15:15", "2026-11-25T16:00", "2026-11-25T17:00", "2026-11-25T18:15"]) await tickAt(later, calls);
+    expect(sent()).toHaveLength(2);
+    expect(state.db.rows("reminders").filter((row) => row.state === "scheduled")).toHaveLength(0);
+  });
+
+  it("done before the hour is up: no repeat", async () => {
+    const call = task({ title: "Call the bank", due_at: "2026-11-25T14:00" });
+    state.db.insert("reminders", { task_id: call.id, fire_at: at("2026-11-25T14:00").toISOString(), kind: "due", attempt: 0 });
+    const calls: { name: string; args: unknown[] }[] = [];
+    await tickAt("2026-11-25T14:00", calls);
+    call.status = "done";
+    await tickAt("2026-11-25T15:00", calls);
+    expect(calls.filter((entry) => entry.name.startsWith("send"))).toHaveLength(1);
+  });
+});
+
+// Switched off while reminders are calm (Phase N, 25 Nov: "for now turn off the keep asking feature"); they run again when CALM_REMINDERS is false.
+describe.skipIf(CALM_REMINDERS)("Main priority: chased until it is done", () => {
   /** A bot that keeps each message and its buttons. */
   const recorder = () => {
     const sent: { text: string; buttons: string[] }[] = [];
@@ -1219,9 +1264,9 @@ describe("Phase I: Tony suggests the day, the poll keeps its day, a yes is a yes
   /** A day already full: seven tasks at 09:00 onwards. */
   const fill = (date: string) => Array.from({ length: 7 }, (_, n) => task({ title: `Busy ${date} ${n}`, due_at: `${date}T${String(9 + n).padStart(2, "0")}:00`, duration_minutes: 30 }));
 
-  it("'I want to shoot videos like this' (no day) with tomorrow full: the day after, and it says tomorrow is full", async () => {
+  it("'I want to shoot videos like this, suggest a day' with tomorrow full: the day after, and it says tomorrow is full", async () => {
     fill("2026-11-24");
-    const result = await run("I want to shoot videos like this reel", "2026-11-23T21:00", [tools(["add_task", { title: "Shoot videos like this reel", reply: "" }])]);
+    const result = await run("I want to shoot videos like this reel, suggest a day", "2026-11-23T21:00", [tools(["add_task", { title: "Shoot videos like this reel", reply: "" }])]);
     const slot = result.thought?.slot;
     expect(slot?.kind).toBe("ask");
     expect(slot?.day).toBe("2026-11-25");

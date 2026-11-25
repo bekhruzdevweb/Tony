@@ -23,6 +23,7 @@ Spec: [docs/SPEC.md](docs/SPEC.md).
 | P2 | Personality: companion and advisor first, natural replies with a small receipt line | Live, awaiting your check |
 | P3 | Smart context: bursts, library, situation rules ("when X, do Y"), 🌙 Free Time list and suggestions, follow-up ladder | Live, awaiting your check |
 | P4 | Safety and monitoring: self-test, budgets, backups, catch-up, notification budget, 👎 mistakes | Live, awaiting your check |
+| N | Quiet capture and calm reminders: a new thing with no day goes to the inbox with one line and no question (a suggested day only when he asks); every reminder comes at its time and once more an hour later, replacing the first, then nothing until the evening review. The urgent ladder, the main priority's chase and the same-day "still open" message are switched off (`CALM_REMINDERS` in `src/lib/calm.ts`) | Awaiting his check |
 | M | Layered memory: this week, this month, always; goals first in plans and the brief; Sunday review that moves up what held and drops what went stale; /memory by layer | Live, awaiting your check |
 | MP | Main priority: the one thing chased until it is done (nudges every 30 min, hourly when unanswered, never at night, 8 a day), ⭐ in the brief | Live, awaiting your check |
 | F | Fixes from 22 Nov 12:37: plans are not habits, "this task" is the one just touched, replies are read as about the message, a clean chat after a tap, lists you can tick, a day column in week plans, every PDF in an album read, renames read back | Live, awaiting your check |

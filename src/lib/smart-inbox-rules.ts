@@ -1,3 +1,4 @@
+import { asksForATime } from "./calm";
 /**
  * The smart inbox's rules (Phase I), pure so they are tested without a
  * database: how full a day may get, where the search starts, and how the
@@ -43,10 +44,11 @@ export function fullNote(full: string[], now: Date): string {
 }
 
 /**
- * Whether a new thing with no day gets Tony's suggested day: not when he
- * said to keep it unplanned ("put it in the inbox", "someday", "later",
- * "no time", "just save it").
+ * Whether a new thing with no day gets Tony's suggested day. Since Phase N (25 Nov) only when he asks for one:
+ * otherwise it is captured to the inbox with one line and no question, and never when he said to keep it
+ * unplanned ("put it in the inbox", "someday", "no time", "just save it").
  */
 export function wantsSuggestion(said: string): boolean {
-  return !/\b(inbox|someday|some day|one day|no (time|date|day)|without (a )?(time|date|day)|just (save|keep|note)|don'?t (schedule|plan)|not now|no rush)\b/i.test(said);
+  if (/\b(inbox|someday|some day|one day|no (time|date|day)|without (a )?(time|date|day)|just (save|keep|note)|don'?t (schedule|plan)|not now|no rush)\b/i.test(said)) return false;
+  return asksForATime(said);
 }

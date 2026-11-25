@@ -38,7 +38,7 @@ const taskFields = {
   title: { type: "string", description: "Short: 2-6 words, without the time, never a link or a question." },
   due_at: { type: "string", description: TIME },
   project: { type: "string" },
-  priority: { type: "integer", description: "1 urgent (must be done that day: Tony chases it 15 min after its time, then hourly until he answers or it is done), 2 important, 4 normal (the default)" },
+  priority: { type: "integer", description: "1 urgent (must be done that day; like every task it is reminded at its time and once more an hour later, never promise more than that), 2 important, 4 normal (the default)" },
   anytime: { type: "boolean", description: "A small thing with no time on its day (\"clean my room\", \"quick\", \"no need for a time\", \"anytime today\", tasks of 5-15 min): with day (or none: today). No time is asked or shown; one quiet check at 20:00 if still open." },
   persistent: { type: "boolean" },
   repeat: { type: "string", enum: ["daily", "weekdays", "weekly", "none"] },
@@ -217,7 +217,7 @@ export const TOOLS: ToolDefinition[] = [
   // His main priority (22 Nov): the one thing chased until it is done.
   tool(
     "main_priority",
-    "His main priority (⭐ in the list): the one thing he must finish. Tony chases it in code until it is done: a nudge every 30 minutes from half an hour after its time, hourly when he does not answer, never at night, at most 8 a day. set: the task's id, or the ids of one plan's sessions (then one is chased each day); setting one replaces the last. clear: he no longer wants it chased.",
+    "His main priority (⭐ in the list): the one thing he must finish. While reminders are calm (25 Nov) it is not chased: it is starred, comes first in his lists and briefs, and is reminded like any task (at its time, once more an hour later). Never promise more nudges than that.",
     {
       action: { type: "string", enum: ["set", "clear"] },
       task_ids: { type: "array", items: { type: "integer" } },
@@ -887,7 +887,7 @@ export async function runTool(name: string, args: Args, now = new Date(), said?:
       const { placeAnytime } = await import("../slots");
       for (const row of (set.data ?? []) as { id: number; due_at: string | null }[]) if (!row.due_at) await placeAnytime(row.id, startDate(now), now);
       const rows = ((set.data ?? []) as { id: number; title: string; due_at: string | null }[]).sort((a, b) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9"));
-      return { ok: true, main: rows.map((row) => row.title), replaced: ((cleared.data ?? []) as { title: string }[]).map((row) => row.title), note: "Tony chases it in code; say nothing about how it works" };
+      return { ok: true, main: rows.map((row) => row.title), replaced: ((cleared.data ?? []) as { title: string }[]).map((row) => row.title), note: "It is starred and comes first; reminded at its time and once an hour later. Say nothing about how it works" };
     }
 
     case "rule_fire": {

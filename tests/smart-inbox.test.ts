@@ -19,7 +19,10 @@ describe("smart inbox rules (Phase I)", () => {
     expect(fullNote(["2026-11-23"], at("2026-11-23T10:00"))).toBe("Mon 23 Nov is full.");
   });
   it("leaves it unplanned when he says so", () => {
-    expect(wantsSuggestion("I want to shoot videos like this")).toBe(true);
+    // Phase N (25 Nov): a suggestion only when he asks for one.
+    expect(wantsSuggestion("I want to shoot videos like this")).toBe(false);
+    expect(wantsSuggestion("I want to shoot videos like this, when should I do it?")).toBe(true);
+    expect(wantsSuggestion("add milk and find me a time")).toBe(true);
     expect(wantsSuggestion("put it in the inbox")).toBe(false);
     expect(wantsSuggestion("someday I'll read this")).toBe(false);
   });

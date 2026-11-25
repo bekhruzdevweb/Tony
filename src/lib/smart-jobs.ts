@@ -10,6 +10,7 @@ import type { LibraryItem } from "./library-rules";
 import { loadMedia, mediaCaption, needsReading, rehearVideo, rereadDocument, sendMedia } from "./media";
 import { readableDocument } from "./vision";
 import { mainPriorityNudge } from "./main-priority";
+import { CALM_REMINDERS } from "./calm";
 import { weeklyMemoryReview } from "./memory-review";
 import { logMessage } from "./messages";
 import { markdownToHtml } from "./rich";
@@ -78,7 +79,9 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
 
   if (!quiet) {
     // His main priority (22 Nov): chased until it is done, before anything else is said this minute.
+    // Switched off with the other chases while reminders are calm (Phase N, 25 Nov).
     await job("main-priority", async () => {
+      if (CALM_REMINDERS) return;
       const nudge = await mainPriorityNudge(now);
       if (!nudge) return;
       await send(bot, chatId, nudge.text, nudge.rows);
@@ -88,6 +91,7 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
     // d) Missed today: one message for all of them, later the same day.
     if (sent === 0) {
       await job("follow-up", async () => {
+        if (CALM_REMINDERS) return;
         const followUp = await sameDayFollowUp(now);
         if (!followUp) return;
         await send(bot, chatId, followUp.text, followUp.rows);

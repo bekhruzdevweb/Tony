@@ -61,6 +61,18 @@ export function dueReminder(task: Task): { text: string; keyboard: InlineKeyboar
 }
 
 /**
+ * A calm reminder (Phase N, 25 Nov): the reminder at the task's time, then one repeat an hour later with the
+ * same buttons in the same places. A task he marked to be chased keeps its "Starting now" buttons.
+ */
+export function calmReminder(task: Task, attempt: number): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = task.persistent
+    ? new InlineKeyboard().text("Starting now", data("start", task.id)).text("15 min", data("snooze", task.id, 15)).text("Skip today", data("skip", task.id))
+    : dueReminder(task).keyboard;
+  if (attempt > 0) return { text: `Sir, ${b(task.title)} is still waiting.`, keyboard };
+  return { text: task.persistent ? `🔔 Sir, it's time: ${b(task.title)}.` : dueReminder(task).text, keyboard };
+}
+
+/**
  * An extra reminder he asked for before the task's own time ("remind me ten minutes earlier"): a heads-up
  * that says when the task is, so it never reads as the reminder itself (22 Nov: "Sir, a reminder: Call
  * barber." at 15:50, and the same words again at 16:00). The task's own reminder still comes at its time.

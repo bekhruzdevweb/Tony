@@ -11,10 +11,11 @@ import { busyAround, getRoutine } from "./routine";
 import { checkInDue, checkInTime } from "./routine-rules";
 import { estimateMinutes } from "./schedule";
 import { allDone, progress, subtasksFor } from "./subtasks";
-import { aloudNudge, data, dueReminder, headsUpReminder, notesBlock, persistentReminder } from "./reminder-messages";
+import { aloudNudge, calmReminder, data, dueReminder, headsUpReminder, notesBlock, persistentReminder } from "./reminder-messages";
 import { openButton } from "./link-rules";
 import { getSettings, updateSettings, type Settings } from "./settings";
 import { isPrayer, OPEN_STATUSES, type Task } from "./tasks";
+import { CALM_OFFSETS, CALM_REMINDERS } from "./calm";
 import { downtime, MERGE_MS, mergeable } from "./smart-rules";
 import { logEvent } from "./events";
 import { addMinutes, dayBounds, formatTime, inWindow, toWholeMinute } from "./time";
@@ -324,15 +325,17 @@ export async function runTick(
     }
 
     // An extra reminder (set_reminder) and a check-in are single messages, never a chain.
-    const chained = task.persistent && reminder.kind !== "extra" && !checkIn;
-    const offsets = chained ? chainOffsets(task, settings) : [0];
+    // Calm reminders (Phase N, 25 Nov): any task's reminder is repeated once, an hour on, and never chased further.
+    const calm = CALM_REMINDERS && reminder.kind !== "extra" && !checkIn && !isPrayer(task) && !task.anytime;
+    const chained = !CALM_REMINDERS && task.persistent && reminder.kind !== "extra" && !checkIn;
+    const offsets = calm ? CALM_OFFSETS : chained ? chainOffsets(task, settings) : [0];
     const attempt = Math.min(reminder.attempt, offsets.length - 1);
     // A check-in is not a follow-up: it is never dropped for quiet hours or the daily cap, only delayed.
     const isFollowUp = reminder.attempt > 0 || (reminder.kind !== "due" && reminder.kind !== "extra" && !checkIn);
     // The moment this persistent reminder began, so later steps keep their
     // planned times even when a message goes out a minute late.
     const base = addMinutes(new Date(reminder.fire_at), -offsets[attempt]);
-    const nextAt = chained && attempt + 1 < offsets.length ? addMinutes(base, offsets[attempt + 1]) : undefined;
+    const nextAt = (chained || calm) && attempt + 1 < offsets.length ? addMinutes(base, offsets[attempt + 1]) : undefined;
 
     const queueNext = async () => {
       if (!nextAt) return;
@@ -351,7 +354,7 @@ export async function runTick(
     }
 
     // At most one non-persistent nudge per task per day.
-    if (!task.persistent && isFollowUp) {
+    if ((calm || !task.persistent) && isFollowUp) {
       const today = await db
         .from("reminders")
         .select("id", { count: "exact", head: true })
@@ -399,11 +402,13 @@ export async function runTick(
       ? prayerReminder(task, reminder.kind === "extra")
       : checkIn
         ? checkInMessage(task, reminder.every_days ?? Math.max(1, Math.round((now.getTime() - new Date(task.updated_at).getTime()) / (24 * 60 * 60_000))))
-        : chained
-          ? persistentReminder(task, attempt, now, nextAt, isFree)
-          : headsUp
-            ? headsUpReminder(task, new Date(reminder.fire_at), now)
-            : dueReminder(task);
+        : calm
+          ? calmReminder(task, attempt)
+          : chained
+            ? persistentReminder(task, attempt, now, nextAt, isFree)
+            : headsUp
+              ? headsUpReminder(task, new Date(reminder.fire_at), now)
+              : dueReminder(task);
     // A task with a link (a reel to watch): the link itself as a button, so he never has to ask for it.
     const open = prayer ? undefined : openButton(task.notes);
     if (open) message.keyboard = (message.keyboard ?? new InlineKeyboard()).row().url(open.text, open.url);
@@ -480,6 +485,10 @@ export async function runTick(
     }
     // Any prayer's heads-up: the last prayer's message, answered or not, has had its time (one prayer message at a time).
     if (prayer) await retireEarlierPrayers(task.id, now);
+    // The repeat replaces the first reminder: only one message for a task is ever in the chat (25 Nov).
+    if (calm && attempt > 0) {
+      for (const old of await otherReminderMessages(task.id, messageId).catch(() => [] as number[])) await deleteNow(bot, chatId, old);
+    }
     // Any task's own reminder at its time: the heads-up he asked for before it has done its job and goes.
     if (!prayer && reminder.kind === "due" && attempt === 0) {
       for (const old of await headsUpMessages(task.id, messageId).catch(() => [] as number[])) await deleteNow(bot, chatId, old);
