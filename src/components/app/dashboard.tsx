@@ -8,13 +8,10 @@ import { splitToday } from "@/lib/today";
 import { formatTime, localDate, minuteOfDay } from "@/lib/time";
 import { MAX_WEEK_GOALS, shiftDay, weekStart } from "@/lib/week-rules";
 import { clockOf, inkOn } from "./block-style";
-import { PrayerStrip, type ScreenProps } from "./screens";
-import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
+import { type ScreenProps } from "./screens";
+import { AddTaskRow, Empty, Icon, TaskRow, formatMinutes, isOpen } from "./ui";
 
 const TZ = "Asia/Tashkent";
-/** The hours of a day he can plan; more than 70% of it planned leaves no room for what comes up. */
-const DAY_HOURS = 8;
-const FULL_SHARE = 0.7;
 const fmt = (at: Date, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...options }).format(at);
 /** The one task list, by how much each matters: urgent first, the small things last. */
 const PRIORITY_GROUPS = [
@@ -49,7 +46,7 @@ export function DashboardScreen(props: ScreenProps & Extra) {
   const [picking, setPicking] = useState(false);
   const [filter, setFilter] = useState("");
 
-  const { carried, timed, done, total } = splitToday(state.tasks, now);
+  const { carried, timed } = splitToday(state.tasks, now);
   const { blocks } = layoutDay(state.tasks, today);
   // Today's open tasks, except what is overdue (its own list below) and what lives elsewhere (prayers, habits).
   const overdueIds = new Set(carried.map((task) => task.id));
@@ -65,10 +62,6 @@ export function DashboardScreen(props: ScreenProps & Extra) {
     .slice(0, 30);
   const byWhen = (a: Task, b: Task) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9") || a.id - b.id;
   const groups = PRIORITY_GROUPS.map((group) => ({ ...group, tasks: open.filter((task) => group.levels.includes(task.priority)).sort(byWhen) })).filter((group) => group.tasks.length > 0);
-  const doneBlocks = done.filter((task) => !task.anytime && task.due_at);
-  const focusMinutes = doneBlocks.reduce((sum, task) => sum + (task.duration_minutes ?? 0), 0);
-  const plannedMinutes = blocks.reduce((sum, block) => sum + (block.task.duration_minutes ?? 0), 0);
-  const tooFull = plannedMinutes > DAY_HOURS * 60 * FULL_SHARE;
   const goals = (state.weekGoals ?? []).filter((goal) => goal.week_start === weekStart(today));
   const goalsDone = goals.filter((goal) => goal.done).length;
   const areaOf = (task: Task) => state.projects.find((project) => project.id === task.project_id);
@@ -96,13 +89,6 @@ export function DashboardScreen(props: ScreenProps & Extra) {
             <h1 className="text-title leading-tight font-bold tracking-tight">{greeting}, sir</h1>
             <p className="mt-1 text-[13px] text-secondary">{fmt(now, { weekday: "long", month: "long", day: "numeric" })}</p>
           </header>
-          <PrayerStrip state={state} now={now} onToggle={onToggle} />
-
-          <div className="mt-4 grid grid-cols-3 gap-2.5 md:gap-4">
-            <Counter label="Completed" value={`${done.length} / ${total}`} tone="var(--done)" share={total ? done.length / total : 0} />
-            <Counter label="Focus time" value={focusMinutes ? formatMinutes(focusMinutes) : "0m"} tone="var(--accent)" share={plannedMinutes ? focusMinutes / plannedMinutes : 0} />
-            <Counter label="Planned" value={`${plannedMinutes ? formatMinutes(plannedMinutes) : "0h"} / ${DAY_HOURS}h`} tone={tooFull ? "var(--p2)" : "var(--primary)"} share={plannedMinutes / (DAY_HOURS * 60)} note={tooFull ? "Leave room for the day" : undefined} />
-          </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
             <div className="min-w-0 space-y-4">
@@ -255,15 +241,6 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                 </section>
               )}
 
-              {done.length > 0 && (
-                <section className={card} aria-label="Completed">
-                  <Section title={`Completed today · ${done.length}`} collapsible defaultOpen={false}>
-                    {done.map((task) => (
-                      <TaskRow key={task.id} task={{ ...task, status: "done" }} when="none" {...row} />
-                    ))}
-                  </Section>
-                </section>
-              )}
             </div>
 
             <div className="min-w-0 space-y-4">
@@ -301,21 +278,6 @@ export function DashboardScreen(props: ScreenProps & Extra) {
         </div>
       </form>
     </>
-  );
-}
-
-function Counter({ label, value, tone, note, share }: { label: string; value: string; tone: string; note?: string; /** 0..1: how far along, drawn as a thin bar. */ share?: number }) {
-  return (
-    <div className="rounded-[16px] bg-background px-3 py-2.5 shadow-[var(--shadow-card)] ring-1 ring-hairline md:px-4 md:py-3.5">
-      <p className="text-[12px] font-medium text-secondary md:text-[13px]">{label}</p>
-      <p className="mt-0.5 text-[19px] leading-tight font-bold tracking-tight tabular-nums md:text-[26px]" style={{ color: tone }}>{value}</p>
-      {share !== undefined && (
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface">
-          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${Math.min(1, Math.max(0, share)) * 100}%`, background: tone }} />
-        </div>
-      )}
-      {note && <p className="mt-1 text-[11px] text-secondary">{note}</p>}
-    </div>
   );
 }
 
