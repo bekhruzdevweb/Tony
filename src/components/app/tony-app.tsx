@@ -246,6 +246,7 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
           {...screen}
           onQuickAdd={tell}
           onReschedule={reschedule}
+          onBig3={(action, payload) => void act(action, payload)}
           onGoal={(action, payload) => void act(action, payload)}
           onCalendar={() => setTab("calendar")}
         />

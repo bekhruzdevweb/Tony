@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { BIG3, big3Done, big3For } from "@/lib/big3-rules";
 import { layoutDay } from "@/lib/day-calendar";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
-import { localDate, minuteOfDay } from "@/lib/time";
-import { MAX_WEEK_GOALS, weekStart } from "@/lib/week-rules";
+import { formatTime, localDate, minuteOfDay } from "@/lib/time";
+import { MAX_WEEK_GOALS, shiftDay, weekStart } from "@/lib/week-rules";
 import { clockOf, inkOn } from "./block-style";
 import { PrayerStrip, type ScreenProps } from "./screens";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, formatMinutes, isOpen } from "./ui";
@@ -27,6 +28,7 @@ type Extra = {
   onQuickAdd: (text: string) => Promise<void>;
   /** Everything left over from earlier days moves to today, in one tap. */
   onReschedule: (to: "today" | "tomorrow") => void;
+  onBig3: (action: "big3_set" | "big3_clear", payload: Record<string, unknown>) => void;
   onGoal: (action: "week_goal_add" | "week_goal_done" | "week_goal_remove", payload: Record<string, unknown>) => void;
   onCalendar: () => void;
 };
@@ -37,17 +39,30 @@ type Extra = {
  * only the things with a time.
  */
 export function DashboardScreen(props: ScreenProps & Extra) {
-  const { state, now, onOpen, onToggle, onAdd, onQuickAdd, onReschedule, onGoal, onCalendar } = props;
+  const { state, now, onOpen, onToggle, onAdd, onQuickAdd, onReschedule, onBig3, onGoal, onCalendar } = props;
   const today = localDate(now);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
+  const tomorrow = shiftDay(today, 1);
+  const [day, setDay] = useState(today);
+  const [picking, setPicking] = useState(false);
+  const [filter, setFilter] = useState("");
 
-  const { carried, done, total } = splitToday(state.tasks, now);
+  const { carried, timed, done, total } = splitToday(state.tasks, now);
   const { blocks } = layoutDay(state.tasks, today);
-  // Everything still open, except what is overdue (its own list below) and what lives elsewhere (prayers, habits).
+  // Today's open tasks, except what is overdue (its own list below) and what lives elsewhere (prayers, habits).
   const overdueIds = new Set(carried.map((task) => task.id));
-  const open = state.tasks.filter((task) => isOpen(task) && task.kind !== "prayer" && !task.habit && !overdueIds.has(task.id));
+  // The list holds today's tasks only; the rest of the days are in the Inbox and the calendar.
+  const open = timed.filter((task) => task.kind !== "prayer" && !task.habit && !overdueIds.has(task.id));
+  const chosen = big3For(state.tasks.filter((task) => task.kind !== "prayer"), day);
+  const candidates = state.tasks
+    .filter((task) => isOpen(task) && task.kind !== "prayer" && task.big3_on !== day)
+    .map((task) => ({ task, onDay: Boolean(task.due_at && localDate(new Date(task.due_at)) <= day) }))
+    .filter((entry) => entry.onDay || entry.task.status === "inbox")
+    .filter((entry) => !filter.trim() || entry.task.title.toLowerCase().includes(filter.trim().toLowerCase()))
+    .sort((a, b) => Number(b.onDay) - Number(a.onDay) || b.task.id - a.task.id)
+    .slice(0, 30);
   const byWhen = (a: Task, b: Task) => (a.due_at ?? "9").localeCompare(b.due_at ?? "9") || a.id - b.id;
   const groups = PRIORITY_GROUPS.map((group) => ({ ...group, tasks: open.filter((task) => group.levels.includes(task.priority)).sort(byWhen) })).filter((group) => group.tasks.length > 0);
   const doneBlocks = done.filter((task) => !task.anytime && task.due_at);
@@ -136,10 +151,72 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                 )}
               </section>
 
+              <section className={card} aria-label="Big 3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-body font-semibold">{day === today ? "Today's Big 3" : "Tomorrow's Big 3"}</h2>
+                    <p className="text-[12.5px] text-secondary">{day === today ? "Finish these and the day is a success." : "Choose them tonight, start on them tomorrow."}</p>
+                  </div>
+                  <div className="grid shrink-0 grid-cols-2 rounded-[10px] bg-surface p-0.5" role="tablist" aria-label="Which day">
+                    {[today, tomorrow].map((option) => (
+                      <button key={option} type="button" role="tab" aria-selected={day === option} onClick={() => (setDay(option), setPicking(false))} className={`h-7 rounded-[8px] px-3 text-[12.5px] font-medium ${day === option ? "bg-background shadow-sm" : "text-secondary"}`}>
+                        {option === today ? "Today" : "Tomorrow"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <ul className="mt-3 space-y-2">
+                  {chosen.map((task) => {
+                    const finished = big3Done(task, day, (iso) => localDate(new Date(iso)));
+                    const area = areaOf(task);
+                    return (
+                      <li key={task.id} className="flex items-center gap-2 rounded-[12px] bg-surface py-2 pr-1 pl-2.5">
+                        <button type="button" aria-label={finished ? `Done: ${task.title}` : `Mark done: ${task.title}`} disabled={finished} onClick={() => onToggle(task)} className="grid size-8 shrink-0 place-items-center">
+                          <span className={`grid size-5 place-items-center rounded-full border-[1.8px] ${finished ? "border-done bg-done text-white" : ""}`} style={finished ? undefined : { borderColor: area?.color ?? "var(--primary)" }}>
+                            {finished && <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>}
+                          </span>
+                        </button>
+                        <button type="button" onClick={() => onOpen(task)} className="min-w-0 flex-1 text-left">
+                          <span className={`block truncate text-[15px] font-medium ${finished ? "text-secondary line-through" : "text-ink"}`}>{task.title}</span>
+                          <span className="block truncate text-[12px] text-secondary">
+                            {[area?.name, task.anytime || !task.due_at ? "no time" : formatTime(new Date(task.due_at)), task.duration_minutes ? formatMinutes(task.duration_minutes) : undefined].filter(Boolean).join(" · ")}
+                          </span>
+                        </button>
+                        <button type="button" aria-label={`Take out of the Big 3: ${task.title}`} onClick={() => onBig3("big3_clear", { id: task.id })} className="grid size-8 shrink-0 place-items-center text-[17px] text-secondary/70">×</button>
+                      </li>
+                    );
+                  })}
+                  {Array.from({ length: Math.max(0, BIG3 - chosen.length) }, (_, index) => (
+                    <li key={`slot-${index}`}>
+                      <button type="button" onClick={() => setPicking(!picking)} className="flex h-12 w-full items-center gap-2.5 rounded-[12px] border border-dashed border-secondary/35 pl-4 text-left text-[14px] text-secondary">
+                        <span className="text-[17px] leading-none">+</span> Choose a task
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {picking && chosen.length < BIG3 && (
+                  <div className="fade-in mt-3 rounded-[12px] bg-surface p-2">
+                    <input autoFocus className="h-9 w-full rounded-[9px] bg-background px-3 text-[14px] outline-none placeholder:text-secondary focus:ring-2 focus:ring-primary/40" placeholder="Find a task" aria-label="Find a task" value={filter} onChange={(event) => setFilter(event.target.value)} />
+                    <ul className="mt-1.5 max-h-56 overflow-y-auto">
+                      {candidates.map(({ task, onDay }) => (
+                        <li key={task.id}>
+                          <button type="button" onClick={() => (onBig3("big3_set", { id: task.id, day }), setFilter(""), chosen.length + 1 >= BIG3 && setPicking(false))} className="flex min-h-10 w-full items-center gap-2 rounded-[9px] px-2.5 py-1.5 text-left text-[14px] hover:bg-background">
+                            <span className="size-2 shrink-0 rounded-full" style={{ background: areaOf(task)?.color ?? "var(--p4)" }} />
+                            <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                            <span className="shrink-0 text-[11.5px] text-secondary">{onDay ? (day === today ? "today" : "that day") : "inbox"}</span>
+                          </button>
+                        </li>
+                      ))}
+                      {candidates.length === 0 && <li className="px-2.5 py-2 text-[13px] text-secondary">Nothing matches. Add the task first, then choose it.</li>}
+                    </ul>
+                  </div>
+                )}
+              </section>
+
               <section className={card} aria-label="Tasks">
                 <div>
-                  <h2 className="text-body font-semibold">Tasks <span className="font-normal text-secondary">· {open.length}</span></h2>
-                  <p className="text-[12.5px] text-secondary">Everything open, the most important first.</p>
+                  <h2 className="text-body font-semibold">Tasks today <span className="font-normal text-secondary">· {open.length}</span></h2>
+                  <p className="text-[12.5px] text-secondary">Today only, the most important first.</p>
                 </div>
                 {groups.map((group) => (
                   <div key={group.name} className="mt-3">
@@ -155,7 +232,7 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                     </ul>
                   </div>
                 ))}
-                {groups.length === 0 && <p className="mt-3 text-[13.5px] text-secondary">Nothing open. A clear list.</p>}
+                {groups.length === 0 && <p className="mt-3 text-[13.5px] text-secondary">Nothing left for today.</p>}
                 <ul className="list-none">
                   <AddTaskRow onAdd={() => onAdd({ day: today })} />
                 </ul>
@@ -204,7 +281,7 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                   <Empty art="today-clear">No time blocks today. Give a big task a time and a length and it appears here.</Empty>
                 )}
               </section>
-              <FocusTimer tasks={focusTasks} />
+              <FocusTimer tasks={[...big3For(state.tasks, today).filter(isOpen), ...focusTasks.filter((task) => !big3For(state.tasks, today).some((chosenTask) => chosenTask.id === task.id))].slice(0, 4)} />
             </div>
           </div>
         </div>
