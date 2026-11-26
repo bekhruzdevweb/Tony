@@ -1,11 +1,12 @@
 import "server-only";
 import { requireDb } from "./db";
 import { scheduleReminder, settleReminders } from "./reminders";
+import { staysPut } from "./stays-put";
 import { OPEN_STATUSES, type Task } from "./tasks";
 import { addMinutes, dayBounds, formatTime, hisTomorrow, localDate, parseLocalDateTime, toWholeMinute } from "./time";
 
 /**
- * "Reschedule" on the Overdue section: every overdue task moves to today or
+ * "Reschedule" on the Overdue section: every overdue task (except a missed workout) moves to today or
  * tomorrow at its own time of day. If that time has already passed today,
  * it goes to the next whole hour instead. Plain code, no AI.
  */
@@ -17,7 +18,8 @@ export async function rescheduleOverdue(to: "today" | "tomorrow", now = new Date
   const day = localDate(to === "today" ? now : hisTomorrow(now));
   const nextHour = toWholeMinute(addMinutes(now, 60 - (now.getMinutes() % 60)));
   let moved = 0;
-  for (const task of (data ?? []) as Task[]) {
+  // A workout missed on its day is not carried to another one (he cannot train two sessions in a day).
+  for (const task of ((data ?? []) as Task[]).filter((task) => !staysPut(task))) {
     let at = parseLocalDateTime(`${day}T${formatTime(new Date(task.due_at!))}`)!;
     if (at.getTime() <= now.getTime()) at = nextHour.getTime() < dayBounds(now).end.getTime() ? nextHour : at;
     await settleReminders(task.id);

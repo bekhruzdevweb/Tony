@@ -1,3 +1,4 @@
+import { staysPut } from "./stays-put";
 import { currentGoals, isAlive, normalNote } from "./memory-rules";
 import { LATE_LEAD, allClashes, clashSentence, planDay } from "./brain/checks";
 import { busyIntervals, dayWindow, estimateMinutes, isDeep, placeAll, type Busy as Booked, type ToPlace } from "./schedule";
@@ -316,7 +317,7 @@ async function planFor(options: PlanOptions, lead?: string): Promise<PlanResult>
   // (Prayers are fixed times to plan around, never tasks to move.)
   const only = options.taskIds ? new Set(options.taskIds) : undefined;
   const candidates = tasks
-    .filter((task) => task.kind !== "prayer")
+    .filter((task) => task.kind !== "prayer" && !staysPut(task))
     // A task he chose "no time" for is never given one by a plan (his choice wins; the evening poll moves it on).
     .filter((task) => !task.anytime)
     .filter((task) => (only ? only.has(task.id) : task.status !== "in_progress" && (!task.due_at || new Date(task.due_at).getTime() < now.getTime())))

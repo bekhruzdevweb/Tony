@@ -248,6 +248,7 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
           onReschedule={reschedule}
           onBig3={(action, payload) => void act(action, payload)}
           onGoal={(action, payload) => void act(action, payload)}
+          onSkip={(task) => void act("update_task", { id: task.id, status: "skipped" }, (s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== task.id) }))}
           onCalendar={() => setTab("calendar")}
         />
       )}

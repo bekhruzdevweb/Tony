@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BIG3, big3Done, big3For } from "@/lib/big3-rules";
+import { staysPut } from "@/lib/stays-put";
 import { layoutDay } from "@/lib/day-calendar";
 import type { Task } from "@/lib/tasks";
 import { splitToday } from "@/lib/today";
@@ -27,6 +28,7 @@ type Extra = {
   onReschedule: (to: "today" | "tomorrow") => void;
   onBig3: (action: "big3_set" | "big3_clear", payload: Record<string, unknown>) => void;
   onGoal: (action: "week_goal_add" | "week_goal_done" | "week_goal_remove", payload: Record<string, unknown>) => void;
+  onSkip: (task: Task) => void;
   onCalendar: () => void;
 };
 
@@ -36,7 +38,7 @@ type Extra = {
  * only the things with a time.
  */
 export function DashboardScreen(props: ScreenProps & Extra) {
-  const { state, now, onOpen, onToggle, onAdd, onQuickAdd, onReschedule, onBig3, onGoal, onCalendar } = props;
+  const { state, now, onOpen, onToggle, onAdd, onQuickAdd, onReschedule, onBig3, onGoal, onSkip, onCalendar } = props;
   const today = localDate(now);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -46,10 +48,13 @@ export function DashboardScreen(props: ScreenProps & Extra) {
   const [picking, setPicking] = useState(false);
   const [filter, setFilter] = useState("");
 
-  const { carried, timed } = splitToday(state.tasks, now);
+  const { carried: late, timed } = splitToday(state.tasks, now);
+  // A missed workout is not overdue: it stays on its day, not done, and nothing carries it forward.
+  const carried = late.filter((task) => !staysPut(task));
+  const missed = late.filter(staysPut);
   const { blocks } = layoutDay(state.tasks, today);
   // Today's open tasks, except what is overdue (its own list below) and what lives elsewhere (prayers, habits).
-  const overdueIds = new Set(carried.map((task) => task.id));
+  const overdueIds = new Set(late.map((task) => task.id));
   // The list holds today's tasks only; the rest of the days are in the Inbox and the calendar.
   const open = timed.filter((task) => task.kind !== "prayer" && !task.habit && !overdueIds.has(task.id));
   const chosen = big3For(state.tasks.filter((task) => task.kind !== "prayer"), day);
@@ -223,6 +228,20 @@ export function DashboardScreen(props: ScreenProps & Extra) {
                   <AddTaskRow onAdd={() => onAdd({ day: today })} />
                 </ul>
               </section>
+
+              {missed.length > 0 && (
+                <section className={card} aria-label="Missed">
+                  <div>
+                    <h2 className="text-body font-semibold">Missed <span className="font-normal text-secondary">· {missed.length}</span></h2>
+                    <p className="text-[12.5px] text-secondary">Not done, and left on their own day. Skip one, or move it yourself.</p>
+                  </div>
+                  <ul className="mt-1 list-none">
+                    {missed.map((task) => (
+                      <TaskRow key={task.id} task={task} when="full" attached={state.media.some((item) => item.task_id === task.id)} {...row} below={<button type="button" onClick={() => onSkip(task)} className="mb-2 ml-10 h-7 rounded-full bg-surface px-3 text-[12.5px] font-medium text-secondary hover:text-ink md:ml-9">Skip this one</button>} />
+                    ))}
+                  </ul>
+                </section>
+              )}
 
               {carried.length > 0 && (
                 <section className={card} aria-label="Overdue">
