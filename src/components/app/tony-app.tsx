@@ -1,15 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { PlannerScreen } from "./planner";
 import { DashboardScreen } from "./dashboard";
-import { WeekCalendar } from "./calendar";
+import { CalendarScreen } from "./calendar";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
 import { formatTime } from "@/lib/time";
 import { Menu, type Theme } from "./menu";
-import { BoardScreen, ChatScreen, FiltersScreen, FreeTimeScreen, HabitsScreen, InboxScreen, ProjectScreen, SearchScreen, UpcomingScreen } from "./screens";
+import { ChatScreen, FiltersScreen, HabitsScreen, InboxScreen, ProjectScreen, SearchScreen } from "./screens";
 import { TaskSheet, type SheetTarget } from "./task-sheet";
 import { Icon, RowActionsContext, isOpen, type RowActions } from "./ui";
 import { splitToday } from "@/lib/today";
@@ -17,14 +16,22 @@ import { addMinutes, localDate } from "@/lib/time";
 import { applyTelegramTheme, haptic, pushBack, tonyFetch, webApp } from "./telegram";
 import { useTony } from "./use-tony";
 
-type Tab = "today" | "inbox" | "freetime" | "upcoming" | "chat" | "search" | "filters" | "habits" | "board" | "week" | "calendar" | `project:${number}`;
+type Tab = "today" | "inbox" | "chat" | "search" | "filters" | "habits" | "calendar" | `project:${number}`;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "today", label: "Today", icon: Icon.today },
   { id: "inbox", label: "Inbox", icon: Icon.inbox },
-  { id: "upcoming", label: "Upcoming", icon: Icon.upcoming },
+  { id: "calendar", label: "Calendar", icon: Icon.calendar3 },
   { id: "chat", label: "Chat", icon: Icon.chat },
 ];
+
+// The sidebar can be hidden to give the work the whole screen; the choice is remembered.
+const SIDEBAR_EVENT = "tony-sidebar";
+const subscribeSidebar = (listen: () => void) => {
+  window.addEventListener(SIDEBAR_EVENT, listen);
+  return () => window.removeEventListener(SIDEBAR_EVENT, listen);
+};
+const readSidebarHidden = () => localStorage.getItem("tony-sidebar") === "hidden";
 
 // The theme lives in localStorage (and on <html>, set before paint by the layout).
 const THEME_EVENT = "tony-theme";
@@ -40,10 +47,15 @@ const readTheme = (): Theme => {
 export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab?: string }) {
   const tony = useTony(initial);
   const { state, act, say, toast, signedOut } = tony;
-  // "?tab=week" (the Sunday invitation's button) opens the weekly planner: the page reads it on the server.
-  const [tab, setTab] = useState<Tab>(initialTab === "week" ? "week" : "today");
+  // "?tab=week" (the Sunday invitation's button) opens the calendar: the page reads it on the server.
+  const [tab, setTab] = useState<Tab>(initialTab === "week" ? "calendar" : "today");
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
   const [menu, setMenu] = useState(false);
+  const sidebarHidden = useSyncExternalStore(subscribeSidebar, readSidebarHidden, () => false);
+  const setSidebarHidden = (hidden: boolean) => {
+    localStorage.setItem("tony-sidebar", hidden ? "hidden" : "shown");
+    window.dispatchEvent(new Event(SIDEBAR_EVENT));
+  };
   const theme = useSyncExternalStore<Theme>(subscribeTheme, readTheme, () => "light");
   const now = new Date(state.now);
 
@@ -89,11 +101,6 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
     },
     [act],
   );
-
-  const move = (task: Task, day: string) => {
-    const due_at = `${day}T${formatTime(new Date(task.due_at!))}`;
-    void act("update_task", { id: task.id, due_at });
-  };
 
   const tell = async (text: string) => {
     const result = await act("say", { text });
@@ -153,12 +160,7 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
     setAdding: setAddingPart,
   };
 
-  // The Plan board's moves and the Habits screen's check-in: plain code on the server, the outcome as a note.
-  const lane = async (task: Task, to: "today" | "week" | "someday") => {
-    haptic("tap");
-    const result = await act("lane", { id: task.id, to });
-    if (result.ok && result.reply) say(result.reply);
-  };
+  // The Habits screen's check-in: plain code on the server, the outcome as a note.
   const checkHabit = async (taskId: number) => {
     haptic("success");
     const result = await act("check_habit", { id: taskId });
@@ -182,12 +184,14 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
     <RowActionsContext.Provider value={actions}>
     <div className="flex h-dvh bg-background">
       {/* Wide screens (Telegram fullscreen, desktop): a sidebar, as in Todoist. */}
-      <aside className="safe-top hidden w-[280px] shrink-0 flex-col border-r border-hairline bg-sidebar md:flex">
+      <aside className={`safe-top hidden w-[280px] shrink-0 flex-col border-r border-hairline bg-sidebar ${sidebarHidden ? "" : "md:flex"}`}>
         <div className="flex h-14 items-center gap-2.5 px-4">
           <button type="button" onClick={() => setMenu(true)} aria-label="Tony: settings" className="flex items-center gap-2.5 rounded-md py-1 pr-2 hover:bg-hairline">
             <Image src="/brand/avatar.png" alt="" width={28} height={28} priority className="size-7 rounded-full" />
             <span className="text-[14px] font-semibold">Tony</span>
           </button>
+          <span className="flex-1" />
+          <button type="button" onClick={() => setSidebarHidden(true)} aria-label="Hide the sidebar" title="Hide the sidebar" className="grid size-8 place-items-center rounded-md text-secondary hover:bg-hairline">{Icon.sidebar}</button>
         </div>
         <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 pb-4 text-[14px]">
           <button type="button" onClick={() => setSheet({})} className="mb-1 flex h-9 w-full items-center gap-2.5 rounded-md px-2 font-semibold text-primary hover:bg-hairline">
@@ -197,13 +201,9 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
             Add task
           </button>
           <SideItem icon={Icon.search} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
-          <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox" && !t.free_time).length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
-          <SideItem icon={Icon.moon} label="Free Time" count={open.filter((t) => t.free_time).length} active={tab === "freetime"} onClick={() => setTab("freetime")} />
+          <SideItem icon={Icon.inbox} label="Inbox" count={open.filter((t) => t.status === "inbox").length} active={tab === "inbox"} onClick={() => setTab("inbox")} />
           <SideItem icon={Icon.target} label="Dashboard" count={todayCount} active={tab === "today"} onClick={() => setTab("today")} />
-          <SideItem icon={Icon.upcoming} label="Upcoming" active={tab === "upcoming"} onClick={() => setTab("upcoming")} />
-          <SideItem icon={Icon.week} label="Weekly planner" active={tab === "week"} onClick={() => setTab("week")} />
           <SideItem icon={Icon.calendar} label="Calendar" active={tab === "calendar"} onClick={() => setTab("calendar")} />
-          <SideItem icon={Icon.board} label="Plan board" active={tab === "board"} onClick={() => setTab("board")} />
           <SideItem icon={Icon.habit} label="Habits" count={(state.habits ?? []).filter((h) => h.dueToday && !h.doneToday).length} active={tab === "habits"} onClick={() => setTab("habits")} />
           <SideItem icon={Icon.filter} label="Filters & Labels" active={tab === "filters"} onClick={() => setTab("filters")} />
           <SideItem icon={Icon.chat} label="Chat with Tony" active={tab === "chat"} onClick={() => setTab("chat")} />
@@ -225,7 +225,10 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
         </div>
       </aside>
 
-      <div className="safe-top flex min-w-0 flex-1 flex-col">
+      <div className={`safe-top relative flex min-w-0 flex-1 flex-col ${sidebarHidden ? "md:pl-12" : ""}`}>
+      {sidebarHidden && (
+        <button type="button" onClick={() => setSidebarHidden(false)} aria-label="Show the sidebar" title="Show the sidebar" className="absolute top-3 left-3 z-20 hidden size-8 place-items-center rounded-md text-secondary hover:bg-surface md:grid">{Icon.sidebar}</button>
+      )}
       {/* Phones: the avatar opens projects and settings. */}
       <div className="flex h-12 shrink-0 items-center px-3 md:hidden">
         <button type="button" aria-label="Projects and settings" onClick={() => setMenu(true)} className="grid size-11 place-items-center">
@@ -243,28 +246,15 @@ export function TonyApp({ initial, initialTab }: { initial: AppState; initialTab
           {...screen}
           onQuickAdd={tell}
           onReschedule={reschedule}
-          onBig3={(action, payload) => void act(action, payload)}
           onGoal={(action, payload) => void act(action, payload)}
-          onPlanner={() => setTab("week")}
           onCalendar={() => setTab("calendar")}
         />
       )}
-      {tab === "calendar" && <WeekCalendar {...screen} />}
-      {tab === "inbox" && <InboxScreen {...screen} onFreeTime={() => setTab("freetime")} />}
-      {tab === "freetime" && <FreeTimeScreen {...screen} />}
-      {tab === "upcoming" && <UpcomingScreen {...screen} onMove={move} onAddTo={(day) => setSheet({ day })} />}
+      {tab === "calendar" && <CalendarScreen {...screen} />}
+      {tab === "inbox" && <InboxScreen {...screen} />}
       {tab === "search" && <SearchScreen {...screen} />}
       {tab === "filters" && <FiltersScreen {...screen} onProject={(id) => setTab(`project:${id}`)} />}
       {tab === "habits" && <HabitsScreen state={state} onCheck={checkHabit} />}
-      {tab === "board" && <BoardScreen {...screen} onLane={lane} />}
-      {tab === "week" && (
-        <PlannerScreen
-          {...screen}
-          onGoal={(action, payload) => void act(action, payload)}
-          onPlace={(task, day) => void act("update_task", { id: task.id, day, anytime: true })}
-          onTell={tell}
-        />
-      )}
       {projectId !== undefined && <ProjectScreen {...screen} projectId={projectId} />}
       {tab === "chat" && <ChatScreen state={state} onSend={tell} onVoice={voice} />}
       </div>

@@ -42,8 +42,8 @@ export function Menu(props: {
   onClose: () => void;
   onOpen: (task: Task) => void;
   onToggle: (task: Task) => void;
-  /** Phones: the Plan board and Habits open from here (wide screens have them in the sidebar). */
-  onGo?: (tab: "habits" | "board" | "week" | "calendar") => void;
+  /** Phones: Habits and the calendar open from here (wide screens have them in the sidebar). */
+  onGo?: (tab: "habits" | "calendar") => void;
 }) {
   const { tony, now, theme, onTheme, onClose, onOpen, onToggle, onGo } = props;
   const { state, act } = tony;
@@ -93,14 +93,6 @@ export function Menu(props: {
                 {onGo && (
                   <>
                     <li>
-                      <button type="button" onClick={() => onGo("week")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.week}</span>
-                        <span className="flex-1 text-body">Weekly planner</span>
-                        <span className="text-caption text-secondary">Outcomes · Week</span>
-                        <span className="text-secondary/60">{Icon.chevron}</span>
-                      </button>
-                    </li>
-                    <li>
                       <button type="button" onClick={() => onGo("calendar")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
                         <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.calendar}</span>
                         <span className="flex-1 text-body">Calendar</span>
@@ -113,14 +105,6 @@ export function Menu(props: {
                         <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.habit}</span>
                         <span className="flex-1 text-body">Habits</span>
                         {(state.habits ?? []).some((habit) => habit.dueToday && !habit.doneToday) && <span className="rounded-full bg-done/15 px-2 py-px text-caption font-medium text-done">Today</span>}
-                        <span className="text-secondary/60">{Icon.chevron}</span>
-                      </button>
-                    </li>
-                    <li>
-                      <button type="button" onClick={() => onGo("board")} className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="text-secondary [&_svg]:size-5" aria-hidden>{Icon.board}</span>
-                        <span className="flex-1 text-body">Plan board</span>
-                        <span className="text-caption text-secondary">Today · Week · Someday</span>
                         <span className="text-secondary/60">{Icon.chevron}</span>
                       </button>
                     </li>

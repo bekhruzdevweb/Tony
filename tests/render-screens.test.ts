@@ -6,7 +6,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AppState } from "../src/lib/app-types";
-import { BoardScreen, HabitsScreen } from "../src/components/app/screens";
+import { HabitsScreen } from "../src/components/app/screens";
 import type { Task } from "../src/lib/tasks";
 
 const now = new Date("2026-11-22T08:30:00Z");
@@ -56,13 +56,5 @@ describe("Phase H screens", () => {
     expect(html).toContain("✓ Done today");
     expect(html).toContain("IELTS");
     expect((html.match(/aspect-square/g) ?? []).length).toBe(14);
-  });
-  it("Plan: four lanes; a one-off task can move, a plan's session and a habit cannot", () => {
-    const html = renderToString(createElement(BoardScreen, { state, now, onOpen: () => undefined, onToggle: () => undefined, onAdd: () => undefined, onLane: () => undefined }));
-    for (const lane of ["Inbox", "Today", "This week", "Someday"]) expect(html).toContain(lane);
-    expect(html).toContain("Buy a zippered shirt");
-    expect(html).toContain("→ <!-- -->Someday");
-    // The IELTS session and the Reading habit show without moves; the inbox task has three, the others two.
-    expect((html.match(/→ <!-- -->/g) ?? []).length).toBe(7);
   });
 });

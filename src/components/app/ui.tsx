@@ -8,6 +8,19 @@ import { formatTime, localDate } from "@/lib/time";
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 
 export const Icon = {
+  /** The sidebar toggle: a window with its left panel marked. */
+  sidebar: (
+    <svg viewBox="0 0 24 24" className="size-5" {...stroke}>
+      <rect x="3.5" y="5" width="17" height="14" rx="3" />
+      <path d="M9.5 5v14" />
+    </svg>
+  ),
+  calendar3: (
+    <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
+      <rect x="3.5" y="5" width="17" height="15" rx="3" />
+      <path d="M8 3v4M16 3v4M3.5 10h17M8 14h2M12 14h2M16 14h.01M8 17h2M12 17h2" />
+    </svg>
+  ),
   today: (
     <svg viewBox="0 0 24 24" className="size-6" {...stroke}>
       <rect x="3.5" y="5" width="17" height="15" rx="3" />

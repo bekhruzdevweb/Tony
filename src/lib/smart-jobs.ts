@@ -143,7 +143,7 @@ export async function runSmartJobs(bot: Bot, chatId: number, settings: Settings,
       await job("week-plan", async () => {
         if ((await budgetLeft(now)) <= 0 || !(await dueToday("week-plan", "19:00", now))) return;
         const url = settings.app_url?.startsWith("https://") ? `${settings.app_url.replace(/\/$/, "")}/?tab=week` : undefined;
-        await send(bot, chatId, "🗓 **Weekly planning**, sir. Choose three to five outcomes for the week ahead, then place the tasks that serve them.", url ? [[{ text: "Open the planner", data: `url:${url}` }]] : [], { silent: true });
+        await send(bot, chatId, "🗓 **Weekly planning**, sir. Choose three to five outcomes for the week ahead, then place the tasks that serve them.", url ? [[{ text: "Open the calendar", data: `url:${url}` }]] : [], { silent: true });
         await notify("week_plan", now);
         sent++;
       });

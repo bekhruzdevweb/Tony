@@ -262,6 +262,6 @@ export async function summary(now = new Date(), lead?: string): Promise<View> {
   const did = [state.placed ? `${state.placed} placed` : undefined, state.kept.length ? `${state.kept.length} kept in the inbox` : undefined, state.someday ? `${state.someday} for someday` : undefined, state.dropped ? `${state.dropped} dropped` : undefined].filter(Boolean).join(", ");
   return {
     text: [...(lead ? [lead, ""] : []), `🗓 **Week planned, sir** · ${weekSpan(state.week)}`, did || "Nothing was changed.", "", ...lines].join("\n"),
-    rows: app_url?.startsWith("https://") ? [[{ text: "Open the planner", data: `url:${app_url.replace(/\/$/, "")}/?tab=week` }]] : [],
+    rows: app_url?.startsWith("https://") ? [[{ text: "Open the calendar", data: `url:${app_url.replace(/\/$/, "")}/?tab=week` }]] : [],
   };
 }

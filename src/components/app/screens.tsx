@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppDayState, AppHabit, AppState } from "@/lib/app-types";
 import type { Task } from "@/lib/tasks";
-import { addMinutes, formatLongDate, formatTime, localDate } from "@/lib/time";
+import { formatLongDate, formatTime, localDate } from "@/lib/time";
 import { AddTaskRow, Empty, Icon, Section, TaskRow, isOpen } from "./ui";
 
 export type ScreenProps = {
@@ -65,43 +65,18 @@ export function PrayerStrip({ state, now, onToggle }: { state: AppState; now: Da
 }
 
 /** Undated tasks, oldest first; anything older than three days carries its age. */
-export function InboxScreen({ state, now, onOpen, onToggle, onAdd, onFreeTime }: ScreenProps & { onFreeTime?: () => void }) {
-  const inbox = state.tasks.filter((t) => t.status === "inbox" && !t.free_time).sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const freeTime = state.tasks.filter((t) => isOpen(t) && t.free_time).length;
+export function InboxScreen({ state, now, onOpen, onToggle, onAdd }: ScreenProps) {
+  const inbox = state.tasks.filter((t) => t.status === "inbox").sort((a, b) => a.created_at.localeCompare(b.created_at));
   return (
     <div className="flex-1 overflow-y-auto pb-8">
       <div className={PAGE}>
         <Title sub={inbox.length ? `${inbox.length} without a date` : undefined}>Inbox</Title>
-        {onFreeTime && freeTime > 0 && (
-          <button type="button" onClick={onFreeTime} className="mb-3 flex w-full items-center justify-between rounded-lg border border-hairline px-3 py-2 text-left text-[14px] hover:bg-hairline">
-            <span>Free Time</span>
-            <span className="text-secondary">{freeTime}</span>
-          </button>
-        )}
         <Section title="Oldest first">
           {inbox.map((task) => {
             const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
             return <TaskRow key={task.id} task={task} projects={state.projects} now={now} when="none" badge={days > 3 ? `${days} days` : undefined} onOpen={onOpen} onToggle={onToggle} />;
           })}
           <AddTaskRow onAdd={() => onAdd()} />
-        </Section>
-      </div>
-    </div>
-  );
-}
-
-/** The Free Time list (phase c): "in my free time", "someday"; no dates, the longest waiting first. */
-export function FreeTimeScreen({ state, now, onOpen, onToggle }: ScreenProps) {
-  const items = state.tasks.filter((t) => isOpen(t) && t.free_time).sort((a, b) => a.created_at.localeCompare(b.created_at));
-  return (
-    <div className="flex-1 overflow-y-auto pb-8">
-      <div className={PAGE}>
-        <Title sub={items.length ? `${items.length} waiting for a free moment` : "Say \"in my free time…\" to add one"}>Free Time</Title>
-        <Section title="Longest waiting first">
-          {items.map((task) => {
-            const days = Math.floor((now.getTime() - new Date(task.created_at).getTime()) / DAY_MS);
-            return <TaskRow key={task.id} task={task} projects={state.projects} now={now} when="none" badge={days >= 1 ? `${days} ${days === 1 ? "day" : "days"}` : undefined} onOpen={onOpen} onToggle={onToggle} />;
-          })}
         </Section>
       </div>
     </div>
@@ -326,178 +301,6 @@ export function HabitsScreen({ state, onCheck }: { state: AppState; onCheck: (ta
           </Section>
         )}
       </div>
-    </div>
-  );
-}
-
-type Lane = "inbox" | "today" | "week" | "someday";
-const LANES: { id: Lane; title: string; hint: string }[] = [
-  { id: "inbox", title: "Inbox", hint: "Not planned yet" },
-  { id: "today", title: "Today", hint: "Today, and anything overdue" },
-  { id: "week", title: "This week", hint: "The next six days" },
-  { id: "someday", title: "Someday", hint: "No date, no reminders" },
-];
-const MOVES: { to: "today" | "week" | "someday"; label: string }[] = [
-  { to: "today", label: "Today" },
-  { to: "week", label: "This week" },
-  { to: "someday", label: "Someday" },
-];
-
-/**
- * The Plan board (Phase H): every open task in one of four lanes, Inbox,
- * Today, This week, Someday, with one tap to move it to another. Tony picks
- * the time on the new day (its own time of day where that is free). A
- * habit or a plan's session keeps its rhythm: it shows, but does not move.
- */
-export function BoardScreen({ state, now, onOpen, onToggle, onLane }: ScreenProps & { onLane: (task: Task, to: "today" | "week" | "someday") => void }) {
-  const open = state.tasks.filter((t) => isOpen(t) && notPrayer(t));
-  const endOfToday = new Date(`${localDate(now)}T00:00:00+05:00`).getTime() + DAY_MS;
-  const laneOf = (task: Task): Lane | undefined => {
-    if (task.free_time) return "someday";
-    if (!task.due_at) return "inbox";
-    const at = new Date(task.due_at).getTime();
-    if (at < endOfToday) return "today";
-    if (at < endOfToday + 6 * DAY_MS) return "week";
-    return undefined;
-  };
-  const later = open.filter((t) => laneOf(t) === undefined).length;
-  return (
-    <div className="flex-1 overflow-y-auto pb-8">
-      <div className="mx-auto w-full max-w-[1200px] px-4 md:px-10">
-        <Title sub={later ? `${later} more after this week` : undefined}>Plan</Title>
-        <div className="mt-4 grid gap-4 md:grid-cols-4">
-          {LANES.map((lane) => {
-            const tasks = open.filter((t) => laneOf(t) === lane.id).sort((a, b) => (a.due_at ?? a.created_at).localeCompare(b.due_at ?? b.created_at));
-            return (
-              <section key={lane.id} aria-label={lane.title} className="min-w-0 rounded-card bg-surface/60 p-2">
-                <header className="flex items-baseline justify-between px-2 pt-1 pb-2">
-                  <h2 className="text-[14px] font-bold">{lane.title}</h2>
-                  <span className="text-[12px] text-secondary">{tasks.length || lane.hint}</span>
-                </header>
-                <ul className="rounded-card bg-background">
-                  {tasks.map((task) => (
-                    <TaskRow
-                      key={task.id}
-                      task={task}
-                      projects={state.projects}
-                      now={now}
-                      when={lane.id === "today" ? "time" : "full"}
-                      overdue={Boolean(task.due_at) && new Date(task.due_at!).getTime() < now.getTime() && task.status !== "in_progress"}
-                      onOpen={onOpen}
-                      onToggle={onToggle}
-                      below={
-                        task.repeat_rule ? undefined : (
-                          <div className="flex flex-wrap gap-1.5 pb-2.5 pl-10 md:pl-9">
-                            {MOVES.filter((move) => move.to !== lane.id).map((move) => (
-                              <button key={move.to} type="button" onClick={() => onLane(task, move.to)} className="h-7 rounded-full border border-hairline px-2.5 text-[12px] text-secondary hover:border-primary hover:text-primary">
-                                → {move.label}
-                              </button>
-                            ))}
-                          </div>
-                        )
-                      }
-                    />
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** The next seven days. Drag a task by its grip to move it to another day. */
-export function UpcomingScreen(props: ScreenProps & { onMove: (task: Task, day: string) => void; onAddTo: (day: string) => void }) {
-  const { state, now, onOpen, onToggle, onMove, onAddTo } = props;
-  const scroller = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ task: Task; x: number; y: number; over?: string } | null>(null);
-
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const at = addMinutes(now, i * 24 * 60);
-    const key = localDate(at);
-    const md = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", month: "short", day: "numeric" }).format(at);
-    const name = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", weekday: "long" }).format(at);
-    return { key, label: i === 0 ? `${md} · Today · ${name}` : i === 1 ? `${md} · Tomorrow · ${name}` : `${md} · ${name}` };
-  });
-  const tasksOn = (key: string) =>
-    state.tasks.filter((t) => t.due_at && isOpen(t) && notPrayer(t) && localDate(new Date(t.due_at)) === key).sort(byDue);
-
-  const dayAt = (x: number, y: number) =>
-    (document.elementFromPoint(x, y)?.closest("[data-day]") as HTMLElement | null)?.dataset.day;
-
-  const begin = (task: Task) => (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDrag({ task, x: event.clientX, y: event.clientY, over: localDate(new Date(task.due_at!)) });
-  };
-  const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!drag) return;
-    // Near the top or bottom edge, scroll the list so far-off days can be reached.
-    const box = scroller.current?.getBoundingClientRect();
-    if (box && event.clientY < box.top + 70) scroller.current!.scrollBy(0, -14);
-    if (box && event.clientY > box.bottom - 70) scroller.current!.scrollBy(0, 14);
-    setDrag({ ...drag, x: event.clientX, y: event.clientY, over: dayAt(event.clientX, event.clientY) ?? drag.over });
-  };
-  const end = () => {
-    if (!drag) return;
-    const from = localDate(new Date(drag.task.due_at!));
-    if (drag.over && drag.over !== from) onMove(drag.task, drag.over);
-    setDrag(null);
-  };
-
-  return (
-    <div ref={scroller} className={`flex-1 overflow-y-auto pb-6 ${drag ? "select-none" : ""}`}>
-      <div className={PAGE}>
-      <Title sub="The next seven days">Upcoming</Title>
-      {days.map((day) => {
-        const tasks = tasksOn(day.key);
-        const target = drag?.over === day.key;
-        return (
-          <section key={day.key} data-day={day.key} className="mt-5">
-            <div className="flex items-center border-b border-hairline pb-1.5">
-              <h2 className={`flex-1 text-[14px] font-bold ${target ? "text-primary" : ""}`}>{day.label}</h2>
-            </div>
-            <ul className={`rounded-md transition-shadow ${target ? "ring-2 ring-primary" : ""}`}>
-              {tasks.length === 0 && target && <li className="px-3 py-3 text-sub text-secondary">Drop here</li>}
-              {tasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  projects={state.projects}
-                  now={now}
-                  onOpen={onOpen}
-                  onToggle={onToggle}
-                  handle={
-                    <button
-                      type="button"
-                      aria-label={`Drag ${task.title} to another day`}
-                      onPointerDown={begin(task)}
-                      onPointerMove={move}
-                      onPointerUp={end}
-                      onPointerCancel={() => setDrag(null)}
-                      className={`grid w-11 shrink-0 touch-none place-items-center text-secondary/60 ${drag?.task.id === task.id ? "text-primary" : ""}`}
-                    >
-                      {Icon.grip}
-                    </button>
-                  }
-                />
-              ))}
-              <AddTaskRow onAdd={() => onAddTo(day.key)} />
-            </ul>
-          </section>
-        );
-      })}
-      </div>
-      {drag && (
-        <div
-          className="pointer-events-none fixed z-50 max-w-[70vw] -translate-x-full -translate-y-1/2 truncate rounded-card bg-primary px-3 py-2 text-sub font-medium text-white shadow-xl"
-          style={{ left: drag.x - 16, top: drag.y }}
-        >
-          {drag.task.title}
-        </div>
-      )}
     </div>
   );
 }
